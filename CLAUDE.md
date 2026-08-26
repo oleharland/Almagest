@@ -10,7 +10,8 @@ almagest/
 │   ├── raw/               ← intake queue (drop files here)
 │   │   └── processed/     ← originals after ingest
 │   ├── wiki/              ← flat .md pages — THE source of truth
-│   ├── index.md           ← catalog of all pages + sources
+│   ├── index.md           ← catalog of all pages + sources (for humans)
+│   ├── manifest.yaml      ← record of every ingested source (for the agent)
 │   ├── log.md             ← audit trail
 │   ├── agents.md          ← map of where the rules live (index)
 │   └── CLAUDE.md          ← reader rules (auto-loaded)
@@ -23,6 +24,7 @@ almagest/
 │   │   └── styles/        ← base.css (framework) + theme.css (yours)
 │   ├── site.config.ts     ← title, description, index grouping
 │   └── package.json
+├── benchmarks/            ← benchmark harness (fixtures, questions, runner)
 ├── docs/                  ← framework documentation
 ├── brain.config.yaml      ← instance configuration (page types, sources, etc.)
 ├── .mcp.json              ← MCP server config (GitHub + GitLab)
@@ -37,6 +39,7 @@ almagest/
 - **Data-backed only.** Every finding must cite its source or be flagged as a known unknown.
 - **Source attribution mandatory.** Every factual claim cites where it came from.
 - **Flag unknowns explicitly.** Missing data = say so, name what would resolve it.
+- **Fingerprint, don't guess.** A source is unchanged only when its `sha256` or commit SHA matches `brain/manifest.yaml`. Same filename is not the same file.
 - **Write-if-changed.** Don't rewrite files that haven't changed.
 
 ## How content flows
@@ -45,17 +48,18 @@ almagest/
 
 1. Drop a file (PDF, video, Excel, doc) into `brain/raw/`
 2. Agent reads `brain/index.md` to check what's already known
-3. Agent extracts entities, proposes new/updated wiki pages to user
-4. On approval: creates/updates `brain/wiki/` pages, cross-links with `[[wikilinks]]`
-5. Moves original to `brain/raw/processed/`, updates `index.md` and `log.md`
-6. `site/` builds from `brain/wiki/` — `npm run build` in `site/`
+3. Agent fingerprints the file (sha256) against `brain/manifest.yaml` — new, unchanged, or changed. Unchanged is skipped; changed is re-ingested as a diff against the pages it already produced
+4. Agent extracts entities, proposes new/updated wiki pages to user
+5. On approval: creates/updates `brain/wiki/` pages, cross-links with `[[wikilinks]]`
+6. Moves original to `brain/raw/processed/`, updates `index.md`, `manifest.yaml`, and `log.md`
+7. `site/` builds from `brain/wiki/` — `npm run build` in `site/`
 
 ### Remote ingest (GitHub / GitLab over MCP)
 
 1. Agent reads `brain.config.yaml` → `sources.remote` for configured repos
 2. Agent connects via the MCP server matching each entry's `provider` (`.mcp.json`)
 3. Agent reads files from remote repos, runs the same extraction flow
-4. Source reference logged in `index.md` (provider, repo, path, commit SHA, date) — no local copy
+4. Source reference logged in `index.md` and `manifest.yaml` (provider, repo, path, commit SHA, date) — no local copy. The recorded commit SHA is what makes the next run incremental
 5. Same proposal + approval flow as local ingest
 
 ## Wiki page types

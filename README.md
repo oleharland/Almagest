@@ -18,7 +18,9 @@ Most AI note-taking tools optimise for capture. Almagest optimises for **trust**
 
 - **AI-assisted ingest** — drop files in `brain/raw/` or pull from GitHub/GitLab repos over MCP. The agent extracts entities, proposes pages, handles contradictions, and cites sources.
 - **Structured wiki** — flat markdown with typed frontmatter, three content tiers (canonical / curated / evidence), and automatic `[[wikilink]]` cross-linking.
+- **Incremental re-ingest** — sources are fingerprinted by content, not filename. Edit a source, drop it back in, and the agent proposes a targeted diff against the pages it already produced instead of skipping it as a duplicate.
 - **Built-in audit** — stale pages, orphans, broken links, schema violations, coverage gaps. Produces a report; never edits your files.
+- **Benchmark harness** — a fixture corpus and question set that measure citation validity, contradiction surfacing, and whether the agent declines questions the corpus can't answer. Ships unrun; the numbers are yours to produce.
 - **Query protocol** — ask questions, get answers traceable to the original source, with synthesis explicitly flagged as synthesis.
 - **Static site** — an Astro frontend that builds straight from `brain/wiki/`. Backlinks, filtering, dark mode, zero configuration.
 - **Upstream updates** — pull framework improvements with `git merge`. Your content and customisation live in files upstream never touches.
@@ -41,6 +43,8 @@ Full walkthrough in [Getting Started](docs/getting-started.md).
 - [Getting Started](docs/getting-started.md) — setup and configuration
 - [Page Types](docs/page-types.md) — defining custom wiki page types
 - [Remote Sources](docs/remote-sources.md) — ingesting from GitHub or GitLab over MCP
+- [The Ingest Manifest](docs/manifest.md) — how re-ingest stays incremental
+- [Benchmarks](docs/benchmarks.md) — measuring whether the wiki actually helps
 - [Multi-Brain](docs/multi-brain.md) — running several knowledge domains side by side
 - [Upstream Updates](docs/upstream-updates.md) — pulling framework improvements
 
@@ -50,10 +54,12 @@ Full walkthrough in [Getting Started](docs/getting-started.md).
 |------|---------|
 | `brain/wiki/` | Flat markdown pages — the source of truth |
 | `brain/raw/` | Intake queue for new source files |
-| `brain/index.md` | Catalog of every page and every source |
+| `brain/index.md` | Catalog of every page and every source (for humans) |
+| `brain/manifest.yaml` | Fingerprint record of every ingested source (for the agent) |
 | `brain/log.md` | Audit trail of every action |
 | `site/` | Astro frontend, reads from `brain/wiki/` |
 | `.claude/rules/` | Auto-loaded agent rules (ingest, wiki write) |
+| `benchmarks/` | Benchmark harness, fixture corpus, and question set |
 | `docs/` | Framework documentation |
 | `brain.config.yaml` | Instance configuration |
 | `.mcp.json` | MCP servers for remote sources |

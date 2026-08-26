@@ -99,3 +99,8 @@ git merge upstream/main
 ```
 
 See [Upstream Updates](upstream-updates.md) for details.
+
+## Where to go next
+
+- [The Ingest Manifest](manifest.md) — how the agent tells a new source from one you edited, and what to do when the record drifts
+- [Benchmarks](benchmarks.md) — the harness for measuring whether the compiled wiki actually beats reading the raw sources

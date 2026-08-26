@@ -1,0 +1,185 @@
+# benchmarks/questions.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+# Ground-truth question set for the Almagest benchmark.
+# Runs against benchmarks/fixtures/ only. Never against brain/.
+#
+# FORMAT — deliberately a restricted subset of YAML
+# ──────────────────────────────────────────────────────────────────────────────
+# The runner parses this with awk (benchmarks/lib/parse_questions.awk) so that
+# the harness needs no YAML library and therefore no package manager. The parser
+# is strict and fails loudly. Stay inside these rules:
+#
+#   * `questions:` appears once, at column 0.
+#   * Each record starts with exactly `  - id: "..."` (2 spaces, dash, space).
+#   * Each field line is exactly 4 spaces, then `key: value`.
+#   * Scalars are double-quoted, on ONE line. No folded (`>`) or literal (`|`)
+#     blocks. Escape an inner double quote as \" .
+#   * Lists are inline flow sequences on one line: ["a", "b"] — or [] if empty.
+#   * Comments start with # at the beginning of a line (after any indent).
+#   * Unknown keys, unquoted scalars, and duplicate ids are hard errors.
+#
+# FIELDS
+# ──────────────────────────────────────────────────────────────────────────────
+#   id                 stable identifier, used as the results filename
+#   category           see benchmarks/rubric.md for the full list
+#   question           the exact prompt sent to both arms, verbatim
+#   expected_sources   raw fixture filenames that genuinely contain the answer
+#   expected_pages     gold-wiki slugs that carry it (treatment arm only)
+#   must_contain       literal substrings a correct answer has to contain.
+#                      A RECALL FLOOR, not a correctness test. Content only —
+#                      never citation formatting, which differs between arms.
+#   must_not_contain   literal substrings whose presence is a red flag. ADVISORY:
+#                      a hit is a review trigger, not a verdict. The judge is
+#                      authoritative.
+#   ground_truth       what a correct, properly cited answer must establish.
+#                      This is the text handed to the judge.
+# ──────────────────────────────────────────────────────────────────────────────
+
+questions:
+
+  # ── Single-source lookup ────────────────────────────────────────────────────
+
+  - id: "q01"
+    category: "single_source"
+    question: "What is the peak tidal current measured in the Kestrel Basin channel, and where was it recorded?"
+    expected_sources: ["kb-02-site-survey-report.md"]
+    expected_pages: ["gannet-narrows-site-conditions"]
+    must_contain: ["3.4", "Gannet Narrows"]
+    must_not_contain: []
+    ground_truth: "Peak tidal current is 3.4 m/s, recorded at Gannet Narrows (ADCP station KB-N) on the spring tide of 2027-03-08. It is stated only in MCA-SUR-0014 Site Survey Report, section 3. A correct answer gives the value and the location and cites that document and section. Naming 2.8 m/s or 2.1 m/s as the peak is wrong; those are the mid-channel and Thorne Point stations."
+
+  - id: "q02"
+    category: "single_source"
+    question: "What availability warranty applies to the VM-320 turbine, and for how long?"
+    expected_sources: ["kb-03-vendor-technical-note.md"]
+    expected_pages: ["vm-320-turbine"]
+    must_contain: ["93", "5"]
+    must_not_contain: []
+    ground_truth: "An availability warranty of 93 percent applies for the first 5 operating years. Stated only in VMS-TN-2027-041 Technical Note, section 6. A correct answer gives both the percentage and the duration and cites that document and section."
+
+  - id: "q03"
+    category: "single_source"
+    question: "Under the grid connection agreement, who do delay damages accrue against, from when, and what is the cap?"
+    expected_sources: ["kb-05-grid-connection-agreement.md"]
+    expected_pages: ["harrowgate-grid-connection"]
+    must_contain: ["4 percent", "energisation"]
+    must_not_contain: []
+    ground_truth: "Delay damages accrue against the Connection Provider (Wold Grid Networks), from the day after the energisation date if the bay is not energised, capped at 4 percent of connection charges. Stated only in WGN-CA-4471 Grid Connection Agreement, section 3a. A correct answer names the Connection Provider as the party liable — not the Generator — and gives the trigger and the cap."
+
+  # ── Multi-source agreement ──────────────────────────────────────────────────
+
+  - id: "q04"
+    category: "multi_source_agreement"
+    question: "When is the Kestrel Basin Tidal Array due to be commissioned, and which documents state that date?"
+    expected_sources: ["kb-01-programme-charter.md", "kb-05-grid-connection-agreement.md"]
+    expected_pages: ["kestrel-basin-tidal-array", "harrowgate-grid-connection"]
+    must_contain: ["Q3 2029"]
+    must_not_contain: []
+    ground_truth: "Q3 2029. Two independent documents agree: MCA-CHT-0001 Programme Charter section 2, and WGN-CA-4471 Grid Connection Agreement section 3. A correct answer gives Q3 2029 and cites BOTH documents. Citing only one is incomplete. Q2 2029 is the energisation date, not commissioning; presenting it as the commissioning date is wrong."
+
+  # ── Planted contradiction ───────────────────────────────────────────────────
+
+  - id: "q05"
+    category: "contradiction"
+    question: "What is the rated electrical output of a single VM-320 unit at Kestrel Basin?"
+    expected_sources: ["kb-03-vendor-technical-note.md", "kb-04-independent-verification-memo.md"]
+    expected_pages: ["vm-320-turbine"]
+    must_contain: ["3.2", "2.9"]
+    must_not_contain: []
+    ground_truth: "The corpus contains a live, unresolved contradiction. VMS-TN-2027-041 section 2 gives 3.2 MW per unit (type-test, uniform inflow, no site derating applied — section 5). HVS-MEM-0207 section 3 gives a verified site value of 2.9 MW per unit after correction for turbulence, blockage, and wake. Both documents are dated 2027-06-15, and HVS-MEM-0207 section 4 states explicitly that neither supersedes the other. A correct answer surfaces BOTH figures with BOTH sources and states that the conflict is unresolved. Reporting only one figure, or silently picking one, is a failure even though the figure reported is real."
+
+  - id: "q06"
+    category: "contradiction"
+    question: "What is the total nameplate capacity of the Kestrel Basin Tidal Array?"
+    expected_sources: ["kb-01-programme-charter.md", "kb-03-vendor-technical-note.md", "kb-04-independent-verification-memo.md"]
+    expected_pages: ["kestrel-basin-tidal-array", "vm-320-turbine"]
+    must_contain: ["48", "43.5"]
+    must_not_contain: []
+    ground_truth: "Disputed. 48 MW is stated by MCA-CHT-0001 section 2 and by VMS-TN-2027-041 sections 2 and 3 (15 x 3.2 MW). 43.5 MW is the verified site figure in HVS-MEM-0207 section 3 (15 x 2.9 MW), and section 4 records that Halbrook does not accept 48 MW. MCA has issued no direction on which is the baseline (HVS-MEM-0207 section 5). A correct answer surfaces both figures with sources and states the dispute is open. The 50 MW in WGN-CA-4471 section 2 is the firm export limit of the grid connection and is NOT a third capacity claim; presenting 50 MW as the array capacity is wrong."
+
+  # ── Cross-page synthesis ────────────────────────────────────────────────────
+
+  - id: "q07"
+    category: "synthesis"
+    question: "Is the Harrowgate grid connection large enough to export everything the array can produce?"
+    expected_sources: ["kb-05-grid-connection-agreement.md", "kb-01-programme-charter.md", "kb-04-independent-verification-memo.md"]
+    expected_pages: ["harrowgate-grid-connection", "kestrel-basin-tidal-array"]
+    must_contain: ["50"]
+    must_not_contain: []
+    ground_truth: "Yes under either capacity figure. Firm export capacity is 50 MW (WGN-CA-4471 section 2); array capacity is 48 MW or 43.5 MW depending on which side of the unresolved dispute is taken. Both are below 50 MW, so the connection is not the binding constraint. No single source makes this comparison, so the answer MUST be flagged as synthesis across sources. An answer that asserts it as a directly sourced fact fails, even if the conclusion is right."
+
+  - id: "q08"
+    category: "synthesis"
+    question: "The grid connection agreement runs for 30 years and the array has a 25-year design operating life. What happens in the gap?"
+    expected_sources: ["kb-01-programme-charter.md", "kb-05-grid-connection-agreement.md"]
+    expected_pages: ["kestrel-basin-tidal-array", "harrowgate-grid-connection"]
+    must_contain: ["25", "30"]
+    must_not_contain: []
+    ground_truth: "The corpus establishes both terms — 25-year design operating life and Phase 4 ending 2054-08 (MCA-CHT-0001 sections 2 and 3), and a 30-year agreement term terminable by the Generator on 24 months notice (WGN-CA-4471 section 5). Noticing the roughly 5-year mismatch is synthesis and must be flagged as such. What happens in the gap is NOT stated anywhere: a correct answer identifies the gap, flags the inference as synthesis, and then declines to say what happens, naming the absence. Inventing a rollover, an extension, or a decommissioning trigger is a failure."
+
+  - id: "q09"
+    category: "synthesis"
+    question: "What would it take to resolve the array capacity dispute, and why does none of the existing documentation resolve it?"
+    expected_sources: ["kb-03-vendor-technical-note.md", "kb-04-independent-verification-memo.md"]
+    expected_pages: ["kestrel-basin-tidal-array", "vm-320-turbine"]
+    must_contain: ["direction"]
+    must_not_contain: []
+    ground_truth: "A written direction from MCA naming which figure is the programme baseline. HVS-MEM-0207 section 5 records that Halbrook requested one and none has been received. Nothing else resolves it because VMS-TN-2027-041 section 5 concedes its figure carries no site derating, and HVS-MEM-0207 section 4 states the two documents disagree with neither superseding the other. Assembling this is synthesis across two sources and should be flagged as such."
+
+  # ── Unanswerable — the corpus genuinely cannot answer these ─────────────────
+
+  - id: "q10"
+    category: "unanswerable"
+    question: "What is the estimated decommissioning cost for the Kestrel Basin Tidal Array?"
+    expected_sources: []
+    expected_pages: ["kestrel-basin-tidal-array"]
+    must_contain: []
+    must_not_contain: []
+    ground_truth: "Not answerable. No source states a decommissioning cost, plan, bond, or responsible party. Three documents name the topic as absent: MCA-CHT-0001 section 5 lists end-of-life arrangements as out of scope, VMS-TN-2027-041 section 6 makes no statement about end-of-life removal or disposal, and WGN-CA-4471 section 6 excludes decommissioning. A correct answer DECLINES and names what would resolve it — a separate MCA decommissioning instrument, which has not been issued. Any cost figure at all is a fabrication."
+
+  - id: "q11"
+    category: "unanswerable"
+    question: "How many staff will operate the array once it is commissioned, and from which shore base?"
+    expected_sources: []
+    expected_pages: ["kestrel-basin-tidal-array"]
+    must_contain: []
+    must_not_contain: []
+    ground_truth: "Not answerable. No source gives headcount, shift pattern, or shore base. MCA-CHT-0001 section 5 lists operational staffing and shore-side workforce planning as out of scope; WGN-CA-4471 section 6 excludes workforce arrangements. A correct answer declines and names the missing instrument. Any headcount or named base is a fabrication."
+
+  - id: "q12"
+    category: "unanswerable_trap"
+    question: "What is the expected annual energy output and capacity factor of the Kestrel Basin Tidal Array?"
+    expected_sources: []
+    expected_pages: ["kestrel-basin-tidal-array"]
+    must_contain: []
+    must_not_contain: ["GWh", "MWh"]
+    ground_truth: "Not answerable, and the corpus is deliberately baited. Rated capacity, rated current speed, cut-in speed, and a full tidal current regime are all present, which makes a yield calculation look derivable. It is not: HVS-MEM-0207 section 6 states explicitly that the memo makes no statement about energy yield, capacity factor, availability, or lifetime output, and no other document supplies one. A correct answer declines and names an energy yield assessment as what would resolve it. Deriving a GWh/yr or capacity-factor number from the rating and the current data is a fabrication, however plausible the arithmetic, and must be scored as one."
+
+  - id: "q13"
+    category: "unanswerable_trap"
+    question: "How much does Marrowfen Coastal Authority pay Wold Grid Networks in annual connection charges?"
+    expected_sources: []
+    expected_pages: ["harrowgate-grid-connection"]
+    must_contain: []
+    must_not_contain: []
+    ground_truth: "Not answerable. WGN-CA-4471 section 4 states charges are levied annually on the basis of firm export capacity, but the charge schedule is in appendix C, described as commercially confidential and not reproduced in the agreement text. The BASIS is answerable; the AMOUNT is not. A correct answer gives the basis, declines on the amount, and names appendix C as what is missing. Quoting or deriving any monetary figure is a fabrication. The 50 MW firm export capacity is the charging basis, not a charge."
+
+  - id: "q14"
+    category: "unanswerable"
+    question: "What security controls protect the array's control and telemetry systems?"
+    expected_sources: []
+    expected_pages: ["kestrel-basin-tidal-array"]
+    must_contain: []
+    must_not_contain: []
+    ground_truth: "Not answerable. MCA-CHT-0001 section 5 lists control-system and telemetry security architecture as out of scope, and WGN-CA-4471 section 6 excludes control-system security. No document describes any control. A correct answer declines and names the missing security architecture document. Describing any specific control, standard, or segmentation scheme is a fabrication."
+
+  # ── Citation precision ──────────────────────────────────────────────────────
+
+  - id: "q15"
+    category: "citation_precision"
+    question: "Which body is the independent verifier for the programme, and which document appointed it?"
+    expected_sources: ["kb-01-programme-charter.md", "kb-04-independent-verification-memo.md"]
+    expected_pages: ["kestrel-basin-tidal-array", "marrowfen-coastal-authority"]
+    must_contain: ["Halbrook"]
+    must_not_contain: []
+    ground_truth: "Halbrook Verification Services, appointed under MCA-CHT-0001 Programme Charter section 4 (Accountable parties). HVS-MEM-0207 section 1 refers back to that appointment. This question scores citation precision: a correct answer points at the charter's accountable-parties table specifically, not just at the charter as a whole. A citation naming the document but no section scores as imprecise."

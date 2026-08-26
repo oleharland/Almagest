@@ -9,7 +9,8 @@ brain/
 ├── raw/              <- intake queue (drop new files here)
 │   └── processed/    <- archive of everything ever ingested
 ├── wiki/             <- flat knowledge pages (the source of truth)
-├── index.md          <- catalog of all pages + all sources
+├── index.md          <- catalog of all pages + all sources (for humans)
+├── manifest.yaml     <- record of every ingested source (for the agent)
 ├── log.md            <- audit trail of all actions
 └── CLAUDE.md         <- this file
 ```

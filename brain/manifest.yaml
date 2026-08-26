@@ -1,0 +1,126 @@
+# brain/manifest.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+# Machine-readable record of every source ever ingested into this brain.
+#
+# Why it exists: incremental re-ingest. Before processing a source the agent
+# looks it up here and gets one of three answers — new, unchanged, or changed —
+# and only does real work for the first and the third.
+#
+# This file SUPPLEMENTS `brain/index.md`. It does not replace it.
+#   index.md       — the human-readable catalog. Read it to see what is in here.
+#   manifest.yaml  — the machine record. The agent reads it to decide what to do.
+# Neither is redundant. Deleting either one breaks something. Keep both.
+#
+# Change detection:
+#   local   — sha256 of the file's bytes  (`shasum -a 256` / `sha256sum`)
+#   remote  — the commit SHA the file was read at
+# A filename alone is never sufficient. A file that was ingested, edited, and
+# dropped back into `raw/` is a CHANGED source, not a duplicate. That is the bug
+# this file exists to fix.
+#
+# Agent-maintained. Written only AFTER the user approves an ingest, never ahead
+# of approval. Hand-edit only to repair drift — see `docs/manifest.md`.
+#
+# There is no separate revision history: this file is committed to git, so
+# `git log -p brain/manifest.yaml` is the history.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+# ── Schema version ────────────────────────────────────────────────────────────
+# Bumped only when the entry shape changes in a way that needs a migration.
+
+version: 1
+
+
+# ── Sources ───────────────────────────────────────────────────────────────────
+# One entry per ingested source. Order is not significant — keep entries sorted
+# by `id` so git diffs stay readable.
+#
+# Fields common to both kinds:
+#
+#   id              — stable identifier, assigned at first ingest, NEVER changed
+#                     afterwards. Convention: the slugified filename (local) or
+#                     `provider:repo:path` (remote). It survives renames — that
+#                     is the whole reason `id` is separate from `path`.
+#   kind            — local | remote
+#   path            — local:  path relative to repo root, current location
+#                     remote: path within the repo
+#   bytes           — size in bytes at last ingest
+#   first_ingested  — ISO-8601 date of the first successful ingest
+#   last_ingested   — ISO-8601 date of the most recent successful ingest
+#   pages           — wiki slugs this source created or touched. Bare slugs:
+#                     no `.md`, no `[[brackets]]`. This list is what makes a
+#                     changed source re-ingest as a targeted diff instead of a
+#                     blind re-extraction.
+#   status          — ingested | partial | skipped | missing | superseded
+#                       ingested   — fully processed; manifest matches reality
+#                       partial    — the user approved some proposed pages and
+#                                    rejected others; `notes` says which
+#                       skipped    — deliberately not ingested (outside
+#                                    canonical scope). Recorded so it is not
+#                                    re-proposed on every run
+#                       missing    — the source file is gone from
+#                                    `raw/processed/`. Usually a gitignored
+#                                    binary on a fresh clone. Pages stay,
+#                                    the entry stays, nothing is re-ingested
+#                       superseded — replaced by another entry, named in
+#                                    `superseded_by`
+#   superseded_by   — id of the replacing entry. Only with `status: superseded`.
+#   notes           — optional free text: why it was skipped, what changed on
+#                     the last re-ingest, that the entry was backfilled.
+#
+# local only:
+#
+#   sha256          — hex digest of the file's bytes at last ingest (64 chars)
+#   previous_paths  — earlier locations of this same content: renames, filename
+#                     sanitization, moves. Optional.
+#
+# remote only:
+#
+#   provider        — github | gitlab
+#   repo            — `owner/repo` on GitHub, `namespace/project` on GitLab
+#   branch          — branch the file was read from
+#   commit          — commit SHA the file was read at
+#   label           — the `label` from `brain.config.yaml` → `sources.remote`
+#
+#
+# ── Example entries ───────────────────────────────────────────────────────────
+# Commented out on purpose. This is the shape, not real data. Delete these
+# comments once you have real entries, or leave them as a reference.
+#
+# sources:
+#
+#   # A local file, ingested once and later re-ingested after being edited.
+#   # `sha256` is the v2 digest; the v1 digest lives in git history.
+#   - id: system-overview-pdf
+#     kind: local
+#     path: brain/raw/processed/system-overview.pdf
+#     sha256: b72fbfb7f607dc872d4ab091ca308a4f9c6d111e17e63ba81365c242d14e6c83
+#     bytes: 2481920
+#     first_ingested: 2026-07-14
+#     last_ingested: 2026-08-21
+#     previous_paths:
+#       - brain/raw/processed/System Overview.pdf
+#     pages:
+#       - system-architecture
+#       - data-pipeline
+#     status: ingested
+#     notes: "Re-ingested 2026-08-21 — §Failover rewritten upstream; auth claim replaced on system-architecture."
+#
+#   # A remote file read over MCP. No local copy exists; `commit` is the anchor.
+#   - id: "github:acme/platform-docs:docs/architecture/overview.md"
+#     kind: remote
+#     provider: github
+#     repo: acme/platform-docs
+#     branch: main
+#     path: docs/architecture/overview.md
+#     commit: 9505cacb7c710ed17125fcc6cb3669e8ddca6c8c
+#     bytes: 18422
+#     first_ingested: 2026-06-02
+#     last_ingested: 2026-08-25
+#     label: platform
+#     pages:
+#       - architecture-overview
+#     status: ingested
+
+sources: []

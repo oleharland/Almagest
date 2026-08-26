@@ -18,6 +18,27 @@ name: "My Knowledge Base"
 brain_dir: brain
 
 
+# ── Ingest manifest ───────────────────────────────────────────────────────────
+# The manifest is the machine-readable record of every ingested source. It is
+# what makes re-ingest incremental: the agent fingerprints each source (sha256
+# for local files, commit SHA for remote ones) and compares against this file to
+# decide whether it is new, unchanged, or changed. See docs/manifest.md.
+#
+# It supplements brain/index.md — it does not replace it. index.md is the
+# human-readable catalog; the manifest is the machine record. Keep both.
+#
+# There is deliberately no on/off switch and no choice of algorithm. Filename or
+# mtime matching is the bug the manifest exists to fix, so it is not offered as
+# an option, and sha256 needs no configuration.
+
+manifest:
+
+  # Where the manifest lives, relative to repo root. The only reason to change
+  # this is a multi-brain setup, where each brain carries its own manifest
+  # alongside its own index.md (see docs/multi-brain.md).
+  path: brain/manifest.yaml
+
+
 # ── Wiki page types ───────────────────────────────────────────────────────────
 # The set of valid `type` values for wiki page frontmatter.
 # Each value maps to a distinct editorial purpose.

@@ -17,6 +17,7 @@ Map of the operating rules for AI agents working on this knowledge base.
 | `.claude/rules/brain-ingest.md` | **Ingest** — raw → wiki, anonymization, filename sanitization, remote sources, terminal output | Auto — any `brain/raw/**` file |
 | `.claude/rules/brain-wiki.md` | **Writing** — approval gates, contradictions, page template, tiers, audit | Auto — any `brain/wiki/**` file |
 | `brain.config.yaml` | **Instance config** — page types, canonical pages, ownership, sources, anonymization | Read it before any operation |
+| `brain/manifest.yaml` | **Ingest record** — fingerprint and pages of every source already ingested | Read it before any ingest |
 
 If you need the actual rule, open the file in the third column. Do not rely on this page.
 
@@ -27,7 +28,8 @@ brain/
 ├── raw/              <- intake queue (drop new files here)
 │   └── processed/    <- archive of everything ever ingested
 ├── wiki/             <- flat knowledge pages (the source of truth)
-├── index.md          <- catalog of all pages + all sources
+├── index.md          <- catalog of all pages + all sources (for humans)
+├── manifest.yaml     <- record of every ingested source (for the agent)
 ├── log.md            <- audit trail of all actions
 ├── agents.md         <- this file
 └── CLAUDE.md         <- reader rules
@@ -43,13 +45,14 @@ brain/
 
 ## Non-negotiables
 
-These five hold across every operation. Everything else is in the rules files.
+These six hold across every operation. Everything else is in the rules files.
 
 1. **No writes without approval.** The agent never creates, edits, or deletes a page in `wiki/` without an explicit "yes" from the user in the same conversation.
 2. **No unsourced claims.** Every factual claim carries an inline citation. If it can't be cited, mark it `[source: unknown]` and add it to `## Open questions`.
 3. **Surface contradictions, never overwrite them.** Quote both claims with their sources, propose a resolution, wait.
 4. **Canonical pages are guardrails.** The agent cannot propose changes to them. Data that contradicts canonical is flagged as out of scope, not merged.
-5. **Write-if-changed.** Don't rewrite a file whose content hasn't changed.
+5. **Fingerprint, don't guess.** A source is unchanged only when its `sha256` or commit SHA matches `manifest.yaml`. Same filename is not the same file.
+6. **Write-if-changed.** Don't rewrite a file whose content hasn't changed.
 
 ## Model selection
 
@@ -58,11 +61,14 @@ Default to **Sonnet**. Escalate to **Opus** when the task requires judgment rath
 | Task | Model | Why |
 |------|-------|-----|
 | Audit (all checks) | Sonnet | Structural: parse frontmatter, count backlinks, compare strings, check dates |
+| Ingest — manifest lookup / fingerprinting | Sonnet | Hashing a file and comparing hex strings is mechanical |
 | Ingest — extraction | Sonnet | Pulling entities and facts from a source document is straightforward |
 | Ingest — canonical validation | Sonnet | String comparison against a fixed list |
 | Ingest — entity dedup | Sonnet | Matching slugs and titles is mechanical |
 | Ingest — contradiction resolution | **Opus** | Weighing which source is stronger, recommending replace vs amend vs dispute |
 | Ingest — merge proposals | **Opus** | Deciding whether two pages describe the same entity needs domain understanding |
+| Ingest — diff classification | **Opus** | Deciding whether an edit to a re-ingested source is an addition, a revision, or a removal |
+| Ingest — manifest drift repair | **Opus** | Reconciling manifest, `index.md`, and `wiki/` means deciding which record is wrong |
 | Query — factual lookup | Sonnet | Retrieve and cite, no synthesis needed |
 | Query — cross-source synthesis | **Opus** | Connecting evidence across pages, building an argument, spotting gaps |
 | Query — strategic questions | **Opus** | "What's the strongest case for/against X" needs depth |

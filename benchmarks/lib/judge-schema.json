@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "correctness":      { "type": "integer", "minimum": 0, "maximum": 2 },
+    "citation_support": { "type": "integer", "minimum": 0, "maximum": 2 },
+    "unsourced_claims": { "type": "integer", "minimum": 0 },
+    "abstention":       { "type": "string", "enum": ["correct_decline", "decline_no_gap_named", "confabulated", "n/a"] },
+    "contradiction":    { "type": "string", "enum": ["both_surfaced", "one_sided", "missed", "n/a"] },
+    "synthesis_flag":   { "type": "string", "enum": ["flagged", "unflagged", "over_flagged", "n/a"] },
+    "notes":            { "type": "string" }
+  },
+  "required": ["correctness", "citation_support", "unsourced_claims", "abstention", "contradiction", "synthesis_flag", "notes"],
+  "additionalProperties": false
+}
