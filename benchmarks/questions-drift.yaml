@@ -1,0 +1,85 @@
+# benchmarks/questions-drift.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+# The re-ingest / drift question set.
+#
+# WHY THIS IS A SEPARATE FILE
+# ──────────────────────────────────────────────────────────────────────────────
+# Every question in benchmarks/questions.yaml has one ground truth that holds for
+# every arm, because every arm sees the same source documents. The drift
+# experiment breaks that: its arms see an AMENDED source, so the same question
+# has a different correct answer than it does in the main set. Two ground truths
+# under one question id would be a bug waiting to be quoted, so the drift set
+# lives in its own file with its own ids (`d01`…) and its own arms.
+#
+# Run it with:
+#     benchmarks/run.sh --questions benchmarks/questions-drift.yaml \
+#                       --arm drift,drift-baseline
+#
+# run.sh refuses to run a `drift*` category against a non-drift arm, or a drift
+# arm against a non-drift question set. Mixing them would score answers against
+# ground truth for a corpus the arm never saw.
+#
+# WHAT IT MEASURES
+# ──────────────────────────────────────────────────────────────────────────────
+# `fixtures/drift/kb-05-grid-connection-agreement.md` is version 2.0 of a
+# document already in the corpus — same filename, same agreement reference,
+# different content and therefore a different sha256. Almagest's incremental
+# re-ingest exists to notice exactly that. The `drift` arm is given the amended
+# source and the wiki compiled from version 1.0, and is asked questions the
+# amendment changed. The `drift-baseline` arm gets the amended source and no
+# wiki, and establishes that the current answer is plainly available to anyone
+# who reads the document.
+#
+# The failure being measured is the same one the poisoned arm measures: a
+# compiled page asserting something the source it cites does not support. Stale
+# and wrong are the same defect from the reader's seat. Both feed the
+# compiled-error propagation rate in benchmarks/rubric.md.
+#
+# FORMAT: identical to benchmarks/questions.yaml. Read that file's header first.
+# ──────────────────────────────────────────────────────────────────────────────
+
+questions:
+
+  # ── A superseded figure that flips a conclusion ─────────────────────────────
+
+  - id: "d01"
+    category: "drift_trap"
+    question: "Is the Harrowgate grid connection large enough to export everything the array can produce?"
+    expected_sources: ["kb-05-grid-connection-agreement.md", "kb-01-programme-charter.md", "kb-04-independent-verification-memo.md"]
+    expected_pages: ["harrowgate-grid-connection", "kestrel-basin-tidal-array"]
+    must_contain: ["45"]
+    must_not_contain: []
+    ground_truth: "No longer unambiguously yes, and the answer turns on a figure that has changed. WGN-CA-4471 version 2.0 §2, as amended 2028-02-14, gives firm export capacity of 45 MW, reduced from 50 MW; the revision record at §0 states the change. Array capacity is disputed: 48 MW per MCA-CHT-0001 §2 and VMS-TN-2027-041 §2, or 43.5 MW verified per HVS-MEM-0207 §3. 45 MW sits between them — under the charter and supplier figure the connection is now the binding constraint, under the verified figure it is not. A correct answer uses 45 MW, cites the amended clause, and states that the conclusion now depends on which side of the capacity dispute is taken. A wiki page compiled from version 1.0 still carries 50 MW and states that the connection is not a capacity constraint. Answering 50 MW, or repeating that conclusion, is the failure this question exists to catch."
+
+  # ── An agreement between two sources that the amendment broke ───────────────
+
+  - id: "d02"
+    category: "drift"
+    question: "When is the Kestrel Basin Tidal Array due to be commissioned, and do the sources agree?"
+    expected_sources: ["kb-05-grid-connection-agreement.md", "kb-01-programme-charter.md"]
+    expected_pages: ["kestrel-basin-tidal-array", "harrowgate-grid-connection"]
+    must_contain: ["Q1 2030", "Q3 2029"]
+    must_not_contain: []
+    ground_truth: "They no longer agree. MCA-CHT-0001 §2 still gives a target of Q3 2029. WGN-CA-4471 version 2.0 §3, as amended 2028-02-14, gives Generator commissioning of Q1 2030, and §3 states in terms that MCA-CHT-0001 has not been reissued and no revised target has been notified to the Connection Provider. A correct answer gives both dates, cites both documents, and states that the amendment has opened a disagreement that did not exist before. A wiki page compiled from version 1.0 records Q3 2029 from both documents and says they agree — true of the corpus as it was, false of the corpus as it is. Answering Q3 2029 alone, or repeating that the two documents agree, is the failure."
+
+  # ── A plain superseded value ────────────────────────────────────────────────
+
+  - id: "d03"
+    category: "drift"
+    question: "What is the cap on delay damages under the Harrowgate grid connection agreement?"
+    expected_sources: ["kb-05-grid-connection-agreement.md"]
+    expected_pages: ["harrowgate-grid-connection"]
+    must_contain: ["8 percent"]
+    must_not_contain: []
+    ground_truth: "8 percent of connection charges. WGN-CA-4471 version 2.0 §3a, as amended 2028-02-14; the revision record at §0 records the change from 4 percent. The party and the trigger are unchanged: damages accrue against the Connection Provider from the day after the energisation date if the bay is not energised. A correct answer gives 8 percent and cites the amended clause. A wiki page compiled from version 1.0 still carries 4 percent. Answering 4 percent is repeating a compiled claim that the source it cites now contradicts."
+
+  # ── An absence the amendment closed ─────────────────────────────────────────
+
+  - id: "d04"
+    category: "drift_trap"
+    question: "Does any source address removal of the export cable at the end of the agreement term, and who pays for it?"
+    expected_sources: ["kb-05-grid-connection-agreement.md"]
+    expected_pages: ["harrowgate-grid-connection", "kestrel-basin-tidal-array"]
+    must_contain: ["24 months", "Generator"]
+    must_not_contain: []
+    ground_truth: "Yes, in part. WGN-CA-4471 version 2.0 §7, new at Amendment 1 and dated 2028-02-14, obliges the Generator to remove the export cable between the connection point and the Thorne Point landfall within 24 months of termination or expiry. Who pays is still unestablished: §7 states in terms that no cost, bond, or funding mechanism is established by the agreement, and no other document supplies one. A correct answer reports the new obligation with its clause, and declines on the cost while naming what is missing. Wiki pages compiled from version 1.0 still list export cable removal among the matters the agreement does not address, and still record the whole end-of-life topic as absent. Repeating that no source addresses cable removal is the failure this question exists to catch: an absence asserted by a compiled page that the amended source has closed. An absence is a claim, and it goes stale like any other."

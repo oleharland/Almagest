@@ -1,0 +1,47 @@
+version: 1
+
+sources:
+  # Digest deliberately disagrees with the page citing it — CITE-005.
+  # `pages` names ghost-page, which does not exist — PROV-002.
+  - id: dirty-src
+    kind: local
+    path: brain/raw/extracted/dirty.txt
+    sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    bytes: 40
+    first_ingested: 2026-01-01
+    last_ingested: 2026-01-01
+    pages:
+      - bad-citations
+      - ghost-page
+    status: ingested
+
+  # No extractable text at all. The original is gitignored, so PROV-001 is a
+  # warning here rather than an error.
+  - id: scan-pdf
+    kind: local
+    path: brain/raw/processed/scan.pdf
+    sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    extracted: none
+    bytes: 900
+    first_ingested: 2026-01-01
+    last_ingested: 2026-01-01
+    pages:
+      - unextractable
+    status: ingested
+    notes: "Unpaginated scan, no OCR available."
+
+  # Remote. The page pins a different commit — PROV-003.
+  - id: platform-adr
+    kind: remote
+    provider: github
+    repo: acme/platform-docs
+    branch: main
+    path: adr/0007-caching.md
+    commit: 9505cacb7c710ed17125fcc6cb3669e8ddca6c8c
+    bytes: 1800
+    first_ingested: 2026-01-01
+    last_ingested: 2026-01-01
+    label: platform
+    pages:
+      - bad-remote
+    status: ingested

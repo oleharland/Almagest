@@ -9,8 +9,14 @@ dist/
 # Instance-specific settings (not shared)
 .claude/settings.local.json
 
-# Raw processed binaries — reference material, not wiki content
-# Text files (md, json, csv, txt, srt) are tracked; binaries are local-only
+# Raw processed ORIGINALS — reference material, not wiki content.
+# Text files (md, json, csv, txt, srt) are tracked; binaries are local-only,
+# because a repo is not a file server and 2 GB of PDFs helps nobody clone it.
+#
+# The originals being absent from a clone used to make every citation into them
+# permanently unverifiable. It no longer does: each binary source is committed as
+# a plain-text sidecar under `brain/raw/extracted/` (see below), and that sidecar
+# — not the original — is what wiki pages cite.
 brain/raw/processed/*.mp4
 brain/raw/processed/*.mov
 brain/raw/processed/*.png
@@ -28,6 +34,14 @@ brain/raw/processed/*.css
 brain/raw/processed/*.svg
 brain/raw/processed/*.flsnp
 brain/raw/processed/*.sample
+
+# Extracted text sidecars — COMMITTED, deliberately.
+# One `.txt` per binary source, full text with `=== page n ===` markers, so every
+# `[source: <id>, p.12]` on a wiki page can be checked by anyone with a clone and
+# by `tools/audit.mjs`. This is the evidence behind the receipts in
+# `brain/manifest.yaml`. Nothing here is ignored — do not add exclusions.
+!brain/raw/extracted/
+!brain/raw/extracted/**
 
 # Old Obsidian/Claude config from imported vaults
 brain/raw/**/.obsidian/

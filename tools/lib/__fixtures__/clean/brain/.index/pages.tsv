@@ -1,0 +1,4 @@
+slug	title	type	tier	status	origin	confidence	aliases	tags	source_ids	backlinks	last_verified
+alpha	Alpha System	topic	curated	draft	source	high	Alpha	alpha	alpha-pdf	beta|gamma-claim	2026-01-05
+beta	Beta Appliance	entity	curated	draft	source	medium	B-1	beta|alpha	alpha-pdf	alpha|gamma-claim	2026-01-05
+gamma-claim	Fixed backoff makes Beta unsuitable for bursty workloads	claim	curated	draft	self	medium		beta		beta	2026-01-05

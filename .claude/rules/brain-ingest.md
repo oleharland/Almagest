@@ -7,7 +7,7 @@ paths:
 
 # Brain — Ingest Rules (pointer)
 
-Governs: ingest — `raw/` and remote sources into `wiki/`, fingerprinting, the manifest, terminal output
+Governs: ingest — `raw/` and remote sources into `wiki/`, fingerprinting, extracted sidecars, the manifest, the ingest branch
 
 Applies when: you are about to process anything in `brain/raw/`, or a source in `brain.config.yaml` → `sources.remote`
 

@@ -31,7 +31,9 @@ Edit `brain.config.yaml` to match your domain:
 
 `anonymization.enabled` ships as `false`, so names in your sources are written straight through to the wiki. That is the right default for a personal knowledge base.
 
-Turn it on before ingesting anything containing real personal data — meeting transcripts, CRM exports, support tickets. With it on, the agent stops on every detected name, shows you what it found, and waits for approval before writing a role-based replacement.
+Turn it on before ingesting anything containing real personal data — meeting transcripts, CRM exports, support tickets. With it on, the agent runs a named-entity pass over each source, stops on every name it finds, shows you what it found, and waits for approval before writing a role-based replacement.
+
+That pass is **best-effort and nothing more**. A model reading text misses initials, transliterations, names that look like ordinary words. The control is you reading the ingest branch's diff before it merges — `enabled: true` reduces how much you have to catch there; it does not replace the catching. Note that `brain/raw/extracted/` is committed, so read the sidecar in that diff too.
 
 ## 3. Set up remote sources (optional)
 
@@ -68,11 +70,35 @@ Drop files into `brain/raw/` and start your agent in the repo root:
 claude          # or codex, cursor-agent, gemini — whichever you run
 ```
 
-The agent will detect files in `raw/`, extract entities, and propose wiki pages for your approval.
+What happens, in order:
 
-Stay in the session. Every write goes through an approval gate that only a human can pass, so Almagest must not be run by a headless or unattended agent — the contract is in [`agent/contract.md`](../agent/contract.md), the per-harness detail in [Agent Harnesses](agent-harnesses.md).
+1. **Fingerprint.** Every file in `raw/` is hashed and looked up in `brain/manifest.yaml` — new, unchanged, or changed. Unchanged files are skipped without being read. See [The Ingest Manifest](manifest.md)
+2. **Extract to a sidecar.** Every binary source — PDF, deck, spreadsheet, video — is extracted to plain text at `brain/raw/extracted/<filename>.txt`, with `=== page 12 ===` markers, **before** any entity is pulled out of it. That file is committed; the original is not. It is what your wiki pages cite, so a citation stays checkable on a fresh clone with nothing but `grep`
+3. **Extract entities**, deduplicated against `brain/.index/aliases.tsv` so one entity does not become two pages
+4. **Write to a branch.** The agent commits to `ingest/<source-slug>-<sha7>`. It never writes to `brain/wiki/` on `main`
+5. **Audit.** `tools/audit.mjs` runs before the commit. An error blocks it — nothing lands until it passes
+6. **You merge.** Review the diff, merge to `main`. That is the gate
 
-## 6. Build the site (optional)
+Some things still stop and ask, on the branch: a contradiction with an existing page, anything touching a canonical page, a deletion or rename, `confidence: low` on a curated page. Everything else lands on the branch and you read it as a diff.
+
+**Unattended ingest onto a branch is fine. Unattended merge to `main` is not, and there is no flag for it** — the contract is in [`agent/contract.md`](../agent/contract.md), the per-harness detail in [Agent Harnesses](agent-harnesses.md).
+
+## 6. Run the audit
+
+```bash
+node tools/audit.mjs              # full audit, human report
+node tools/audit.mjs --json       # machine-readable findings
+node tools/audit.mjs index        # regenerate brain/.index/
+node tools/audit.mjs --check-index  # verify brain/.index/ is current (CI)
+```
+
+Exit `0` clean, `1` violations found, `2` tool error.
+
+The audit is the reason the schema is shaped the way it is. Citations parse (`[source: <id>, p.12]`), source ids resolve against the page's `sources`, and each `sources[].sha256` is compared with the manifest — so `CITE-005` can tell you *"this page cites v1; the manifest is at v2 — 4 citations unverified"* instead of leaving you to guess from a `last_verified` date. Full check list: [The Audit](audit.md).
+
+Run it after every ingest and before every merge. In CI, run it plus `--check-index`.
+
+## 7. Build the site (optional)
 
 ```bash
 cd site
@@ -105,5 +131,7 @@ See [Upstream Updates](upstream-updates.md) for details.
 ## Where to go next
 
 - [Agent Harnesses](agent-harnesses.md) — what a harness has to be able to do, and how to set up the one you use
-- [The Ingest Manifest](manifest.md) — how the agent tells a new source from one you edited, and what to do when the record drifts
+- [The Ingest Manifest](manifest.md) — how the agent tells a new source from one you edited, what the extracted sidecars are for, and what to do when the record drifts
+- [The Audit](audit.md) — every check, what it detects, and how to clear it
+- [Terminal Output](terminal-output.md) — what a session looks like while it runs
 - [Benchmarks](benchmarks.md) — the harness for measuring whether the compiled wiki actually beats reading the raw sources

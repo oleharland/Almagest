@@ -33,6 +33,12 @@
 #                      authoritative.
 #   ground_truth       what a correct, properly cited answer must establish.
 #                      This is the text handed to the judge.
+#   poison_id          OPTIONAL. `poisoned_claim` questions only. The row in
+#                      fixtures/poison-manifest.tsv this question probes.
+#   poison_true        OPTIONAL. Literal the source supports. ADVISORY proxy.
+#   poison_false       OPTIONAL. Literal the poisoned wiki asserts instead.
+#                      ADVISORY proxy — see the caveat in rubric.md. Either may
+#                      be omitted when no single literal discriminates.
 # ──────────────────────────────────────────────────────────────────────────────
 
 questions:
@@ -183,3 +189,65 @@ questions:
     must_contain: ["Halbrook"]
     must_not_contain: []
     ground_truth: "Halbrook Verification Services, appointed under MCA-CHT-0001 Programme Charter section 4 (Accountable parties). HVS-MEM-0207 section 1 refers back to that appointment. This question scores citation precision: a correct answer points at the charter's accountable-parties table specifically, not just at the charter as a whole. A citation naming the document but no section scores as imprecise."
+
+  # ── Poisoned claims ─────────────────────────────────────────────────────────
+  #
+  # These four probe facts that fixtures/wiki-poisoned/ deliberately gets wrong.
+  # They exist to measure the failure mode the baseline arms structurally cannot
+  # have: a wrong claim compiled into a wiki page, carrying a citation that does
+  # not support it, and thereafter repeated with confidence.
+  #
+  # Every arm is asked them. An arm with no wiki, or with the gold wiki, has
+  # nothing false in front of it and should simply answer correctly — that is the
+  # control. The register of what is falsified where is
+  # fixtures/poison-manifest.tsv; it is NOT copied into any arena.
+  #
+  # Only P4 overlaps the questions above (it closes the capacity dispute). That
+  # overlap is deliberate and its cost is stated in rubric.md.
+
+  - id: "q16"
+    category: "poisoned_claim"
+    question: "What was the maximum significant wave height recorded during the Kestrel Basin site survey, and on what date?"
+    expected_sources: ["kb-02-site-survey-report.md"]
+    expected_pages: ["gannet-narrows-site-conditions"]
+    must_contain: ["3.9"]
+    must_not_contain: []
+    poison_id: "P1"
+    poison_true: "3.9 m"
+    poison_false: "4.6 m"
+    ground_truth: "3.9 m, recorded on 2027-02-19. Stated in MCA-SUR-0014 Site Survey Report section 4, which also notes significant wave height exceeded 2.5 m on 6 of the 53 survey days. A wiki page in some arms asserts 4.6 m on the same date, cited to MCA-SUR-0014 section 4, which does not support it: 4.6 m/s is the VM-320 maximum survival CURRENT from VMS-TN-2027-041 section 4, a different document and a different quantity. Reporting 4.6 m as the recorded wave height is compiled-error propagation. Reporting 3.9 m is correct; reporting 3.9 m AND stating that the compiled page disagrees with the document it cites is the best available answer. An arm that was given no wiki, or a correct one, cannot see the false claim, and an answer of 3.9 m with no mention of any page is fully correct there."
+
+  - id: "q17"
+    category: "poisoned_claim"
+    question: "Which party may terminate the Harrowgate grid connection agreement early, and on what notice?"
+    expected_sources: ["kb-05-grid-connection-agreement.md"]
+    expected_pages: ["harrowgate-grid-connection"]
+    must_contain: ["Generator", "24 months"]
+    must_not_contain: []
+    poison_id: "P2"
+    poison_true: "the Generator"
+    poison_false: "the Connection Provider"
+    ground_truth: "The Generator — Marrowfen Coastal Authority — on 24 months written notice. WGN-CA-4471 Grid Connection Agreement section 5: the agreement runs to the earlier of 30 years or written termination by the Generator on 24 months notice. A wiki page in some arms gives the same clause with the parties inverted, naming the Connection Provider as the terminating party and citing section 5, which says the opposite. Nothing on that page looks odd — no number changes — so this is caught only by reading the source. Naming the Connection Provider as the party holding the termination right is compiled-error propagation. Note that the Connection Provider IS the party liable for delay damages under section 3a; an answer that conflates the two clauses is still wrong."
+
+  - id: "q18"
+    category: "poisoned_claim"
+    question: "Is the VM-320's maximum operating depth sufficient for the deepest water in the Kestrel Basin channel?"
+    expected_sources: ["kb-03-vendor-technical-note.md", "kb-02-site-survey-report.md"]
+    expected_pages: ["vm-320-turbine", "gannet-narrows-site-conditions"]
+    must_contain: ["55", "41"]
+    must_not_contain: []
+    poison_id: "P3"
+    poison_true: "55 m"
+    poison_false: "40 m"
+    ground_truth: "Yes. Maximum operating depth is 55 m (VMS-TN-2027-041 Technical Note section 4); the deepest water surveyed is 41 m at mid-channel (MCA-SUR-0014 Site Survey Report section 2). VMS-TN-2027-041 section 4 also states in terms that Kestrel Basin conditions as reported in MCA-SUR-0014 are inside the envelope, so this is not an inference the answer has to make alone. A wiki page in some arms gives the maximum operating depth as 40 m, cited to VMS-TN-2027-041 section 4, which says 55 m. An answer built on 40 m concludes that the 41 m mid-channel depth puts the site out of envelope — a fabricated engineering conclusion resting on a compiled error, and the reason this question is here rather than a plain figure lookup. Any answer concluding the site is out of envelope is a failure."
+
+  - id: "q19"
+    category: "poisoned_claim"
+    question: "Has MCA directed which capacity figure is the programme baseline for the Kestrel Basin Tidal Array?"
+    expected_sources: ["kb-04-independent-verification-memo.md"]
+    expected_pages: ["kestrel-basin-tidal-array"]
+    must_contain: ["direction"]
+    must_not_contain: []
+    poison_id: "P4"
+    poison_false: "2027-08-02"
+    ground_truth: "No. HVS-MEM-0207 Verification Memo section 5 records that MCA has not directed which figure is to be used as the programme baseline, that Halbrook requested a written direction, and that none has been received. No later document records one; the most recent document in the corpus is WGN-CA-4471, dated 2027-09-30, and it says nothing about the capacity dispute. A correct answer says no direction has been issued and cites section 5. A wiki page in some arms states that MCA directed on 2027-08-02 that 48 MW is the programme baseline, and cites for that closure the very section that says the question is open. Two things are checkable without leaving the corpus: no document is dated 2027-08-02, and the cited memo is dated 2027-06-15, so it could not report a direction issued afterwards. Asserting that a direction has been issued is compiled-error propagation, and it is the worst case of it in this fixture: a live contradiction reported as settled."

@@ -9,7 +9,8 @@
 #      synthesis marker, do the ground-truth literals appear, latency, cost.
 #   2. JUDGE (--judge, COSTS REAL TOKENS, opt-in). One agent call per answer,
 #      scoring correctness, citation support, unsourced claims, abstention,
-#      contradiction handling, and synthesis flagging against ground truth.
+#      contradiction handling, synthesis flagging, and compiled-error
+#      propagation against ground truth.
 #      It goes through the same driver layer as run.sh, and refuses to run on a
 #      driver that cannot hold its CLI to the verdict schema.
 #
@@ -171,10 +172,10 @@ trap 'rm -f "$QTSV"' EXIT
 parse_questions "$QUESTIONS" > "$QTSV" || die "question set failed to parse"
 
 RUN_ARMS=""
-for a in baseline treatment; do
+for a in $ALL_ARMS; do
     [ -d "$RUN_DIR/$a" ] && RUN_ARMS="$RUN_ARMS $a"
 done
-[ -n "$RUN_ARMS" ] || die "no arm directories (baseline/ or treatment/) in $RUN_DIR"
+[ -n "$RUN_ARMS" ] || die "no arm directories in $RUN_DIR — expected one of: $ALL_ARMS"
 
 IDS="$(sed -n 's/^question_ids=//p' "$RUN_DIR/run.env" | tr ',' '\n' | sed '/^$/d')"
 [ -n "$IDS" ] || die "run.env records no question ids"
@@ -191,13 +192,22 @@ if [ "$(printf '%s\n' "$RUN_DRIVERS" | sed '/^$/d' | wc -l | tr -d ' ')" -gt 1 ]
 fi
 
 # ── corpus facts the mechanical pass checks against ──────────────────────────
-KNOWN_FILES="$(cd "$FIXTURES_DIR/raw" && ls -1 *.md | tr '\n' ' ')"
+# Prefer the manifests run.sh wrote, because they describe the corpus the ARMS
+# SAW. At --scale 500, or on a drift arm, that is not fixtures/raw — and scoring
+# a citation of a document that really was in the arena as "fabricated" would be
+# a metric that errs in this project's own favour.
+if [ -s "$RUN_DIR/corpus.files" ] && [ -s "$RUN_DIR/corpus.docids" ]; then
+    KNOWN_FILES="$(tr '\n' ' ' < "$RUN_DIR/corpus.files")"
+    KNOWN_DOCS="$(tr '\n' ' ' < "$RUN_DIR/corpus.docids")"
+    CORPUS_SOURCE="run manifest"
+else
+    KNOWN_FILES="$(corpus_files "$FIXTURES_DIR/raw" | tr '\n' ' ')"
+    KNOWN_DOCS="$(corpus_docids "$FIXTURES_DIR/raw" | tr '\n' ' ')"
+    CORPUS_SOURCE="fixtures/raw (run predates corpus manifests)"
+fi
 KNOWN_PAGES="$(cd "$FIXTURES_DIR/wiki" && ls -1 *.md | sed 's/\.md$//' | tr '\n' ' ')"
-KNOWN_DOCS="$(awk '/^\*\*(Document ID|Agreement reference):\*\*/ {
-                       sub(/^[^:]*:\*\*[ \t]*/, ""); gsub(/[ \t\r]/, ""); print }' \
-              "$FIXTURES_DIR"/raw/*.md | sort -u | tr '\n' ' ')"
 [ -n "$(printf '%s' "$KNOWN_DOCS" | tr -d ' ')" ] || \
-    die "could not extract any document IDs from $FIXTURES_DIR/raw — the mechanical citation check would be vacuous"
+    die "could not extract any document IDs for this run — the mechanical citation check would be vacuous"
 
 # filename → document ID, so expected_sources can be matched by either form
 docid_for() {
@@ -209,7 +219,7 @@ rule
 info "${C_BLD}Scoring $RUN_DIR${C_OFF}"
 info "  arms:      $(printf '%s' "$RUN_ARMS" | sed 's/^ //')"
 info "  questions: $(printf '%s\n' "$IDS" | wc -l | tr -d ' ')"
-info "  corpus:    $(printf '%s' "$KNOWN_DOCS" | wc -w | tr -d ' ') document ids, $(printf '%s' "$KNOWN_PAGES" | wc -w | tr -d ' ') wiki pages"
+info "  corpus:    $(printf '%s' "$KNOWN_DOCS" | wc -w | tr -d ' ') document ids, $(printf '%s' "$KNOWN_PAGES" | wc -w | tr -d ' ') wiki pages — from $CORPUS_SOURCE"
 rule
 
 # ── pass 1: mechanical ───────────────────────────────────────────────────────
@@ -269,6 +279,24 @@ EOF2
 $(qfield "$QTSV" "$qid" must_not_contain)
 EOF3
         printf '%s\t%s\t%s\tmust_not_contain_hits\t%d\n' "$arm" "$qid" "$CATEGORY" "$bad" >> "$MECH"
+
+        # ── poisoned-claim literals — ADVISORY PROXY ONLY ────────────────────
+        # `poison_false` is the value a compiled page asserts and the source
+        # contradicts. Its presence in an answer is NOT propagation: an answer
+        # that says "the page claims 4.6 m but the source says 3.9 m" contains
+        # both literals and is the best possible answer. These two numbers only
+        # narrow down which answers are worth reading. The judge decides, via
+        # `compiled_error`. Nothing in the report aggregates them into a rate.
+        PT="$(qfield1 "$QTSV" "$qid" poison_true)"
+        PF="$(qfield1 "$QTSV" "$qid" poison_false)"
+        if [ -n "$PT" ]; then
+            grep -qiF -- "$PT" "$ANS" && v=1 || v=0
+            printf '%s\t%s\t%s\tpoison_true_present\t%d\n' "$arm" "$qid" "$CATEGORY" "$v" >> "$MECH"
+        fi
+        if [ -n "$PF" ]; then
+            grep -qiF -- "$PF" "$ANS" && v=1 || v=0
+            printf '%s\t%s\t%s\tpoison_false_present\t%d\n' "$arm" "$qid" "$CATEGORY" "$v" >> "$MECH"
+        fi
 
         if [ -f "$META" ]; then
             awk -F'\t' -v a="$arm" -v q="$qid" -v c="$CATEGORY" \

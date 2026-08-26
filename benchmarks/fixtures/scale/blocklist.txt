@@ -1,0 +1,63 @@
+# benchmarks/fixtures/scale/blocklist.txt
+#
+# Literal strings (case-insensitive, one per line) that a generated distractor
+# document must NEVER contain.
+#
+# Two kinds of term are here, for two different reasons:
+#
+#   1. Every proper noun and document-ID prefix from the real fixture corpus. A
+#      distractor mentioning them stops being a distractor and starts being a
+#      source the questions might legitimately draw on.
+#   2. Every phrase attached to a PLANTED ABSENCE. The unanswerable questions
+#      work only because nothing anywhere in the corpus speaks to those topics.
+#      One generated document mentioning a decommissioning cost would silently
+#      convert five questions into different questions.
+#
+# fixtures/scale/generate.sh greps its own output against this file and exits
+# non-zero on a hit, so the corpus cannot be generated wrong and used anyway.
+# selftest.sh repeats the check independently.
+#
+# Comment lines and blank lines are stripped before matching.
+
+# ── fixture proper nouns ──────────────────────────────────────────────────────
+Kestrel
+Gannet
+Thorne
+Marrowfen
+Verrick
+Halbrook
+Wold
+Harrowgate
+KBTA
+VM-320
+ADCP
+KB-N
+KB-M
+KB-S
+
+# ── fixture document-ID prefixes ──────────────────────────────────────────────
+MCA-
+HVS-
+VMS-
+WGN-
+
+# ── planted absences ──────────────────────────────────────────────────────────
+decommission
+seabed restoration
+end-of-life
+capacity factor
+energy yield
+annual energy
+GWh
+MWh
+availability warranty
+staffing
+headcount
+shore base
+shift pattern
+telemetry
+control-system
+control system security
+firm export
+connection charge
+nameplate

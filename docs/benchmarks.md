@@ -3,7 +3,12 @@
 Almagest ships a benchmark harness that compares an agent answering from raw
 source files against the same agent answering from a compiled Almagest wiki.
 Same questions, same driver, same model, same instructions, same scoring — the
-only variable is whether the material has been compiled.
+only variable is what is in the working directory.
+
+It measures both directions. What compiling buys, against a competitor that is
+allowed to search rather than one that is not. And what compiling **costs** when
+the compiled page turns out to be wrong or out of date — a failure mode the raw
+sources structurally cannot have.
 
 **No results have been published.** The harness exists; the numbers do not. The
 results tables in `benchmarks/README.md` ship empty and can only be filled by
@@ -24,6 +29,7 @@ is built around the claim Almagest actually makes, which is trust.
 | Metric | Question it answers |
 |--------|--------------------|
 | **Confabulation rate** | Asked something the corpus cannot answer, does the agent decline — or invent? |
+| **Compiled-error propagation rate** | Given a wiki page that contradicts the source it cites, does the agent notice — or repeat the page? |
 | **Citation support** | Does each citation point at a location that genuinely contains the claim? |
 | **Unsourced claims** | How many facts are asserted with nothing behind them? |
 | **Contradiction surfacing** | Given a real conflict between sources, are both sides shown — or is one silently picked? |
@@ -32,9 +38,18 @@ is built around the claim Almagest actually makes, which is trust.
 | **Citation integrity** | Do the cited pages and document IDs exist at all? |
 | **Latency and cost** | What does an answer take, in seconds and dollars? |
 
-Confabulation rate is the row that matters most. A wrong answer is a retrieval
-failure. A confidently invented answer with a citation attached is the failure a
-knowledge base is meant to make impossible.
+Two rows carry most of the weight, and they point in opposite directions.
+
+**Confabulation rate** is the failure a knowledge base is meant to prevent. A
+wrong answer is a retrieval failure; a confidently invented answer with a
+citation attached is the thing the whole apparatus exists to make impossible.
+
+**Compiled-error propagation rate** is the failure a knowledge base
+*introduces*. Compiling is a write, and a wrong write is durable: a false claim
+on a wiki page has correct frontmatter, a real source id, a real section number,
+and no hedging, so it reads as more authoritative than the document that
+contradicts it. If you are deciding whether to adopt any of this, that is the
+number to ask for.
 
 Full definitions in `benchmarks/rubric.md`, including which metrics are computed
 mechanically and which need a model to judge them.
@@ -43,16 +58,114 @@ mechanically and which need a model to judge them.
 
 | Piece | Role |
 |-------|------|
-| `benchmarks/fixtures/` | A self-contained fictional corpus — five source documents and a hand-compiled wiki. Never `brain/`. |
-| `benchmarks/questions.yaml` | 15 questions with ground truth, one category per question. |
-| `benchmarks/prompts/_shared.md` | The answering protocol. **Identical for both arms.** |
+| `benchmarks/fixtures/` | A self-contained fictional corpus — five source documents and a complete hand-compiled brain. Never `brain/`. |
+| `benchmarks/fixtures/wiki/` | The gold wiki. Schema v2; audits clean under `tools/audit.mjs`. |
+| `benchmarks/fixtures/wiki-poisoned/` | The same wiki with four planted false claims. Also audits clean — see below. |
+| `benchmarks/fixtures/drift/` | Version 2.0 of a source already in the corpus: same filename, different sha256. |
+| `benchmarks/fixtures/scale/` | Deterministic distractor generator, for `--scale`. |
+| `benchmarks/questions.yaml` | 19 questions with ground truth, one category per question. |
+| `benchmarks/questions-drift.yaml` | 4 re-ingest questions. Separate file — the drift arms see a different corpus. |
+| `benchmarks/prompts/_shared.md` | The answering protocol. **Identical for every arm.** |
 | `benchmarks/drivers/` | One script per harness — how a question is actually put to an agent. |
 | `benchmarks/run.sh` | Runs the arms, captures answers, timing, and cost. |
 | `benchmarks/score.sh` | Scores a run and writes the report. |
 | `benchmarks/selftest.sh` | Verifies the harness against a test double. No API calls. |
 
 Nothing outside `benchmarks/` is read or written. Your knowledge base is never
-in scope for either arm.
+in scope for any arm.
+
+### The arms
+
+| Arm | Working directory contains | Answers |
+|-----|---------------------------|---------|
+| `baseline` | `sources/` — the raw documents, nothing else | does compilation change anything, instructions held identical? |
+| `baseline-retrieval` | `sources/`, plus an instruction to search it and a worked example | does compilation beat someone who knows to grep? |
+| `treatment` | `wiki/` + `index.md` + `sources/` | the upper bound: what a correctly compiled wiki buys |
+| `poisoned` | the same, but the wiki carries four planted false claims | what a *wrongly* compiled wiki costs |
+| `drift-baseline` | an **amended** `sources/`, no wiki | control for the drift pair |
+| `drift` | the amended `sources/` and the wiki compiled from the pre-amendment ones | does a stale page get repeated? |
+
+`--arm both` is `baseline,treatment` — the original pair, and still the default.
+`--arm all` adds the retrieval and poisoned arms. The drift arms need their own
+question set and `run.sh` refuses to mix them; see *Drift* below.
+
+**Why the bare baseline survives alongside the retrieval one.** "Raw documents
+in a folder, no tools" is not what anyone would actually do, so
+`baseline-retrieval` is the honest competitor. But it differs from `treatment`
+in *two* things — compilation and several paragraphs of retrieval coaching — so
+its delta cannot separate "compiling helped" from "prompting helped". The bare
+baseline holds instructions identical and isolates one variable. `baseline` is
+the floor; `baseline-retrieval` is the bar. Both are worth having. The tool
+allowlist is the same for every arm — the bare baseline is un-prompted, not
+tool-deprived.
+
+### The fixtures are a real brain
+
+`benchmarks/fixtures/` has `wiki/`, `index.md`, and `manifest.yaml` laid out the
+way a real one is, written to schema v2, and both wikis audit clean:
+
+```bash
+node tools/audit.mjs --repo benchmarks/fixtures --config brain.config.yaml \
+                     --wiki wiki --brain . --manifest manifest.yaml
+```
+
+`selftest.sh` runs that for both wikis, so a fixture that drifts out of schema
+fails there rather than shipping. This is not tidiness: the treatment arm exists
+to show what a compiled **Almagest** wiki does for an agent, and a wiki that
+failed Almagest's own correctness tool would not be one.
+
+That the **poisoned** wiki also audits clean is not a gap in the audit. Every
+check it runs is mechanical, and a well-formed lie violates none of them — a
+citation naming a real section that flatly contradicts the claim is valid by
+every definition a program can apply without reading the document. The audit
+bounds the *form* of a claim; the poisoned arm measures the gap that leaves.
+
+### Corpus scale
+
+Five documents is below the size at which retrieval is a constraint: an agent
+reads the whole corpus, so a five-document result can show a summarisation
+benefit and cannot show a retrieval benefit. "Compilation helps" is a curve in
+corpus size, and one point is not a curve.
+
+```bash
+benchmarks/run.sh --arm all --scale 50     # 5 real + 45 generated distractors
+benchmarks/run.sh --arm all --scale 500    # 5 real + 495
+```
+
+Padding is generated from `--scale` and `--scale-seed` alone — no clock, no
+network, no package manager — so two runs with the same arguments produce
+byte-identical corpora, and a larger tier is a strict superset of a smaller one.
+Distractors answer nothing, and generation aborts rather than warns if one
+mentions a fixture proper noun or a topic a planted absence depends on.
+
+**It measures retrieval pressure, not domain breadth.** The answers still live
+in the same five documents; no new entities, relationships, or contradictions
+appear. It is a weaker instrument than 500 genuinely distinct documents, and it
+exists because those do not. Runs at different `--scale` or `--scale-seed` are
+not comparable to each other, and the report says so.
+
+### Drift
+
+Incremental re-ingest is a headline feature, so it should be measured.
+`fixtures/drift/` holds version 2.0 of a document already in the corpus — same
+filename, same agreement reference, different sha256 — changing a capacity
+figure, a commissioning date, a damages cap, and adding an obligation the wiki
+still records as absent.
+
+```bash
+benchmarks/run.sh --questions benchmarks/questions-drift.yaml \
+                  --arm drift,drift-baseline
+```
+
+The drift arms see a different corpus, so the same question has a different
+correct answer than in the main set. Two ground truths under one question id
+would be a bug waiting to be quoted, so the drift questions live in their own
+file with their own ids, and `run.sh` **refuses** to run a drift arm against the
+main question set or a main arm against the drift set.
+
+A stale page and a wrong page score on the same metric. From the reader's seat
+they are the same defect: a compiled claim the source does not support, in the
+same tone with the same citation.
 
 ## Requirements
 
@@ -151,7 +264,11 @@ benchmarks/selftest.sh
 
 It exercises the parsers, the fixture corpus, arena isolation, answer capture,
 capability reporting, mechanical scoring, report rendering, and every failure
-branch — against `drivers/fake.sh`, which returns canned output.
+branch — against `drivers/fake.sh`, which returns canned output. It also runs
+`tools/audit.mjs` over both fixture wikis, checks every planted error in the
+poisoned wiki in both directions, and verifies the scale generator is
+deterministic. If Node is absent the audit checks are skipped, not failed: the
+harness itself needs no runtime.
 
 ## 2. Dry run
 
@@ -171,7 +288,7 @@ benchmarks/run.sh --only q01 --arm both
 Two API calls. Read the two answers in
 `benchmarks/results/<run-id>/{baseline,treatment}/q01.answer.md` before
 committing to a full run — if the arms are not doing what you expect, this is
-where you find out for two calls instead of thirty.
+where you find out for two calls instead of seventy-six.
 
 ## 4. Full run
 
@@ -181,13 +298,20 @@ benchmarks/run.sh --driver claude-code --model sonnet --label v1
 
 ### What it costs
 
-**This spends real money.** Each question goes to the API once per arm.
+**This spends real money.** Each question goes to the API once **per arm**, and
+`--judge` sends each captured answer once more. Arms multiply; `--scale` does
+not — a larger corpus costs more tokens per call, not more calls.
 
-| Command | API calls, 15-question set |
-|---------|---------------------------|
-| `run.sh` (both arms) | 30 |
-| `score.sh --judge` | 30 |
-| Full run, judged | **60** |
+The main set is 19 questions; the drift set is 4.
+
+| Command | Arms | API calls | Judge calls | Total |
+|---------|------|-----------|-------------|-------|
+| `run.sh --arm both` | 2 | 38 | 38 | **76** |
+| `run.sh --arm all` | 4 | 76 | 76 | **152** |
+| `run.sh --arm all --scale 50` | 4 | 76 | 76 | **152**, at more tokens each |
+| `run.sh --arm all --scale 500` | 4 | 76 | 76 | **152**, at many more tokens each |
+| `run.sh --questions questions-drift.yaml --arm drift,drift-baseline` | 2 | 8 | 8 | **16** |
+| Everything: `--arm all` at three scales, plus drift | — | 236 | 236 | **472** |
 
 The script prints the call count and asks for confirmation before starting. It
 refuses to run unattended without `--yes`, and caps per-call spend with
@@ -197,9 +321,12 @@ refuses to run unattended without `--yes`, and caps per-call spend with
 
 | Flag | Meaning |
 |------|---------|
-| `--arm baseline\|treatment\|both` | Which arm(s) to run. Default `both` |
+| `--arm LIST` | Comma list of arm names, or a group: `both` = `baseline,treatment` (default), `all` = the four main arms |
 | `--driver NAME\|PATH` | Harness driver. Default `claude-code`; env `ALMAGEST_BENCH_DRIVER` |
 | `--model NAME` | Model that answers, spelled the way the driver's CLI spells it. Default `sonnet` |
+| `--questions FILE` | Question set. Use `benchmarks/questions-drift.yaml` with the drift arms |
+| `--scale N` | Corpus size. Above 5 the corpus is padded with generated distractors |
+| `--scale-seed N` | Which padding. Same seed, same bytes, forever. Default `1` |
 | `--only q05,q10` | Run just these question ids |
 | `--label NAME` | Prefix for the run directory |
 | `--budget-usd N` | Per-call spend cap. Default `1.00` |
@@ -222,8 +349,15 @@ are syntactic checks: none of them can tell you whether an answer is true.
 
 **Judge** — opt-in, costs tokens. A model reads the question, the ground truth,
 and the answer, and scores correctness, citation support, unsourced claims,
-abstention, contradiction handling, and synthesis flagging. It is blind to which
-arm produced the answer.
+abstention, contradiction handling, synthesis flagging, and compiled-error
+propagation. It is blind to which arm produced the answer.
+
+`compiled_error` has three values, not two. `propagated` asserts the page's
+claim as fact. `caught` gives the value the source supports **and** says the
+page disagrees. `corrected_silently` gives the right answer without mentioning
+the page — **not a defect**: arms with no wiki, or with the correct one, land
+there and should. Reading it as a defect would turn every baseline answer into a
+failure and the metric into noise.
 
 Use a different model for the judge than for the arms where you can:
 
@@ -242,12 +376,14 @@ without the label.
 
 ```
 benchmarks/results/<run-id>/
-├── run.env                    driver, driver version, capabilities, model, date, question-set hash
+├── run.env                    driver, driver version, capabilities, model, arms, scale, date, question-set hash
 ├── report.md                  the rendered report
 ├── scores-mechanical.tsv      machine-readable
 ├── scores-judge.tsv           machine-readable, only if --judge ran
-├── arena/{baseline,treatment} the exact directory each arm saw
-└── {baseline,treatment}/
+├── corpus.files               the documents the arms saw (scale manifests)
+├── corpus.docids              their document ids — what "fabricated" is checked against
+├── arena/<arm>/               the exact directory each arm saw
+└── <arm>/
     ├── <qid>.answer.md        the answer, verbatim
     ├── <qid>.meta.tsv         latency, cost, turns
     ├── <qid>.raw.json         the full CLI response
@@ -267,7 +403,8 @@ The per-question table is the useful part. Aggregates hide which question moved.
 
 If you publish numbers from this harness, publish the run configuration with
 them: driver and driver version, model, judge model, date, question-set hash,
-and every capability the driver reported `no`. All of them are in `run.env` and
+`--scale`, `--scale-seed`, the arms that ran, and every capability the driver
+reported `no`. All of them are in `run.env` and
 in the report's metadata and comparability blocks. A benchmark figure
 without them is not reproducible, and an unreproducible figure is exactly the
 kind of claim this project refuses to write into a wiki page.
@@ -279,9 +416,11 @@ kind of claim this project refuses to write into a wiki page.
    A treatment result is therefore an upper bound: it says what a correctly
    compiled wiki buys you, not whether Almagest's ingest produces one.
 
-2. **Fifteen questions is a small sample.** One question flipping moves a
-   percentage by roughly seven points. Smaller differences are noise. The
-   harness makes one call per question and does not estimate variance.
+2. **Nineteen questions is a small sample.** One question flipping moves a
+   percentage by roughly five points, and a per-category rate by far more — the
+   compiled-error propagation rate has a denominator of four, so one flip is 25
+   points. Smaller differences are noise. The harness makes one call per
+   question and does not estimate variance.
 
 3. **The judge is a model.** Score the same answers twice and the numbers move.
    If judge and answerer share a model family, a fabrication convincing to one
@@ -297,6 +436,24 @@ kind of claim this project refuses to write into a wiki page.
 6. **It scores a harness, not a model.** The driver is the harness's own CLI,
    with its system prompt, tool set, and retry behaviour intact. Swapping the
    driver swaps both halves at once.
+
+7. **Scaling is padding, not breadth.** `--scale 50` and `--scale 500` add
+   generated distractors that answer nothing. That produces real retrieval
+   pressure and nothing else — no new entities, relationships, or
+   contradictions, and documents more uniform than any real corpus. Never report
+   a scaled figure without its `--scale-seed`.
+
+8. **The planted errors were written by the same hand as the questions**, and
+   the contradicting source is sitting in the same arena, and
+   `prompts/treatment.md` tells the agent that the source outranks the page.
+   Four deliberately catchable errors under generous conditions are not a sample
+   of the errors a real ingest makes. Read a good compiled-error propagation
+   score as a ceiling, not a floor.
+
+9. **One planted error contaminates one row.** The fourth closes the corpus's
+   only contradiction, which three of the main questions also probe, so the
+   `poisoned` arm's contradiction figure is not a control. That trade is
+   deliberate and is restated wherever the metric is defined.
 
 These are restated at the end of `benchmarks/README.md` because a number quoted
 without them is a number misquoted.

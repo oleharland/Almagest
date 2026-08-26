@@ -104,6 +104,12 @@ manifest:
 #   decision   — a recorded architectural or strategic decision (ADR-style)
 #   reference  — stable lookup material (standards, specs, glossaries)
 #   entity     — a real-world thing: a product, org, person-role, or system
+#   claim      — YOUR conclusion, not a source's. Normally `origin: self`, so its
+#                body carries no inline citations; instead it must name what it
+#                rests on in a `## Basis` section of [[wikilinks]] to
+#                `origin: source` pages. Title it as a sentence, not a noun —
+#                "Availability warranties transfer O&M risk to the vendor",
+#                not "Warranties".
 
 page_types:
   - topic
@@ -111,12 +117,17 @@ page_types:
   - decision
   - reference
   - entity
+  - claim
 
 
-# ── Type-specific frontmatter fields ─────────────────────────────────────────
+# ── Type-specific requirements ───────────────────────────────────────────────
 # Additional frontmatter fields required (or recommended) for each page type.
 # The agent will prompt for these when creating a page of that type.
-# All other page types inherit only the base fields (title, type, tier, tags).
+# All other page types inherit only the base fields.
+#
+# An entry prefixed `section:` names a required BODY section rather than a
+# frontmatter field. Everything else is a frontmatter key.
+# Missing entries are audit check SCHEMA-003.
 
 type_fields:
   decision:
@@ -126,7 +137,13 @@ type_fields:
 
   entity:
     - entity_type        # product | organisation | system | role
-    - aliases            # alternative names or abbreviations for this entity
+                         # `aliases` is a base field now — do not re-declare it
+
+  claim:
+    - "section:## Basis" # REQUIRED. Bullets are [[wikilinks]] to `origin: source`
+                         # pages. A claim page needs no inline citations, so this
+                         # section is the only thing tying it to evidence — an
+                         # empty or prose Basis is check CITE-006.
 
 
 # ── Anonymization ─────────────────────────────────────────────────────────────
@@ -144,26 +161,33 @@ anonymization:
   #   - sources are real meeting notes, transcripts, tickets, or CRM exports
   #   - you are handling personal data under GDPR or a similar regime
   #
-  # When enabled, the agent STOPS on every detected name, alerts you, and
-  # waits for approval before writing an anonymized replacement.
+  # When enabled, the agent runs a named-entity pass over every source before
+  # extraction, STOPS on each personal name it finds, and waits for approval
+  # before writing a role-based replacement.
+  #
+  # This is BEST-EFFORT and is stated as such deliberately. An agent NER pass
+  # misses names; the mandatory human review of the resulting diff is the
+  # actual control, not the pass. Do not treat `enabled: true` as compliance.
   enabled: false
 
-  # Patterns that identify person-role strings in raw source text.
-  # Only consulted when `enabled: true`.
-  # Each entry has:
-  #   pattern  — regex applied to the raw text
-  #   org      — the organisation context this pattern belongs to
-  # Matches are replaced with the role label only (name stripped).
-  role_patterns:
-    - pattern: "\\b[A-Z][a-z]+ [A-Z][a-z]+\\s*[,–-]\\s*Engineering Lead\\b"
-      org: "Acme Corp"
-    - pattern: "\\b[A-Z][a-z]+ [A-Z][a-z]+\\s*[,–-]\\s*Product Manager\\b"
-      org: "Acme Corp"
-    - pattern: "\\b[A-Z][a-z]+ [A-Z][a-z]+\\s*[,–-]\\s*Head of Design\\b"
-      org: "Acme Corp"
+  # NOTE — `role_patterns` was REMOVED, not renamed.
+  #
+  # It held three regexes of the shape `Firstname Lastname, Engineering Lead`.
+  # That form matches a rounding error of the names in real sources: it misses
+  # every name without an appended job title, every name in a possessive or
+  # inflected form, every non-Western name shape, every initial, every name in
+  # a filename, and every name that appears alone in a sentence. What it did
+  # produce was a config block that looked like coverage — and that confidence
+  # is precisely what stops a reviewer reading the diff, in the GDPR case this
+  # setting exists for. A regex list that is 5% effective and 100% reassuring
+  # is worse than no regex list.
+  #
+  # The replacement is the NER pass above plus mandatory human diff review.
 
   # Names that should NOT be flagged as personal data.
   # Add company names, product names, and well-known terms here.
+  # This list still does real work: it suppresses the NER pass's false
+  # positives, which is a job a fixed list is actually good at.
   ignore_names:
     - "Acme Corp"
     - "Almagest"
@@ -196,6 +220,69 @@ owner_teams:
   - leadership
   - design
   - operations
+
+
+# ── Audit ─────────────────────────────────────────────────────────────────────
+# Configuration read by `tools/audit.mjs`. The audit is a deterministic Node
+# program, not an agent reading pages one by one — that is why its thresholds
+# and severities live in config instead of in prose in a rules file.
+#
+# The agent RUNS the tool. It does not re-implement the checks by hand, and it
+# does not argue with the exit code. See docs/audit.md.
+
+audit:
+
+  # `last_verified` older than this many days makes the page stale (STALE-001).
+  # Keyed by tier, plus a tighter threshold for anything still `status: stub` —
+  # a stub is a promise to come back, and 30 days is when the promise expires.
+  stale_after_days:
+    canonical: 0         # 0 = never stale. Canonical pages change by human edit only
+    curated: 90
+    evidence: 90
+    stub: 30             # applies by status, and wins over the tier threshold
+
+  # Which check IDs fail the run. Errors exit 1 and block an ingest commit;
+  # warnings are reported and exit 0. Nothing here is a matter of taste: an
+  # error means the wiki asserts something it cannot back up.
+  severity:
+    errors:
+      - SCHEMA-001       # missing required frontmatter field
+      - SCHEMA-002       # invalid enum value (type/tier/status/confidence/origin)
+      - SCHEMA-003       # missing type_fields entry required for this type
+      - SCHEMA-004       # owner missing or not in owner_teams while require_owner
+      - SCHEMA-005       # type carries a type_fields vocabulary value
+      - LINK-001         # [[wikilink]] to a page that does not exist
+      - LINK-003         # relations target does not exist
+      - CITE-001         # citation does not parse against the frozen grammar
+      - CITE-002         # citation id not in that page's sources
+      - CITE-003         # unsourced claim on an origin: source page
+      - CITE-004         # origin: source page with empty sources
+      - CITE-005         # sources[].sha256 disagrees with manifest.yaml
+      - CITE-006         # origin: self page with no/invalid ## Basis
+      - PROV-001         # sources[].path does not exist on disk
+      - PROV-002         # manifest entry names a pages slug that does not exist
+      - PROV-003         # a page's source is absent from manifest.yaml
+      - PROV-004         # index.md names a page that does not exist
+    warnings:
+      - LINK-002         # orphan — zero backlinks
+      - PROV-005         # page exists with no index.md row
+      - CANON-001        # outstanding entries in canonical-challenges.md
+      - STALE-001        # last_verified past threshold
+
+  # PROV-004 and PROV-005 are the two directions of the same drift and are
+  # deliberately NOT the same severity. An index.md row naming a page that does
+  # not exist asserts something false — error. A page with no row is an omission
+  # that asserts nothing — warning. Failing a build over the second punishes
+  # bookkeeping rather than truth.
+
+  # Append-only ledger of evidence that contradicts a canonical page. Lives
+  # OUTSIDE brain/wiki/ on purpose, so the wiki write gate does not apply to it
+  # and the agent can record a challenge without proposing a wiki edit.
+  challenges_path: brain/canonical-challenges.md
+
+  # Derived index emitted by `tools/audit.mjs index`. Committed, not gitignored —
+  # same idiom as the generated harness shims, and verified by `--check-index`.
+  index_dir: brain/.index
 
 
 # ── Sources ───────────────────────────────────────────────────────────────────

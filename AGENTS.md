@@ -10,10 +10,13 @@ AI-powered knowledge base framework. Fork this repo to build your own brain.
 almagest/
 ├── brain/                 ← content (the knowledge base)
 │   ├── raw/               ← intake queue (drop files here)
-│   │   └── processed/     ← originals after ingest
+│   │   ├── extracted/     ← committed text sidecars for binary sources
+│   │   └── processed/     ← originals after ingest (binaries gitignored)
 │   ├── wiki/              ← flat .md pages — THE source of truth
+│   ├── .index/            ← pages.tsv + aliases.tsv (generated, committed)
 │   ├── index.md           ← catalog of all pages + sources (for humans)
 │   ├── manifest.yaml      ← record of every ingested source (for the agent)
+│   ├── canonical-challenges.md ← data that contradicts canonical, never merged
 │   ├── log.md             ← audit trail
 │   ├── rules-index.md     ← map of where the rules live (index)
 │   └── CLAUDE.md          ← pointer to the reader rules (generated)
@@ -21,10 +24,10 @@ almagest/
 │   ├── contract.md        ← the minimum harness contract
 │   ├── routing.md         ← which rule file applies to which paths
 │   └── rules/             ← read.md · ingest.md · wiki.md
-├── tools/                 ← agent-shims.sh (generates every pointer file)
+├── tools/                 ← agent-shims.sh (pointer files) · audit.mjs (the checker)
 ├── site/                  ← Astro frontend (reads from brain/wiki/)
 │   ├── src/
-│   │   ├── lib/wiki.ts    ← wiki loader (frontmatter, wikilinks, backlinks)
+│   │   ├── lib/wiki.ts    ← typed wrapper over tools/lib/wiki-core.mjs
 │   │   ├── pages/         ← routes
 │   │   ├── components/    ← UI components
 │   │   ├── layouts/       ← page layouts
@@ -44,12 +47,13 @@ almagest/
 ### Local ingest (raw/ drop)
 
 1. Drop a file (PDF, video, Excel, doc) into `brain/raw/`
-2. Agent reads `brain/index.md` to check what's already known
+2. Agent greps `brain/.index/pages.tsv` and `aliases.tsv` to check what's already known
 3. Agent fingerprints the file (sha256) against `brain/manifest.yaml` — new, unchanged, or changed. Unchanged is skipped; changed is re-ingested as a diff against the pages it already produced
-4. Agent extracts entities, proposes new/updated wiki pages to user
-5. On approval: creates/updates `brain/wiki/` pages, cross-links with `[[wikilinks]]`
-6. Moves original to `brain/raw/processed/`, updates `index.md`, `manifest.yaml`, and `log.md`
-7. `site/` builds from `brain/wiki/` — `npm run build` in `site/`
+4. Binary sources get a committed text sidecar at `brain/raw/extracted/<name>.<ext>.txt` with `=== page N ===` markers. Citations point at the sidecar, so a locator can be checked
+5. Agent creates an `ingest/<source-slug>-<sha7>` branch, extracts entities, and writes pages there. Contradictions, canonical conflicts, deletions/merges/renames, and `confidence: low` curated pages stop for an in-session decision instead of being written
+6. `tools/audit.mjs` runs before the commit. Exit `1` blocks it
+7. Agent commits to the branch, updates `index.md`, `manifest.yaml`, `log.md`, and `brain/.index/`. **You review the diff and merge.** Nothing reaches `main` any other way
+8. `site/` builds from `brain/wiki/` — `npm run build` in `site/`
 
 ### Remote ingest (GitHub / GitLab over MCP)
 
@@ -57,16 +61,32 @@ almagest/
 2. Agent connects via the MCP server matching each entry's `provider` (`.mcp.json`)
 3. Agent reads files from remote repos, runs the same extraction flow
 4. Source reference logged in `index.md` and `manifest.yaml` (provider, repo, path, commit SHA, date) — no local copy. The recorded commit SHA is what makes the next run incremental
-5. Same proposal + approval flow as local ingest
+5. Same branch, audit, and merge flow as local ingest. This is the one path that can run unattended end to end: a scheduled sync ingests onto a branch and leaves you a diff
 
 ## Wiki page types
 
 Defined in `brain.config.yaml` → `page_types`. Configure this file to match your domain before starting ingest.
 
+Every page carries `origin`: `source` (claims derive from ingested material — each one cites a source) or `self` (the author's own conclusion — no inline citations, but a `## Basis` section of wikilinks to `origin: source` pages). A `claim` page is the normal home for `origin: self`; its title is a sentence, not a noun.
+
 Two behaviours ship **off** and are opt-in via config:
 
 - `anonymization.enabled` — when on, the agent stops on every personal name and waits for approval before writing a role-based replacement. Turn on for shared vaults or sources containing real personal data.
 - `require_owner` — when on, every page must name an owning team from `owner_teams`.
+
+## Citations
+
+One grammar, frozen so it can be checked by machine:
+
+```
+[source: <id>, <locator>]            [source: <id>, <locator>, (<date>)]            [source: unknown]
+```
+
+`<id>` matches an `id` in that page's `sources` list, or is the literal `unknown`. `<locator>` is one of `§<section>` · `p.<n>` · `pp.<n>-<m>` · `row <n>` · `slide <n>` · `t <hh:mm:ss>` · `line <n>`. The human-readable label lives in `sources[].title`, not in the citation.
+
+## The audit
+
+`tools/audit.mjs` (Node 22+) checks the wiki mechanically — schema, links, citation grammar, citation targets, provenance against `manifest.yaml`, staleness. Findings have stable IDs (`CITE-002`, `LINK-001`, …) that the rule files reference. `tools/audit.mjs index` regenerates `brain/.index/`; `--check-index` verifies it is current. Exit `0` clean, `1` violations, `2` tool error. An exit `1` blocks the commit.
 
 ## Capability tiers
 
@@ -80,14 +100,15 @@ harness cannot switch models, run the whole session on it.
 
 ## Non-negotiables
 
-These six hold across every operation, on every harness. Everything else is in the rule files named by the routing table below.
+These hold across every operation, on every harness. Everything else is in the rule files named by the routing table below.
 
-1. **No writes without approval.** The agent never creates, edits, or deletes a page in `wiki/` without an explicit "yes" from the user in the same conversation.
-2. **No unsourced claims.** Every factual claim carries an inline citation. If it can't be cited, mark it `[source: unknown]` and add it to `## Open questions`.
+1. **No unreviewed writes.** The agent never writes to `brain/wiki/` on `main`. Ingest works on an `ingest/<source-slug>-<sha7>` branch and commits there; reaching `main` is a human merging a reviewed diff. Contradictions, canonical conflicts, deletions, merges, renames, and `confidence: low` curated pages block for an in-session decision even on the branch.
+2. **No unsourced claims.** On an `origin: source` page every factual claim carries an inline `[source: <id>, <locator>]` whose `<id>` is an entry in that page's `sources`. If it can't be cited, mark it `[source: unknown]` and add it to `## Open questions`. An `origin: self` page carries no inline citations and must carry a `## Basis` section of wikilinks instead.
 3. **Surface contradictions, never overwrite them.** Quote both claims with their sources, propose a resolution, wait.
-4. **Canonical pages are guardrails.** The agent cannot propose changes to them. Data that contradicts canonical is flagged as out of scope, not merged.
+4. **Canonical pages are guardrails.** The agent cannot propose changes to them. Data that contradicts canonical is logged to `brain/canonical-challenges.md` as out of scope, not merged.
 5. **Fingerprint, don't guess.** A source is unchanged only when its `sha256` or commit SHA matches `manifest.yaml`. Same filename is not the same file.
 6. **Write-if-changed.** Don't rewrite a file whose content hasn't changed.
+7. **A page that fails the audit does not get committed.** `tools/audit.mjs` exiting `1` blocks the commit — fix the finding or leave the page unwritten. The audit is the mechanical half of rules 2 and 4; nothing else checks them.
 
 ## Rule routing
 
@@ -98,7 +119,11 @@ The rules live in `agent/rules/`. Each file opens with a "Load this when" line s
 | answer a question from the wiki | `agent/rules/read.md` |
 | process anything in `brain/raw/` | `agent/rules/ingest.md` |
 | create/edit/delete anything in `brain/wiki/` | `agent/rules/wiki.md` |
-| anything at all | `brain.config.yaml`, `brain/index.md`, `brain/manifest.yaml` |
+| run `tools/audit.mjs`, or act on a finding | `agent/rules/wiki.md` → Audit, `docs/audit.md` |
+| write to `brain/canonical-challenges.md` | `agent/rules/wiki.md` → Canonical |
+| regenerate `brain/.index/` | `docs/audit.md` — run `tools/audit.mjs index`, never hand-edit the files |
+| print a run summary to the terminal | `agent/rules/ingest.md`, `docs/terminal-output.md` |
+| anything at all | `brain.config.yaml`, `brain/.index/pages.tsv`, `brain/index.md`, `brain/manifest.yaml` |
 
 ## Loading on this harness
 
@@ -106,4 +131,4 @@ There is no path-scoped rule loading here — this file is all you get. The rout
 
 ## Harness contract
 
-`agent/contract.md` states what a harness must provide to run Almagest at all. Requirement 5 is an interactive human who can approve or reject in-session: a harness running unattended MUST NOT run Almagest. The approval gate is the first non-negotiable and there is no auto-approve mode.
+`agent/contract.md` states what a harness must provide to run Almagest at all. Requirement 5 is a reviewer who merges: the agent commits to an `ingest/<source-slug>-<sha7>` branch and `main` moves only when a human merges a reviewed diff. Unattended ingest onto a branch is supported; an unattended merge to `main` is forbidden and there is no flag for it. Requirement 7 is Node 22+ for `tools/audit.mjs`, whose exit code gates the commit.

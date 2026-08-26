@@ -8,7 +8,7 @@ between the `SHIM:BEGIN` / `SHIM:END` markers below and writes them into
 `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, and `.github/copilot-instructions.md`.
 Edit them here, then run `tools/agent-shims.sh generate`. Do not edit the shims.
 
-The six non-negotiables those shims also carry come from `brain/rules-index.md`.
+The seven non-negotiables those shims also carry come from `brain/rules-index.md`.
 
 ## Routing table
 
@@ -18,12 +18,28 @@ The six non-negotiables those shims also carry come from `brain/rules-index.md`.
 | answer a question from the wiki | `agent/rules/read.md` |
 | process anything in `brain/raw/` | `agent/rules/ingest.md` |
 | create/edit/delete anything in `brain/wiki/` | `agent/rules/wiki.md` |
-| anything at all | `brain.config.yaml`, `brain/index.md`, `brain/manifest.yaml` |
+| run `tools/audit.mjs`, or act on a finding | `agent/rules/wiki.md` → Audit, `docs/audit.md` |
+| write to `brain/canonical-challenges.md` | `agent/rules/wiki.md` → Canonical |
+| regenerate `brain/.index/` | `docs/audit.md` — run `tools/audit.mjs index`, never hand-edit the files |
+| print a run summary to the terminal | `agent/rules/ingest.md`, `docs/terminal-output.md` |
+| anything at all | `brain.config.yaml`, `brain/.index/pages.tsv`, `brain/index.md`, `brain/manifest.yaml` |
 <!-- SHIM:END routing -->
 
 Read the named file **before** the operation, not after. Each rule file stands
 alone — it opens with a "Load this when" line stating exactly which operations
 it governs.
+
+## Which file owns which path
+
+| Path | Owned by | Written by |
+|------|----------|-----------|
+| `brain/wiki/**` | `agent/rules/wiki.md` | the agent, on an `ingest/…` branch only |
+| `brain/raw/**` | `agent/rules/ingest.md` | you (drop) and the agent (move to `processed/`) |
+| `brain/raw/extracted/**` | `agent/rules/ingest.md` | the agent — committed text sidecars for binary sources |
+| `brain/manifest.yaml` | `agent/rules/ingest.md`, `docs/manifest.md` | the agent, every ingest |
+| `brain/index.md`, `brain/log.md` | `agent/rules/ingest.md` | the agent, every ingest |
+| `brain/canonical-challenges.md` | `agent/rules/wiki.md` | the agent, when a source contradicts a canonical page |
+| `brain/.index/**` | `docs/audit.md` | `tools/audit.mjs index` only — generated, committed, never hand-edited |
 
 ## How a rule file reaches the agent
 
@@ -34,6 +50,8 @@ it governs.
 
 Both modes are correct. Weak loading is weaker only in that it is instruction,
 not enforcement — an agent that ignores the routing table gets no second chance.
+What backstops both now is `tools/audit.mjs`: a page written without the rules
+usually fails a check, and a failing check blocks the commit.
 
 ## Shim map
 
@@ -83,10 +101,13 @@ AI-powered knowledge base framework. Fork this repo to build your own brain.
 almagest/
 ├── brain/                 ← content (the knowledge base)
 │   ├── raw/               ← intake queue (drop files here)
-│   │   └── processed/     ← originals after ingest
+│   │   ├── extracted/     ← committed text sidecars for binary sources
+│   │   └── processed/     ← originals after ingest (binaries gitignored)
 │   ├── wiki/              ← flat .md pages — THE source of truth
+│   ├── .index/            ← pages.tsv + aliases.tsv (generated, committed)
 │   ├── index.md           ← catalog of all pages + sources (for humans)
 │   ├── manifest.yaml      ← record of every ingested source (for the agent)
+│   ├── canonical-challenges.md ← data that contradicts canonical, never merged
 │   ├── log.md             ← audit trail
 │   ├── rules-index.md     ← map of where the rules live (index)
 │   └── CLAUDE.md          ← pointer to the reader rules (generated)
@@ -94,10 +115,10 @@ almagest/
 │   ├── contract.md        ← the minimum harness contract
 │   ├── routing.md         ← which rule file applies to which paths
 │   └── rules/             ← read.md · ingest.md · wiki.md
-├── tools/                 ← agent-shims.sh (generates every pointer file)
+├── tools/                 ← agent-shims.sh (pointer files) · audit.mjs (the checker)
 ├── site/                  ← Astro frontend (reads from brain/wiki/)
 │   ├── src/
-│   │   ├── lib/wiki.ts    ← wiki loader (frontmatter, wikilinks, backlinks)
+│   │   ├── lib/wiki.ts    ← typed wrapper over tools/lib/wiki-core.mjs
 │   │   ├── pages/         ← routes
 │   │   ├── components/    ← UI components
 │   │   ├── layouts/       ← page layouts
@@ -117,12 +138,13 @@ almagest/
 ### Local ingest (raw/ drop)
 
 1. Drop a file (PDF, video, Excel, doc) into `brain/raw/`
-2. Agent reads `brain/index.md` to check what's already known
+2. Agent greps `brain/.index/pages.tsv` and `aliases.tsv` to check what's already known
 3. Agent fingerprints the file (sha256) against `brain/manifest.yaml` — new, unchanged, or changed. Unchanged is skipped; changed is re-ingested as a diff against the pages it already produced
-4. Agent extracts entities, proposes new/updated wiki pages to user
-5. On approval: creates/updates `brain/wiki/` pages, cross-links with `[[wikilinks]]`
-6. Moves original to `brain/raw/processed/`, updates `index.md`, `manifest.yaml`, and `log.md`
-7. `site/` builds from `brain/wiki/` — `npm run build` in `site/`
+4. Binary sources get a committed text sidecar at `brain/raw/extracted/<name>.<ext>.txt` with `=== page N ===` markers. Citations point at the sidecar, so a locator can be checked
+5. Agent creates an `ingest/<source-slug>-<sha7>` branch, extracts entities, and writes pages there. Contradictions, canonical conflicts, deletions/merges/renames, and `confidence: low` curated pages stop for an in-session decision instead of being written
+6. `tools/audit.mjs` runs before the commit. Exit `1` blocks it
+7. Agent commits to the branch, updates `index.md`, `manifest.yaml`, `log.md`, and `brain/.index/`. **You review the diff and merge.** Nothing reaches `main` any other way
+8. `site/` builds from `brain/wiki/` — `npm run build` in `site/`
 
 ### Remote ingest (GitHub / GitLab over MCP)
 
@@ -130,16 +152,32 @@ almagest/
 2. Agent connects via the MCP server matching each entry's `provider` (`.mcp.json`)
 3. Agent reads files from remote repos, runs the same extraction flow
 4. Source reference logged in `index.md` and `manifest.yaml` (provider, repo, path, commit SHA, date) — no local copy. The recorded commit SHA is what makes the next run incremental
-5. Same proposal + approval flow as local ingest
+5. Same branch, audit, and merge flow as local ingest. This is the one path that can run unattended end to end: a scheduled sync ingests onto a branch and leaves you a diff
 
 ## Wiki page types
 
 Defined in `brain.config.yaml` → `page_types`. Configure this file to match your domain before starting ingest.
 
+Every page carries `origin`: `source` (claims derive from ingested material — each one cites a source) or `self` (the author's own conclusion — no inline citations, but a `## Basis` section of wikilinks to `origin: source` pages). A `claim` page is the normal home for `origin: self`; its title is a sentence, not a noun.
+
 Two behaviours ship **off** and are opt-in via config:
 
 - `anonymization.enabled` — when on, the agent stops on every personal name and waits for approval before writing a role-based replacement. Turn on for shared vaults or sources containing real personal data.
 - `require_owner` — when on, every page must name an owning team from `owner_teams`.
+
+## Citations
+
+One grammar, frozen so it can be checked by machine:
+
+```
+[source: <id>, <locator>]            [source: <id>, <locator>, (<date>)]            [source: unknown]
+```
+
+`<id>` matches an `id` in that page's `sources` list, or is the literal `unknown`. `<locator>` is one of `§<section>` · `p.<n>` · `pp.<n>-<m>` · `row <n>` · `slide <n>` · `t <hh:mm:ss>` · `line <n>`. The human-readable label lives in `sources[].title`, not in the citation.
+
+## The audit
+
+`tools/audit.mjs` (Node 22+) checks the wiki mechanically — schema, links, citation grammar, citation targets, provenance against `manifest.yaml`, staleness. Findings have stable IDs (`CITE-002`, `LINK-001`, …) that the rule files reference. `tools/audit.mjs index` regenerates `brain/.index/`; `--check-index` verifies it is current. Exit `0` clean, `1` violations, `2` tool error. An exit `1` blocks the commit.
 
 ## Capability tiers
 

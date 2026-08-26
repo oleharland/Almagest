@@ -1,0 +1,62 @@
+# Fixture — a brain that trips every check ID at least once. Driven by
+# tools/lib/selftest.mjs, which asserts each ID actually appears. `require_owner`
+# is on so SCHEMA-004 has something to fire against.
+name: "Dirty fixture"
+brain_dir: brain
+
+manifest:
+  path: brain/manifest.yaml
+
+page_types:
+  - topic
+  - entity
+  - claim
+
+type_fields:
+  entity:
+    - entity_type        # product | organisation | system | role
+  claim:
+    - "section:## Basis"
+
+canonical_pages: []
+require_owner: true
+owner_teams:
+  - engineering
+  - operations
+
+audit:
+  stale_after_days:
+    canonical: 0
+    curated: 90
+    evidence: 90
+    stub: 30
+  severity:
+    errors:
+      - SCHEMA-001
+      - SCHEMA-002
+      - SCHEMA-003
+      - SCHEMA-004
+      - SCHEMA-005
+      - LINK-001
+      - LINK-003
+      - CITE-001
+      - CITE-002
+      - CITE-003
+      - CITE-004
+      - CITE-005
+      - CITE-006
+      - PROV-001
+      - PROV-002
+      - PROV-003
+      - PROV-004
+    warnings:
+      - LINK-002
+      - PROV-005
+      - CANON-001
+      - STALE-001
+  challenges_path: brain/canonical-challenges.md
+  index_dir: brain/.index
+
+sources:
+  local:
+    path: brain/raw

@@ -1,0 +1,151 @@
+# CI — everything in this repo that has a mechanical answer.
+#
+# Four things are checked, in rough order of how fast they fail:
+#   1. the generated harness shims match their sources  (tools/agent-shims.sh check)
+#   2. brain/.index/ matches brain/wiki/                (tools/audit.mjs --check-index)
+#   3. the wiki satisfies schema v2                     (tools/audit.mjs)
+#   4. the benchmark harness and the site still build
+#
+# `tools/agent-shims.sh` has documented itself as "usable in CI" since it was
+# written; this is the file that made that true.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NO_COLOR: "1"
+
+jobs:
+  audit:
+    name: Rules, schema, index
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+
+      # A shim that has drifted from agent/rules/ sends the agent to a stale
+      # copy of the rules, which is the exact failure the generator exists to
+      # prevent. Cheapest check here, so it runs first.
+      - name: Harness shims are in sync
+        run: tools/agent-shims.sh check
+
+      # brain/.index/ is committed. If it does not match brain/wiki/, whoever
+      # last touched a page did not run `tools/audit.mjs index`.
+      - name: Derived index is current
+        run: node tools/audit.mjs --check-index
+
+      # The gate. Exit 1 on any error-severity check ID; warnings pass.
+      - name: Wiki audit
+        run: node tools/audit.mjs
+
+      # The audit auditing itself: every check ID fires on the dirty fixture,
+      # none fire on the clean one.
+      - name: Audit selftest
+        run: node tools/lib/selftest.mjs
+
+  benchmarks:
+    name: Benchmark harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Benchmark selftest
+        run: benchmarks/selftest.sh
+
+  site:
+    name: Site build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      # No root `npm ci` on purpose: the site must build from a clone that has
+      # only ever installed its own dependencies. tools/lib/wiki-core.mjs imports
+      # nothing but Node builtins so that this holds.
+      - run: npm ci
+        working-directory: site
+
+      - run: npm run build
+        working-directory: site
+
+  # ── advisory ───────────────────────────────────────────────────────────────
+  # The approval model rests on a human merging a reviewed diff. Nothing else in
+  # CI checks the DESTINATION of a wiki change, so a repo with auto-merge turned
+  # on would pass every check above and have no gate at all.
+  #
+  # This job reports non-merge commits touching brain/wiki/ that landed directly
+  # on main's first-parent line. It is deliberately ADVISORY, not blocking: a
+  # squash merge is a reviewed merge and lands as exactly such a commit, so
+  # failing here would punish a legitimate and common workflow. Read it as a
+  # prompt to check the branch protection, not as a verdict.
+  wiki-gate:
+    name: Wiki write gate (advisory)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Direct commits to brain/wiki/ on main
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          # All-zeros means a branch creation or a force push with no usable
+          # range. Nothing to compare against, so say so and stop.
+          case "$BEFORE" in
+            ''|0000000000000000000000000000000000000000)
+              echo "No usable commit range ($BEFORE) — skipping." >&2
+              exit 0 ;;
+          esac
+          if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "Commit $BEFORE is not in this clone — skipping." >&2
+            exit 0
+          fi
+
+          direct="$(git rev-list --first-parent --no-merges "$BEFORE".."$AFTER" -- brain/wiki/)"
+          if [ -z "$direct" ]; then
+            echo "✓ No direct non-merge commits touched brain/wiki/." >&2
+            exit 0
+          fi
+
+          {
+            echo "### ⚠ brain/wiki/ changed outside a merge commit"
+            echo
+            echo "The approval model expects ingest to commit to \`ingest/<source-slug>-<sha7>\`"
+            echo "and a human to merge it. These commits landed on \`main\` directly:"
+            echo
+            echo '```'
+            git show --no-patch --format='%h %an %s' $direct
+            echo '```'
+            echo
+            echo "If your repo squash-merges, this is expected. If it does not, check"
+            echo "branch protection — auto-merge silently removes the gate."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "⚠ non-merge commits touched brain/wiki/ on main" >&2
+          exit 1

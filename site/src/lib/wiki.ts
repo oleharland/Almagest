@@ -1,15 +1,26 @@
 /**
- * Wiki loader — reads flat markdown pages out of the brain directories,
- * parses frontmatter, resolves [[wikilinks]], and builds the backlink graph.
+ * Wiki loader — the site's typed view of `tools/lib/wiki-core.mjs`.
+ *
+ * The parsing lives in `tools/lib/wiki-core.mjs`, in plain JavaScript, because
+ * `tools/audit.mjs` needs exactly the same loader and bare Node 22 will not
+ * import a `.ts` file. This module adds the types, the site config, and the
+ * build-time link gate; it does not reimplement anything. If you are looking
+ * for how frontmatter or `[[wikilinks]]` are parsed, it is one file over.
  *
  * Runs at build time only. Nothing here ships to the browser.
  */
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import matter from 'gray-matter';
 import { marked } from 'marked';
 import siteConfig from '../../site.config';
+import {
+  WIKI_DIRS as CORE_WIKI_DIRS,
+  allTags as coreAllTags,
+  groupPages as coreGroupPages,
+  hrefFor as coreHrefFor,
+  loadWiki,
+} from '../../../tools/lib/wiki-core.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '../../..');
@@ -21,15 +32,33 @@ const REPO_ROOT = path.resolve(HERE, '../../..');
  *   [{ name: 'brain', prefix: '', dir: 'brain/wiki' }]
  *
  * Multiple brains — give each one a `prefix` so `[[research:foo]]` resolves.
+ * Edit the array in `tools/lib/wiki-core.mjs`, not here: the audit reads the
+ * same list, and two lists would disagree the first time you changed one.
  * See docs/multi-brain.md.
- *   [
- *     { name: 'research', prefix: 'research', dir: 'research-brain/wiki' },
- *     { name: 'projects', prefix: 'projects', dir: 'projects-brain/wiki' },
- *   ]
  */
-export const WIKI_DIRS = [
-  { name: 'brain', prefix: '', dir: 'brain/wiki' },
-];
+export const WIKI_DIRS: { name: string; prefix: string; dir: string }[] = CORE_WIKI_DIRS;
+
+/** One entry in a page's `sources` — schema v2. */
+export interface WikiSource {
+  /** Short kebab-case id. Inline `[source: <id>, …]` citations resolve against it. */
+  id: string;
+  /** Repo-root-relative path, or `<provider>:<owner>/<repo>/<path>@<commit>` for remote. */
+  path: string;
+  /** sha256 of whatever `path` names. Empty on a v1 string-form entry. */
+  sha256: string;
+  /** Optional human label. */
+  title: string;
+  /** True when the frontmatter still uses the retired v1 string form. */
+  legacy: boolean;
+}
+
+/** Typed edges. Untyped "see also" stays in `related`. */
+export interface WikiRelations {
+  supports: string[];
+  contradicts: string[];
+  supersedes: string[];
+  depends_on: string[];
+}
 
 export interface WikiPage {
   slug: string;
@@ -39,15 +68,22 @@ export interface WikiPage {
   title: string;
   type: string;
   tier: string;
+  /** `source` — derived from ingested material · `self` — the author's own conclusion. */
+  origin: string;
   tags: string[];
+  /** Alternative names. Base field in schema v2. */
+  aliases: string[];
   status: string;
   confidence: string;
   owner: string;
   dateCreated: string;
   dateModified: string;
   lastVerified: string;
-  sources: string[];
+  sources: WikiSource[];
+  /** Just the paths, for display and for counting distinct sources. */
+  sourcePaths: string[];
   related: string[];
+  relations: WikiRelations;
   /** Extra frontmatter keys not in the base schema (type_fields from brain.config.yaml). */
   extra: Record<string, unknown>;
   html: string;
@@ -58,171 +94,66 @@ export interface WikiPage {
   backlinks: { id: string; title: string }[];
 }
 
-const WIKILINK = /\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g;
-
-function asArray(v: unknown): string[] {
-  if (v == null || v === '') return [];
-  if (Array.isArray(v)) return v.map((x) => String(x)).filter(Boolean);
-  return [String(v)].filter(Boolean);
-}
-
-function asString(v: unknown): string {
-  return v == null ? '' : String(v);
-}
-
-/** Normalise a wikilink target into a page id. `[[foo]]` in brain 'x' -> 'foo' or 'x:foo'. */
-function resolveTarget(raw: string, fromBrainPrefix: string, known: Set<string>): string | null {
-  const target = raw.trim();
-  if (!target) return null;
-
-  // Explicit cross-brain link: [[projects:retrieval-pipeline]]
-  if (target.includes(':')) {
-    return known.has(target) ? target : null;
-  }
-  // Same-brain first, then any brain (unprefixed link in a multi-brain setup).
-  const local = fromBrainPrefix ? `${fromBrainPrefix}:${target}` : target;
-  if (known.has(local)) return local;
-  if (known.has(target)) return target;
-  for (const id of known) {
-    if (id.endsWith(`:${target}`)) return id;
-  }
-  return null;
-}
-
-interface RawPage {
-  id: string;
-  slug: string;
-  brain: string;
-  prefix: string;
-  data: Record<string, unknown>;
-  body: string;
-}
-
-function readRawPages(): RawPage[] {
-  const out: RawPage[] = [];
-
-  for (const brain of WIKI_DIRS) {
-    const dir = path.resolve(REPO_ROOT, brain.dir);
-    if (!fs.existsSync(dir)) {
-      console.warn(`[wiki] brain directory not found, skipping: ${brain.dir}`);
-      continue;
-    }
-
-    for (const file of fs.readdirSync(dir).sort()) {
-      if (!file.endsWith('.md')) continue;
-      if (file.startsWith('.')) continue;
-
-      const slug = file.slice(0, -3);
-      if (slug.startsWith('_') && !siteConfig.showExamplePages) continue;
-
-      const source = fs.readFileSync(path.join(dir, file), 'utf-8');
-      let parsed;
-      try {
-        parsed = matter(source);
-      } catch (err) {
-        throw new Error(
-          `[wiki] could not parse frontmatter in ${brain.dir}/${file}. ` +
-            `Frontmatter must be the very first thing in the file — no blank lines ` +
-            `or comments above the opening '---'.\n${(err as Error).message}`
-        );
-      }
-
-      out.push({
-        id: brain.prefix ? `${brain.prefix}:${slug}` : slug,
-        slug,
-        brain: brain.name,
-        prefix: brain.prefix,
-        data: parsed.data as Record<string, unknown>,
-        body: parsed.content,
-      });
-    }
-  }
-
-  return out;
-}
-
-const BASE_KEYS = new Set([
-  'title', 'type', 'tier', 'tags', 'status', 'confidence', 'owner',
-  'date_created', 'date_modified', 'last_verified', 'sources', 'related',
-]);
-
 let cache: WikiPage[] | null = null;
+
+/**
+ * Broken wikilinks fail the production build.
+ *
+ * A published page whose link goes nowhere is a claim the site cannot support,
+ * and `[...path].astro` rendering a grey non-link is a notice nobody reads. The
+ * dev server still loads — you want to see the half-written page you are
+ * writing — but `astro build` stops. Set ALMAGEST_ALLOW_BROKEN_LINKS=1 to
+ * publish anyway; you have then chosen it.
+ *
+ * This is the LINK-001 check only. `tools/audit.mjs` is the full gate and CI
+ * runs it: schema, citations, provenance and the rest are not the site's job.
+ */
+function gateBrokenLinks(pages: WikiPage[]): void {
+  const offenders = pages.filter((p) => p.brokenLinks.length > 0);
+  if (offenders.length === 0) return;
+
+  const detail = offenders
+    .map((p) => `  ${p.slug}.md → ${p.brokenLinks.map((t) => `[[${t}]]`).join(', ')}`)
+    .join('\n');
+  const total = offenders.reduce((n, p) => n + p.brokenLinks.length, 0);
+  const banner =
+    `\n${'━'.repeat(60)}\n` +
+    `🔗 ${total} broken wikilink${total === 1 ? '' : 's'} on ${offenders.length} page${offenders.length === 1 ? '' : 's'} [LINK-001]\n` +
+    `${'━'.repeat(60)}\n${detail}\n` +
+    `→ create the missing pages, or fix the links. Full audit: tools/audit.mjs\n`;
+
+  console.error(banner);
+
+  const isProd = Boolean((import.meta as unknown as { env?: { PROD?: boolean } }).env?.PROD);
+  if (isProd && !process.env.ALMAGEST_ALLOW_BROKEN_LINKS) {
+    throw new Error(
+      `[wiki] build stopped: ${total} broken wikilink${total === 1 ? '' : 's'}. ` +
+        `Set ALMAGEST_ALLOW_BROKEN_LINKS=1 to publish anyway.`
+    );
+  }
+}
 
 /** All wiki pages, fully resolved. Cached for the lifetime of the build. */
 export function getPages(): WikiPage[] {
   if (cache) return cache;
 
-  const raw = readRawPages();
-  const known = new Set(raw.map((p) => p.id));
-  const titles = new Map(raw.map((p) => [p.id, asString(p.data.title) || p.slug]));
-  const backlinks = new Map<string, { id: string; title: string }[]>();
-
-  const pages: WikiPage[] = raw.map((p) => {
-    const links: string[] = [];
-    const brokenLinks: string[] = [];
-
-    // Rewrite wikilinks into markdown links before rendering.
-    const withLinks = p.body.replace(WIKILINK, (_m, target: string, label?: string) => {
-      const text = (label ?? target).trim();
-      const resolved = resolveTarget(target, p.prefix, known);
-      if (!resolved) {
-        brokenLinks.push(target.trim());
-        return `<span class="wikilink is-broken" title="No page named &quot;${target.trim()}&quot;">${text}</span>`;
-      }
-      if (!links.includes(resolved)) links.push(resolved);
-      return `<a class="wikilink" href="${hrefFor(resolved)}">${text}</a>`;
-    });
-
-    const title = asString(p.data.title) || p.slug;
-    const extra: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(p.data)) {
-      if (!BASE_KEYS.has(k)) extra[k] = v;
-    }
-
-    return {
-      slug: p.slug,
-      id: p.id,
-      brain: p.brain,
-      title,
-      type: asString(p.data.type) || 'untyped',
-      tier: asString(p.data.tier) || 'curated',
-      tags: asArray(p.data.tags),
-      status: asString(p.data.status),
-      confidence: asString(p.data.confidence),
-      owner: asString(p.data.owner),
-      dateCreated: asString(p.data.date_created),
-      dateModified: asString(p.data.date_modified),
-      lastVerified: asString(p.data.last_verified),
-      sources: asArray(p.data.sources),
-      related: asArray(p.data.related).map((r) => r.replace(/^\[\[|\]\]$/g, '')),
-      extra,
-      html: marked.parse(withLinks, { async: false }) as string,
-      links,
-      brokenLinks,
-      backlinks: [],
-    };
+  const { pages } = loadWiki({
+    repoRoot: REPO_ROOT,
+    matter,
+    wikiDirs: WIKI_DIRS,
+    showExamplePages: siteConfig.showExamplePages,
+    render: (markdown: string) => marked.parse(markdown, { async: false }) as string,
+    onWarn: (message: string) => console.warn(message),
   });
 
-  // Second pass: invert the link graph.
-  for (const page of pages) {
-    for (const target of page.links) {
-      if (!backlinks.has(target)) backlinks.set(target, []);
-      backlinks.get(target)!.push({ id: page.id, title: page.title });
-    }
-  }
-  for (const page of pages) {
-    page.backlinks = (backlinks.get(page.id) ?? []).sort((a, b) =>
-      a.title.localeCompare(b.title)
-    );
-  }
-
-  cache = pages.sort((a, b) => a.title.localeCompare(b.title));
+  cache = pages as WikiPage[];
+  gateBrokenLinks(cache);
   return cache;
 }
 
 /** URL path for a page id. */
 export function hrefFor(id: string): string {
-  return '/' + id.replace(':', '/') + '/';
+  return coreHrefFor(id);
 }
 
 export function getPage(id: string): WikiPage | undefined {
@@ -234,21 +165,9 @@ export function groupPages(
   pages: WikiPage[],
   key: 'type' | 'tier'
 ): { name: string; pages: WikiPage[] }[] {
-  const groups = new Map<string, WikiPage[]>();
-  for (const page of pages) {
-    const name = page[key] || 'untyped';
-    if (!groups.has(name)) groups.set(name, []);
-    groups.get(name)!.push(page);
-  }
-  return [...groups.entries()]
-    .map(([name, ps]) => ({ name, pages: ps }))
-    .sort((a, b) => b.pages.length - a.pages.length || a.name.localeCompare(b.name));
+  return coreGroupPages(pages, key);
 }
 
 export function allTags(pages: WikiPage[]): { tag: string; count: number }[] {
-  const counts = new Map<string, number>();
-  for (const p of pages) for (const t of p.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
-  return [...counts.entries()]
-    .map(([tag, count]) => ({ tag, count }))
-    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+  return coreAllTags(pages);
 }

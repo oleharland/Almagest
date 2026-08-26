@@ -7,8 +7,9 @@
     "abstention":       { "type": "string", "enum": ["correct_decline", "decline_no_gap_named", "confabulated", "n/a"] },
     "contradiction":    { "type": "string", "enum": ["both_surfaced", "one_sided", "missed", "n/a"] },
     "synthesis_flag":   { "type": "string", "enum": ["flagged", "unflagged", "over_flagged", "n/a"] },
+    "compiled_error":   { "type": "string", "enum": ["caught", "corrected_silently", "propagated", "n/a"] },
     "notes":            { "type": "string" }
   },
-  "required": ["correctness", "citation_support", "unsourced_claims", "abstention", "contradiction", "synthesis_flag", "notes"],
+  "required": ["correctness", "citation_support", "unsourced_claims", "abstention", "contradiction", "synthesis_flag", "compiled_error", "notes"],
   "additionalProperties": false
 }
