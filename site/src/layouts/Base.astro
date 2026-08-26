@@ -1,0 +1,71 @@
+---
+import siteConfig from '../../site.config';
+import '../styles/base.css';
+import '../styles/theme.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const { title, description = siteConfig.description } = Astro.props;
+const fullTitle = title ? `${title} · ${siteConfig.title}` : siteConfig.title;
+const frameworkUrl = siteConfig.frameworkUrl;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    <meta name="generator" content={Astro.generator} />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>" />
+    <script is:inline>
+      // Set the theme before first paint to avoid a flash.
+      try {
+        const saved = localStorage.getItem('almagest-theme');
+        if (saved === 'dark' || saved === 'light') {
+          document.documentElement.dataset.theme = saved;
+        }
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="shell">
+        <a class="site-title" href="/">{siteConfig.title}</a>
+        <nav class="site-nav">
+          {siteConfig.repoUrl && <a href={siteConfig.repoUrl} rel="noopener">Source</a>}
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle colour theme">
+            <span aria-hidden="true">◐</span>
+          </button>
+        </nav>
+      </div>
+    </header>
+
+    <main class="shell">
+      <slot />
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell">
+        Built with {frameworkUrl ? <a href={frameworkUrl} rel="noopener">Almagest</a> : 'Almagest'}.
+        Every claim on this site should cite its source — if one doesn't, that's a bug.
+      </div>
+    </footer>
+
+    <script is:inline>
+      document.querySelector('[data-theme-toggle]')?.addEventListener('click', () => {
+        const root = document.documentElement;
+        const current =
+          root.dataset.theme ||
+          (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        const next = current === 'dark' ? 'light' : 'dark';
+        root.dataset.theme = next;
+        try { localStorage.setItem('almagest-theme', next); } catch (e) {}
+      });
+    </script>
+  </body>
+</html>

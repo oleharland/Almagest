@@ -1,0 +1,34 @@
+node_modules/
+dist/
+.astro/
+.DS_Store
+*.log
+.env
+.env.*
+
+# Instance-specific settings (not shared)
+.claude/settings.local.json
+
+# Raw processed binaries — reference material, not wiki content
+# Text files (md, json, csv, txt, srt) are tracked; binaries are local-only
+brain/raw/processed/*.mp4
+brain/raw/processed/*.mov
+brain/raw/processed/*.png
+brain/raw/processed/*.jpg
+brain/raw/processed/*.jpeg
+brain/raw/processed/*.gif
+brain/raw/processed/*.pdf
+brain/raw/processed/*.docx
+brain/raw/processed/*.pptx
+brain/raw/processed/*.xlsx
+brain/raw/processed/*.htm
+brain/raw/processed/*.html
+brain/raw/processed/*.js
+brain/raw/processed/*.css
+brain/raw/processed/*.svg
+brain/raw/processed/*.flsnp
+brain/raw/processed/*.sample
+
+# Old Obsidian/Claude config from imported vaults
+brain/raw/**/.obsidian/
+brain/raw/**/.claude/

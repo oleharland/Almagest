@@ -1,0 +1,8 @@
+---
+interface Props {
+  label: string;
+  kind?: string;
+}
+const { label, kind } = Astro.props;
+---
+<span class:list={['badge', kind && `badge--${kind}`]}>{label}</span>

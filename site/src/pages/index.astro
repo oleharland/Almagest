@@ -1,0 +1,82 @@
+---
+import Base from '../layouts/Base.astro';
+import PageList from '../components/PageList.astro';
+import siteConfig from '../../site.config';
+import { getPages, groupPages, allTags } from '../lib/wiki';
+
+const pages = getPages();
+const groups = groupPages(pages, siteConfig.groupBy);
+const tags = allTags(pages);
+const sourceCount = new Set(pages.flatMap((p) => p.sources)).size;
+const needsAttention = pages.filter((p) => p.status === 'stub' || p.brokenLinks.length > 0).length;
+---
+
+<Base>
+  <p class="lede">{siteConfig.description}</p>
+
+  <div class="stats">
+    <div><strong>{pages.length}</strong> pages</div>
+    <div><strong>{groups.length}</strong> {siteConfig.groupBy === 'type' ? 'types' : 'tiers'}</div>
+    <div><strong>{sourceCount}</strong> sources</div>
+    <div><strong>{tags.length}</strong> tags</div>
+    {needsAttention > 0 && <div><strong>{needsAttention}</strong> need attention</div>}
+  </div>
+
+  {pages.length === 0 ? (
+    <div class="empty">
+      <p><strong>No pages yet.</strong></p>
+      <p>
+        Drop a file into <code>brain/raw/</code> and run <code>claude</code> in the repo root.
+        The agent will propose your first wiki pages.
+      </p>
+    </div>
+  ) : (
+    <>
+      <label class="visually-hidden" for="filter">Filter pages</label>
+      <input
+        class="filter"
+        id="filter"
+        type="search"
+        placeholder="Filter pages by title, tag, or type…"
+        autocomplete="off"
+      />
+
+      {groups.map((group) => (
+        <section class="group" data-group>
+          <h2>{group.name}<span>{group.pages.length}</span></h2>
+          <PageList pages={group.pages} />
+        </section>
+      ))}
+
+      <p class="empty" data-no-results hidden>No pages match that filter.</p>
+    </>
+  )}
+
+  <script is:inline>
+    const input = document.getElementById('filter');
+    if (input) {
+      const groups = [...document.querySelectorAll('[data-group]')];
+      const noResults = document.querySelector('[data-no-results]');
+
+      input.addEventListener('input', () => {
+        const q = input.value.trim().toLowerCase();
+        let total = 0;
+
+        for (const group of groups) {
+          let shown = 0;
+          for (const item of group.querySelectorAll('[data-search]')) {
+            const match = !q || item.dataset.search.includes(q);
+            item.hidden = !match;
+            if (match) shown++;
+          }
+          group.hidden = shown === 0;
+          const count = group.querySelector('h2 span');
+          if (count) count.textContent = String(shown);
+          total += shown;
+        }
+
+        if (noResults) noResults.hidden = total !== 0;
+      });
+    }
+  </script>
+</Base>

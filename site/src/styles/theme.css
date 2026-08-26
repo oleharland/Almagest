@@ -1,0 +1,22 @@
+/*
+ * Your theme overrides.
+ *
+ * This file is YOURS — upstream ships it empty and never overwrites it, so
+ * anything you put here survives `git merge upstream/main`.
+ *
+ * base.css defines everything as custom properties. Redefine any of them here.
+ * Remember to override the dark variants too, or your colours will only apply
+ * in light mode.
+ *
+ * Example — swap the accent colour:
+ *
+ *   :root { --accent: #0f766e; --accent-soft: #ccfbf1; }
+ *   @media (prefers-color-scheme: dark) {
+ *     :root:not([data-theme="light"]) { --accent: #5eead4; --accent-soft: #10302c; }
+ *   }
+ *   :root[data-theme="dark"] { --accent: #5eead4; --accent-soft: #10302c; }
+ *
+ * Example — use a serif face for article body text:
+ *
+ *   .article { font-family: Georgia, "Iowan Old Style", serif; }
+ */

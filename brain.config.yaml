@@ -1,0 +1,158 @@
+# brain.config.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+# Instance configuration for an Almagest knowledge base.
+# This is the single place where instance-specific values live.
+# Agent rules files reference this config instead of hardcoding values.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+# ── Identity ──────────────────────────────────────────────────────────────────
+
+# Human-readable name for this knowledge base instance.
+name: "My Knowledge Base"
+
+
+# ── Directory layout ──────────────────────────────────────────────────────────
+
+# Root directory of the knowledge base content (relative to repo root).
+brain_dir: brain
+
+
+# ── Wiki page types ───────────────────────────────────────────────────────────
+# The set of valid `type` values for wiki page frontmatter.
+# Each value maps to a distinct editorial purpose.
+#
+#   topic      — a broad subject area or domain cluster
+#   concept    — a defined term or abstract idea worth explaining
+#   decision   — a recorded architectural or strategic decision (ADR-style)
+#   reference  — stable lookup material (standards, specs, glossaries)
+#   entity     — a real-world thing: a product, org, person-role, or system
+
+page_types:
+  - topic
+  - concept
+  - decision
+  - reference
+  - entity
+
+
+# ── Type-specific frontmatter fields ─────────────────────────────────────────
+# Additional frontmatter fields required (or recommended) for each page type.
+# The agent will prompt for these when creating a page of that type.
+# All other page types inherit only the base fields (title, type, tier, tags).
+
+type_fields:
+  decision:
+    - decision_date      # ISO-8601 date the decision was made
+    - decision_status    # proposed | accepted | superseded | deprecated
+    - options            # list of alternatives that were considered
+
+  entity:
+    - entity_type        # product | organisation | system | role
+    - aliases            # alternative names or abbreviations for this entity
+
+
+# ── Anonymization ─────────────────────────────────────────────────────────────
+# Controls how the ingest agent handles personal and organisational names
+# found in source documents before they are written into the wiki.
+
+anonymization:
+
+  # Master switch. When false (the default), the agent writes personal names
+  # through to the wiki untouched — the right behaviour for a personal or
+  # public knowledge base where names are part of the content.
+  #
+  # Turn this ON when any of the following is true:
+  #   - the wiki is shared beyond the people named in it
+  #   - sources are real meeting notes, transcripts, tickets, or CRM exports
+  #   - you are handling personal data under GDPR or a similar regime
+  #
+  # When enabled, the agent STOPS on every detected name, alerts you, and
+  # waits for approval before writing an anonymized replacement.
+  enabled: false
+
+  # Patterns that identify person-role strings in raw source text.
+  # Only consulted when `enabled: true`.
+  # Each entry has:
+  #   pattern  — regex applied to the raw text
+  #   org      — the organisation context this pattern belongs to
+  # Matches are replaced with the role label only (name stripped).
+  role_patterns:
+    - pattern: "\\b[A-Z][a-z]+ [A-Z][a-z]+\\s*[,–-]\\s*Engineering Lead\\b"
+      org: "Acme Corp"
+    - pattern: "\\b[A-Z][a-z]+ [A-Z][a-z]+\\s*[,–-]\\s*Product Manager\\b"
+      org: "Acme Corp"
+    - pattern: "\\b[A-Z][a-z]+ [A-Z][a-z]+\\s*[,–-]\\s*Head of Design\\b"
+      org: "Acme Corp"
+
+  # Names that should NOT be flagged as personal data.
+  # Add company names, product names, and well-known terms here.
+  ignore_names:
+    - "Acme Corp"
+    - "Almagest"
+
+
+# ── Canonical pages ───────────────────────────────────────────────────────────
+# Wiki page slugs that are treated as locked reference lists.
+# The agent will refuse to delete or rename these pages and will warn
+# before making structural edits to their content.
+
+canonical_pages:
+  - taxonomy      # master list of approved tags and categories
+  - glossary      # authoritative term definitions
+
+
+# ── Ownership ─────────────────────────────────────────────────────────────────
+# The `owner` frontmatter field names the team responsible for keeping a page
+# accurate. Useful in an organisation, pure friction for a solo knowledge base.
+
+# When true, every wiki page must carry an `owner` from `owner_teams`, and the
+# audit reports a schema violation for any page missing one.
+# When false (the default), `owner` is optional and unvalidated.
+require_owner: false
+
+# Valid values for the `owner` frontmatter field.
+# Only enforced when `require_owner: true`. Replace with your own teams.
+owner_teams:
+  - engineering
+  - product
+  - leadership
+  - design
+  - operations
+
+
+# ── Sources ───────────────────────────────────────────────────────────────────
+# Defines where the ingest agent pulls raw material from.
+
+sources:
+
+  # Local drop folder — files placed here are picked up by the ingest agent.
+  # Path is relative to repo root.
+  local:
+    path: brain/raw
+
+  # Remote repositories pulled via MCP. See docs/remote-sources.md for setup.
+  #
+  # Fields per entry:
+  #   provider — github | gitlab — which MCP server reads this repo
+  #   repo     — project path (owner/repo on GitHub, namespace/project on GitLab)
+  #   paths    — glob array of paths within that repo to ingest
+  #   branch   — branch to read from (defaults to default branch if omitted)
+  #   label    — tag applied to wiki pages derived from this source
+  #
+  # Example entries (commented out — uncomment and fill in real values):
+  remote:
+    # - provider: github
+    #   repo: acme/platform-docs
+    #   paths:
+    #     - "docs/**/*.md"
+    #     - "adr/**/*.md"
+    #   branch: main
+    #   label: platform
+
+    # - provider: gitlab
+    #   repo: acme/design-system
+    #   paths:
+    #     - "**/*.md"
+    #   branch: main
+    #   label: design-system

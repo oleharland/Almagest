@@ -1,0 +1,110 @@
+---
+import Base from '../layouts/Base.astro';
+import Badge from '../components/Badge.astro';
+import { getPages, hrefFor, type WikiPage } from '../lib/wiki';
+
+export async function getStaticPaths() {
+  return getPages().map((page) => ({
+    params: { path: page.id.replace(':', '/') },
+    props: { page },
+  }));
+}
+
+interface Props {
+  page: WikiPage;
+}
+const { page } = Astro.props;
+const allPages = getPages();
+const titleOf = (id: string) => allPages.find((p) => p.id === id)?.title ?? id;
+const relatedExisting = page.related.filter((id) => allPages.some((p) => p.id === id));
+const extraEntries = Object.entries(page.extra).filter(([, v]) => v != null && v !== '');
+---
+
+<Base title={page.title}>
+  <a class="back" href="/">← All pages</a>
+
+  <div class="with-aside">
+    <article class="article">
+      <header class="page-head">
+        <div class="meta">
+          <Badge label={page.tier} kind={page.tier} />
+          <Badge label={page.type} />
+          {page.status && <Badge label={page.status} kind={page.status === 'stub' ? 'stub' : undefined} />}
+          {page.tags.map((tag) => <span class="tag">{tag}</span>)}
+        </div>
+        <h1>{page.title}</h1>
+        <p class="dates">
+          {page.dateModified && <>Updated {page.dateModified}</>}
+          {page.lastVerified && <> · Verified {page.lastVerified}</>}
+          {!page.lastVerified && page.dateModified && <> · Never human-verified</>}
+          {page.confidence && <> · Confidence: {page.confidence}</>}
+        </p>
+      </header>
+
+      {page.sources.length === 0 && (
+        <p class="notice">
+          This page cites no sources. Under the Almagest rules every claim must be
+          traceable — treat its contents as unverified.
+        </p>
+      )}
+
+      {page.brokenLinks.length > 0 && (
+        <p class="notice">
+          Broken links to pages that don't exist: {page.brokenLinks.join(', ')}.
+        </p>
+      )}
+
+      <Fragment set:html={page.html} />
+    </article>
+
+    <aside class="aside">
+      {page.sources.length > 0 && (
+        <section>
+          <h2>Sources</h2>
+          <ul>{page.sources.map((s) => <li class="src">{s}</li>)}</ul>
+        </section>
+      )}
+
+      {relatedExisting.length > 0 && (
+        <section>
+          <h2>Related</h2>
+          <ul>
+            {relatedExisting.map((id) => <li><a href={hrefFor(id)}>{titleOf(id)}</a></li>)}
+          </ul>
+        </section>
+      )}
+
+      {page.backlinks.length > 0 && (
+        <section>
+          <h2>Linked from</h2>
+          <ul>
+            {page.backlinks.map((b) => <li><a href={hrefFor(b.id)}>{b.title}</a></li>)}
+          </ul>
+        </section>
+      )}
+
+      {(page.owner || extraEntries.length > 0) && (
+        <section>
+          <h2>Metadata</h2>
+          <dl>
+            {page.owner && (<><dt>Owner</dt><dd>{page.owner}</dd></>)}
+            {extraEntries.map(([k, v]) => (
+              <><dt>{k.replace(/_/g, ' ')}</dt><dd>{Array.isArray(v) ? v.join(', ') : String(v)}</dd></>
+            ))}
+          </dl>
+        </section>
+      )}
+    </aside>
+  </div>
+
+  <script is:inline>
+    // Tables in markdown can overflow narrow screens — give each its own scroller.
+    for (const table of document.querySelectorAll('.article table')) {
+      if (table.parentElement?.classList.contains('table-scroll')) continue;
+      const wrap = document.createElement('div');
+      wrap.className = 'table-scroll';
+      table.replaceWith(wrap);
+      wrap.appendChild(table);
+    }
+  </script>
+</Base>

@@ -1,0 +1,49 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(mkdir:*)",
+      "Bash(mv:*)",
+      "Bash(cp:*)",
+      "Bash(cat:*)",
+      "Bash(wc:*)",
+      "Bash(du:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(diff:*)",
+      "Bash(grep:*)",
+      "Bash(xargs:*)",
+      "Bash(basename:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git branch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git stash:*)",
+      "Bash(git push:*)",
+      "Bash(git remote:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(npm ci:*)",
+      "Bash(npx astro:*)",
+      "Bash(node:*)",
+      "Bash(npx tsx:*)",
+      "Bash(python3:*)",
+      "Bash(curl -s http://localhost:*)",
+      "Bash(curl -s -o /dev/null:*)",
+      "Bash(lsof -ti:*)",
+      "Bash(pkill -f \"astro\")",
+      "Bash(pkill -f \"node\")",
+      "WebSearch"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)",
+      "Bash(git reset --hard:*)"
+    ]
+  }
+}

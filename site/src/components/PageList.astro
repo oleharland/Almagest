@@ -1,0 +1,31 @@
+---
+import Badge from './Badge.astro';
+import { hrefFor, type WikiPage } from '../lib/wiki';
+
+interface Props {
+  pages: WikiPage[];
+}
+const { pages } = Astro.props;
+
+/** First non-empty prose line of the rendered body, for the one-line preview. */
+function preview(html: string): string {
+  const match = html.match(/<p>([\s\S]*?)<\/p>/);
+  if (!match) return '';
+  const text = match[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+  return text.length > 120 ? text.slice(0, 119).trimEnd() + '…' : text;
+}
+---
+<ul class="page-list">
+  {pages.map((page) => (
+    <li data-search={`${page.title} ${page.tags.join(' ')} ${page.type}`.toLowerCase()}>
+      <a href={hrefFor(page.id)}>
+        <span class="name">{page.title}</span>
+        <span class="summary">{preview(page.html)}</span>
+        <span class="meta">
+          {page.status === 'stub' && <Badge label="stub" kind="stub" />}
+          <Badge label={page.tier} kind={page.tier} />
+        </span>
+      </a>
+    </li>
+  ))}
+</ul>
