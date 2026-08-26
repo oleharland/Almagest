@@ -16,9 +16,11 @@
 
 </div>
 
-An AI-powered knowledge base framework built for Claude Code.
+An AI-powered knowledge base framework for coding agents.
 
-Fork it, point it at your domain, and drop in source material. Claude reads what you give it, proposes structured wiki pages, and refuses to write a single claim it can't trace back to a source. The result is a cross-linked markdown wiki that both you and an agent can query — plus a static site to read it in.
+Fork it, point it at your domain, and drop in source material. Your agent reads what you give it, proposes structured wiki pages, and refuses to write a single claim it can't trace back to a source. The result is a cross-linked markdown wiki that both you and an agent can query — plus a static site to read it in.
+
+It runs on Claude Code, Codex, Cursor, Gemini CLI, Antigravity, or any agent that meets the [harness contract](agent/contract.md).
 
 ## How it works
 
@@ -39,7 +41,7 @@ Fork it, point it at your domain, and drop in source material. Claude reads what
               └───────────────┬───────────────┘
                               ▼
               ┌───────────────────────────────┐
-              │       CLAUDE CODE AGENT       │
+              │        AI CODING AGENT        │
               │  reads index → extracts       │
               │  entities → diffs changed     │
               │  sources → checks for         │
@@ -93,7 +95,7 @@ Most AI note-taking tools optimise for capture. Almagest optimises for **trust**
 What that looks like in practice:
 
 ```
-  $ claude
+  $ <your agent>            # claude · codex · cursor-agent · gemini · agy
 
   ● Read brain/index.md (142 pages, 61 sources)
   ● Read brain/raw/q3-architecture-review.pdf (38 pages)
@@ -123,6 +125,7 @@ What that looks like in practice:
 - **Benchmark harness** — a fixture corpus and question set that measure citation validity, contradiction surfacing, and whether the agent declines questions the corpus can't answer. Ships unrun; the numbers are yours to produce.
 - **Query protocol** — ask questions, get answers traceable to the original source, with synthesis explicitly flagged as synthesis.
 - **Static site** — an Astro frontend that builds straight from `brain/wiki/`. Backlinks, filtering, dark mode, zero configuration.
+- **Harness portability** — one set of rules in `agent/rules/`, projected into each agent's own format (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/`, `GEMINI.md`) by a single generator. One source of truth, no drift. Claude Code is the reference harness.
 - **Upstream updates** — pull framework improvements with `git merge`. Your content and customisation live in files upstream never touches.
 
 ## Quick start
@@ -133,7 +136,7 @@ git clone <this-repo> my-brain && cd my-brain
 
 1. **Configure** `brain.config.yaml` — page types, canonical pages, and whether you want anonymization and page ownership turned on (both ship off).
 2. **Drop files** into `brain/raw/` — PDFs, docs, spreadsheets, transcripts, notes.
-3. **Run Claude Code** — `claude` in the repo root. It loads the rules automatically and starts proposing pages.
+3. **Start your agent** in the repo root — `claude`, `codex`, `cursor-agent`, `gemini`, `agy`, whichever you use. It picks up the rules from the repo and starts proposing pages. Per-harness setup in [Agent Harnesses](docs/agent-harnesses.md).
 4. **Read it** — `cd site && npm install && npm run dev`.
 
 Full walkthrough in [Getting Started](docs/getting-started.md).
@@ -141,6 +144,7 @@ Full walkthrough in [Getting Started](docs/getting-started.md).
 ## Documentation
 
 - [Getting Started](docs/getting-started.md) — setup and configuration
+- [Agent Harnesses](docs/agent-harnesses.md) — running it on Claude Code, Codex, Cursor, Gemini CLI, Antigravity, or Copilot
 - [Page Types](docs/page-types.md) — defining custom wiki page types
 - [Remote Sources](docs/remote-sources.md) — ingesting from GitHub or GitLab over MCP
 - [The Ingest Manifest](docs/manifest.md) — how re-ingest stays incremental
@@ -158,15 +162,20 @@ Full walkthrough in [Getting Started](docs/getting-started.md).
 | `brain/manifest.yaml` | Fingerprint record of every ingested source (for the agent) |
 | `brain/log.md` | Audit trail of every action |
 | `site/` | Astro frontend, reads from `brain/wiki/` |
-| `.claude/rules/` | Auto-loaded agent rules (ingest, wiki write) |
+| `agent/contract.md` | The minimum capabilities a harness must have to run Almagest |
+| `agent/rules/` | The agent rules — read, ingest, wiki write. One copy, every harness |
+| `tools/agent-shims.sh` | Generates the per-harness rule files from `agent/rules/` |
+| `.claude/rules/` | Claude Code rule shims (generated) |
 | `benchmarks/` | Benchmark harness, fixture corpus, and question set |
+| `benchmarks/drivers/` | One driver per harness — how the benchmark invokes an agent |
 | `docs/` | Framework documentation |
 | `brain.config.yaml` | Instance configuration |
 | `.mcp.json` | MCP servers for remote sources |
 
 ## Requirements
 
-- [Claude Code](https://claude.com/claude-code)
+- **An AI coding agent** meeting [`agent/contract.md`](agent/contract.md). Known-good: [Claude Code](https://claude.com/claude-code) (the reference harness), Codex, Cursor, Gemini CLI, Antigravity, Copilot in an interactive editor session. Setup per harness in [Agent Harnesses](docs/agent-harnesses.md).
+- **A human at the keyboard.** The approval gate is a person saying yes — nothing else enforces it. Almagest must not be run by a headless or unattended agent.
 - Node.js 18+ (only for the site)
 
 ## License

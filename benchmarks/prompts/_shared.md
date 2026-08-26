@@ -1,5 +1,5 @@
-<!-- almagest-protocol-source: brain/CLAUDE.md -->
-<!-- almagest-protocol-sha256: b09411774a6e8beff54db5b11c81b5b8af6a96d61df1758581cc3cb3fcde63b0 -->
+<!-- almagest-protocol-source: agent/rules/read.md -->
+<!-- almagest-protocol-sha256: a747485ba306c57c0b56ec7832f33fe00fdcaae8fd6a12dd30d3adbefd9d0982 -->
 
 # Answering protocol
 

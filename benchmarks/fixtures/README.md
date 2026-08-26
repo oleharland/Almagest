@@ -90,7 +90,7 @@ has confabulated, however sound the arithmetic.
 ## The wiki — and an honest caveat
 
 `fixtures/wiki/` is a **gold wiki**: hand-compiled from `fixtures/raw/` to the
-letter of `.claude/rules/brain-wiki.md`, with typed frontmatter, inline
+letter of `agent/rules/wiki.md`, with typed frontmatter, inline
 `[source: ...]` citations, a `> Disputed` block on both pages carrying the
 capacity conflict, and `## Open questions` sections naming each absent topic.
 

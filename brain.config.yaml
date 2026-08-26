@@ -18,6 +18,62 @@ name: "My Knowledge Base"
 brain_dir: brain
 
 
+# ── Agent runtime ─────────────────────────────────────────────────────────────
+# Almagest is harness-agnostic: it runs on any coding agent that meets the
+# contract in `agent/contract.md`. Nothing here names a vendor in the rules —
+# the rules speak in capability tiers, and this block maps those tiers onto
+# whatever models your harness actually has.
+
+agent:
+
+  # Which harness this instance runs on. Selects the profile below, and tells
+  # the agent which rule-loading mode applies (see docs/agent-harnesses.md).
+  # Known values: claude-code | codex | cursor | gemini-cli | copilot |
+  #               antigravity | generic
+  harness: claude-code
+
+  # Capability tiers. Rules files reference ONLY these two names, never a model.
+  #
+  #   mechanical — parsing, hashing, slug and string comparison, structural
+  #                checks, straightforward extraction. A cheaper model is enough.
+  #   judgment   — weighing which source is stronger, classifying a diff as
+  #                addition / revision / removal, deciding whether two pages
+  #                describe the same entity, reconciling drift, cross-source
+  #                synthesis. Anything producing a recommendation you will act on.
+  #
+  # Advisory, not dispatch: most harnesses cannot switch model mid-task. If
+  # yours cannot, run the whole session on the model sized for the heaviest
+  # tier that session will hit — which for any ingest means `judgment`.
+  profiles:
+    claude-code:
+      mechanical: sonnet
+      judgment: opus
+    codex:
+      mechanical: gpt-5-mini
+      judgment: gpt-5
+    cursor:
+      mechanical: gpt-5-mini
+      judgment: gpt-5
+    gemini-cli:
+      mechanical: gemini-2.5-flash
+      judgment: gemini-2.5-pro
+    antigravity:
+      # Antigravity (`agy`) is not the Gemini CLI and does not spell its models
+      # the way the Gemini API does: the reasoning-effort suffix is part of the
+      # model name. Verified against `agy models` on 2026-08-26. The account also
+      # offered gemini-3.{5,6}-flash-*, gemini-3.1-pro-low, claude-sonnet-4-6,
+      # claude-opus-4-6-thinking and gpt-oss-120b-medium — run `agy models`
+      # yourself, since the list is per-account and changes.
+      mechanical: gemini-3.7-flash-low
+      judgment: gemini-3.1-pro-high
+    copilot:
+      mechanical: gpt-5-mini
+      judgment: gpt-5
+    generic:
+      mechanical: "<your fast model>"
+      judgment: "<your strongest model>"
+
+
 # ── Ingest manifest ───────────────────────────────────────────────────────────
 # The manifest is the machine-readable record of every ingested source. It is
 # what makes re-ingest incremental: the agent fingerprints each source (sha256

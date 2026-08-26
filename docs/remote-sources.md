@@ -10,7 +10,7 @@ Remote sources are entirely optional. If you only ever drop files into `brain/ra
 |-------|------|
 | `.mcp.json` | Declares the MCP servers. Committed to git. Contains no secrets — tokens come from environment variables. |
 | `brain.config.yaml` → `sources.remote` | Declares *which repos and paths* to ingest, and which provider reads each one. |
-| `.claude/rules/brain-ingest.md` | The ingest protocol itself — identical for local and remote sources. |
+| `agent/rules/ingest.md` | The ingest protocol itself — identical for local and remote sources. |
 
 You only need to configure the provider you actually use. An unconfigured server simply fails to connect; you can ignore it or delete its entry from `.mcp.json`.
 
@@ -73,14 +73,25 @@ export GITLAB_TOKEN="glpat-..."
 }
 ```
 
-## Approve the server in Claude Code
+## Register and approve the server
 
-On first run Claude Code prompts you to approve each MCP server:
+`.mcp.json` is Claude Code's format. Every other harness declares MCP servers in its own file — the same two entries, its own schema.
+
+| Harness | Where the servers go |
+|---------|---------------------|
+| Claude Code | `.mcp.json` (shipped). `/mcp` → select the server → Approve |
+| Cursor | `.cursor/mcp.json` |
+| Codex | `~/.codex/config.toml`, `[mcp_servers.<name>]` |
+| Gemini CLI | `~/.gemini/settings.json`, `mcpServers` |
+
+In Claude Code:
 
 ```bash
 claude
 /mcp          # select the server → Approve
 ```
+
+Both servers Almagest ships speak HTTP. Transport support varies by harness and by version — check yours before assuming remote sources work. Local ingest never touches MCP.
 
 ## Configure which repos to ingest
 
@@ -115,7 +126,7 @@ sources:
 
 ## Usage
 
-In Claude Code:
+Ask your agent:
 
 - "Check acme/platform-docs for changes since last ingest"
 - "Sync all remote sources"
@@ -137,9 +148,9 @@ Nothing is written to the wiki without your approval, remote or local.
 [source: github:acme/platform-docs / docs/architecture.md, §Overview (sha: abc1234, 2026-08-25)]
 ```
 
-## Using the same servers in the Claude desktop app
+## Using the same servers in a desktop chat app
 
-The same MCP servers work in the Claude desktop app, which lets non-technical teammates query the brain conversationally.
+The same MCP servers work in any MCP-capable desktop client, which lets non-technical teammates query the brain conversationally. The Claude desktop app is the worked example:
 
 **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 
@@ -162,4 +173,4 @@ Note that the desktop config does not expand environment variables — the token
 - Give tokens the **minimum** scope that works: read-only contents on GitHub, `read_repository` on GitLab.
 - Each person uses their own token. Never share one.
 - Tokens never enter git — `.mcp.json` references environment variables, and `.env` is gitignored.
-- Review approved MCP servers periodically with `/mcp`.
+- Review approved MCP servers periodically — `/mcp` in Claude Code, the equivalent in your harness.

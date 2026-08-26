@@ -82,10 +82,22 @@ writes to `brain/`, so running it cannot touch your knowledge base.
 
 ### Requirements
 
-Bash, awk, sed, find, cp, and the `claude` CLI. Nothing to install — no language
-runtime, no package manager. That is a hard constraint: Almagest is markdown and
-Claude Code, with Node only for the site, and a benchmark that needed
-`pip install` would not be part of the same project.
+Bash, awk, sed, find, cp, and the CLI of whichever agent harness you point it
+at. Nothing to install — no language runtime, no package manager. That is a hard
+constraint: Almagest is markdown and an AI coding agent, with Node only for the
+site, and a benchmark that needed `pip install` would not be part of the same
+project.
+
+### Which agent
+
+`run.sh` reaches an agent through a **driver** — one script per harness in
+`drivers/`, picked with `--driver` (default `claude-code`). A driver declares
+what its CLI can genuinely enforce: the tool allowlist, a spend cap, a JSON
+schema for the judge. Anything it reports as `no` is warned about at preflight,
+recorded in `run.env`, and repeated in the report's Comparability block, because
+it changes what the numbers can be compared against.
+
+Interface and rules for writing your own: `drivers/README.md`.
 
 ### Costs
 
@@ -131,7 +143,8 @@ never overwrite each other — the directory is timestamped.
 
 | Flag | Why |
 |------|-----|
-| `--model` | Which model answers. Run the same set on several and compare |
+| `--driver` | Which harness answers. `NAME` resolves in `drivers/`, or give a path |
+| `--model` | Which model answers, spelled the way that driver's CLI spells it |
 | `--judge-model` | Which model scores. **Use a different one from `--model`** where you can — see the judge limits in `rubric.md` |
 | `--only q05,q10` | Iterate on one question without paying for thirty |
 | `--arm baseline` | Re-run one arm after a prompt change |
@@ -160,8 +173,9 @@ data for.
 | Median latency | _not yet run_ | _not yet run_ |
 | Cost per question | _not yet run_ | _not yet run_ |
 
-**Run configuration:** _not yet run_ — model, judge model, date, question-set
-hash, and Claude Code version go here, copied from `report.md`'s metadata table.
+**Run configuration:** _not yet run_ — driver and driver version, model, judge
+model, date, question-set hash, and every capability the driver reported `no` go
+here, copied from `report.md`'s metadata and comparability blocks.
 
 ### By category
 
@@ -238,7 +252,9 @@ Read this section before quoting any number this harness produces.
 | `fixtures/raw/` | The five fictional source documents |
 | `fixtures/wiki/` | The hand-compiled gold wiki |
 | `lib/*.awk` | YAML and JSON parsing, in awk, so the harness needs no dependencies |
-| `lib/fake_claude.sh` | Test double used by `selftest.sh` |
+| `drivers/*.sh` | One per harness: how a question is actually put to an agent |
+| `drivers/README.md` | The driver interface, for writing your own |
+| `drivers/fake.sh` | Test double used by `selftest.sh`. No API calls, no money |
 | `results/` | Run output. Gitignored |
 
 ## Extending it
@@ -248,5 +264,7 @@ Read this section before quoting any number this harness produces.
   `expected_pages` entry resolves.
 - **Swap the corpus:** see the checklist at the end of `fixtures/README.md`.
 - **Change the protocol:** edit `prompts/_shared.md` and both arms change
-  together. If you edit `brain/CLAUDE.md`, `run.sh` warns that the two have
+  together. If you edit `agent/rules/read.md`, `run.sh` warns that the two have
   drifted and records the drift in `run.env`.
+- **Add a harness:** write `drivers/<name>.sh` to the interface in
+  `drivers/README.md`, then run `selftest.sh`.

@@ -84,12 +84,15 @@ BEGIN {
     printf("| Questions | %s |\n", env["questions_count"])
     printf("| Question set sha256 | `%s` |\n", substr(env["questions_sha256"], 1, 16) "…")
     printf("| Shared prompt sha256 | `%s` |\n", substr(env["shared_prompt_sha256"], 1, 16) "…")
-    printf("| Claude Code | `%s` |\n", env["claude_version"])
+    printf("| Driver | `%s` — %s |\n", (env["driver"] == "" ? "unknown" : env["driver"]),
+                                       (env["driver_version"] == "" ? "version unknown" : env["driver_version"]))
     printf("| Repo commit | `%s`%s |\n", env["git_sha"], (env["git_dirty"] == "yes" ? " (working tree dirty)" : ""))
-    printf("| Query-protocol drift | %s |\n", (env["protocol_drift"] == "1" ? "**yes — prompts/_shared.md is out of sync with brain/CLAUDE.md**" : "none"))
-    if (env["claude_bin"] != "" && env["claude_bin"] != "claude")
-        printf("| ⚠ Binary | `%s` — **stub, not the real CLI. These are not model answers.** |\n", env["claude_bin"])
+    printf("| Query-protocol drift | %s |\n", (env["protocol_drift"] == "1" ? "**yes — prompts/_shared.md is out of sync with agent/rules/read.md**" : "none"))
+    if (env["driver"] == "fake")
+        printf("| ⚠ Test double | `fake` — **stub, not the real CLI. These are not model answers.** |\n")
     print ""
+
+    comparability()
 
     # ── mechanical aggregate ────────────────────────────────────────────────
     print "## Mechanically scored metrics"
@@ -215,6 +218,56 @@ BEGIN {
     print ""
     print "Raw answers, per-call metadata, and judge verdicts are in this directory."
     print "Read the answers before quoting any number from this report."
+}
+
+# ── comparability ────────────────────────────────────────────────────────────
+# A capability the driver could not enforce is a fact about what these numbers
+# mean, so it is stated here rather than left in run.env for someone to find.
+function comparability(   keys, meaning, i, n, k, v, nbad, have) {
+    n = split("tool_restriction budget_cap structured_output cost_reporting session_isolation sandbox", keys, " ")
+    meaning["tool_restriction"]  = "the arms were not confined to the read-only tool allowlist. Nothing stopped an arm from reaching material the other could not see, so the one variable this design isolates was not isolated. **This run is not comparable to one where the restriction held.**"
+    meaning["budget_cap"]        = "per-call spend was not capped. `--budget-usd` was advisory; the cost figures are what happened, not what was permitted."
+    meaning["structured_output"] = "the driver could not hold the judge to `lib/judge-schema.json`. Any judge metric present came from unvalidated output — check `scores-judge.tsv` before quoting one."
+    meaning["cost_reporting"]    = "the driver reports no per-call cost. Cost rows read `n/a`, which means unknown, not zero. Latency is still real."
+    meaning["session_isolation"] = "state may have carried between calls. The answers are not independent samples and question order may have mattered."
+    meaning["sandbox"]           = "the arms ran without a read-only mode. The arena is a throwaway copy, so the blast radius was still bounded — but nothing enforced it."
+
+    print "## Comparability"
+    print ""
+
+    have = 0
+    for (i = 1; i <= n; i++) if (("cap_" keys[i]) in env) have = 1
+    if (!have) {
+        print "Driver capabilities were not recorded for this run — it predates"
+        print "`harness_version=2`. What the driver did and did not enforce is unknown,"
+        print "so nothing here can be lined up against a run that records it."
+        print ""
+        return
+    }
+
+    nbad = 0
+    for (i = 1; i <= n; i++) {
+        k = keys[i]
+        v = env["cap_" k]
+        if (v != "no") continue
+        if (nbad == 0) {
+            printf("Driver `%s` could not enforce everything this benchmark asks for. Each\n", env["driver"])
+            print "line below changes what the numbers above mean:"
+            print ""
+        }
+        nbad++
+        printf("- **`%s` = no** — %s\n", k, meaning[k])
+    }
+
+    if (nbad == 0) {
+        printf("Driver `%s` enforced every capability the harness asks for. This run is\n", env["driver"])
+        print "comparable to any other run whose `cap_*` lines are also all `yes`."
+    } else {
+        print ""
+        print "Compare these numbers only against a run whose `cap_*` lines match. They are"
+        print "all in `run.env`."
+    }
+    print ""
 }
 
 # ── aggregate helpers ────────────────────────────────────────────────────────

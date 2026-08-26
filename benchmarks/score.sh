@@ -7,9 +7,11 @@
 #      answers: do cited pages exist, do cited document IDs exist, were the
 #      expected sources cited, is there a section-level reference, is there a
 #      synthesis marker, do the ground-truth literals appear, latency, cost.
-#   2. JUDGE (--judge, COSTS REAL TOKENS, opt-in). One Claude call per answer,
+#   2. JUDGE (--judge, COSTS REAL TOKENS, opt-in). One agent call per answer,
 #      scoring correctness, citation support, unsourced claims, abstention,
 #      contradiction handling, and synthesis flagging against ground truth.
+#      It goes through the same driver layer as run.sh, and refuses to run on a
+#      driver that cannot hold its CLI to the verdict schema.
 #
 # The split is the honest part of this harness. Pass 1 numbers are reproducible
 # and free. Pass 2 numbers involve a model's judgement and will move between
@@ -29,9 +31,12 @@ JUDGE_MODEL="opus"
 BUDGET_USD="0.50"
 ASSUME_YES=0
 DRY_RUN=0
-CLAUDE_BIN="${ALMAGEST_BENCH_CLAUDE_BIN:-claude}"
-# The arms run with the arena as cwd, so a path-qualified binary must be absolute.
-case "$CLAUDE_BIN" in */*) CLAUDE_BIN="$(abspath "$CLAUDE_BIN")" ;; esac
+
+# Which harness judges. Same driver layer as run.sh; it need not be the driver
+# that produced the run — judging with a different harness is a deliberate
+# choice, the same way judging with a different model is.
+DRIVER_SPEC="${ALMAGEST_BENCH_DRIVER:-}"
+DRIVER_SPEC_FROM_FLAG=""
 
 # A token that looks like a document ID in this corpus. Anything matching it
 # that is not in the corpus is a fabricated citation. Tight on purpose: it must
@@ -47,6 +52,8 @@ Usage: benchmarks/score.sh --run <run-id> [options]
   --questions FILE     Question set used for the run (default: benchmarks/questions.yaml)
   --out DIR            Results root (default: benchmarks/results)
   --judge              Also run the LLM judge. COSTS REAL TOKENS.
+  --driver NAME|PATH   Harness driver for the judge (default: claude-code)
+                       Env: ALMAGEST_BENCH_DRIVER
   --judge-model NAME   Model for the judge (default: opus)
   --budget-usd N       Per-judge-call spend cap (default: 0.50)
   --dry-run            Show what the judge would do. Calls nothing.
@@ -63,6 +70,7 @@ while [ $# -gt 0 ]; do
         --questions)   QUESTIONS="${2:?}"; shift 2 ;;
         --out)         RESULTS_DIR="${2:?}"; shift 2 ;;
         --judge)       DO_JUDGE=1; shift ;;
+        --driver)      DRIVER_SPEC_FROM_FLAG="${2:?--driver needs a value}"; shift 2 ;;
         --judge-model) JUDGE_MODEL="${2:?}"; shift 2 ;;
         --budget-usd)  BUDGET_USD="${2:?}"; shift 2 ;;
         --dry-run)     DRY_RUN=1; shift ;;
@@ -89,6 +97,64 @@ need_cmd awk
 need_cmd sed
 [ -f "$QUESTIONS" ] || die "question set not found: $QUESTIONS"
 
+# ── driver preflight — fail loudly, before spending anything ─────────────────
+# The mechanical pass needs no agent at all, so the driver is only resolved and
+# interrogated when --judge is asked for.
+if [ -n "${ALMAGEST_BENCH_CLAUDE_BIN:-}" ]; then
+    warn "ALMAGEST_BENCH_CLAUDE_BIN is deprecated — use --driver (or ALMAGEST_BENCH_DRIVER)."
+    if [ -n "$DRIVER_SPEC_FROM_FLAG" ] || [ -n "$DRIVER_SPEC" ]; then
+        warn "  a driver was given explicitly — ignoring ALMAGEST_BENCH_CLAUDE_BIN=$ALMAGEST_BENCH_CLAUDE_BIN"
+    else
+        case "$(basename "$ALMAGEST_BENCH_CLAUDE_BIN")" in
+            fake*)
+                warn "  mapping it onto --driver fake"
+                DRIVER_SPEC="fake" ;;
+            *)
+                warn "  mapping it onto --driver claude-code with ALM_CLI=$ALMAGEST_BENCH_CLAUDE_BIN"
+                DRIVER_SPEC="claude-code"
+                case "$ALMAGEST_BENCH_CLAUDE_BIN" in */*) export ALM_CLI="$(abspath "$ALMAGEST_BENCH_CLAUDE_BIN")" ;;
+                                                   *)    export ALM_CLI="$ALMAGEST_BENCH_CLAUDE_BIN" ;; esac ;;
+        esac
+    fi
+fi
+[ -n "$DRIVER_SPEC_FROM_FLAG" ] && DRIVER_SPEC="$DRIVER_SPEC_FROM_FLAG"
+[ -n "$DRIVER_SPEC" ] || DRIVER_SPEC="claude-code"
+
+DRIVER="$(resolve_driver "$DRIVER_SPEC")"
+DRIVER_NAME="$(driver_name_of "$DRIVER")"
+
+if [ "$DO_JUDGE" -eq 1 ]; then
+    load_capabilities "$DRIVER" "$DRIVER_NAME"
+
+    # The judge's verdict is parsed field by field. Without a schema the driver
+    # returns whatever the CLI happened to print, and a prose paragraph parses
+    # into zero metrics — or worse, into some of them. Refuse instead.
+    if [ "$(cap structured_output)" = "no" ]; then
+        SUPPORTING=""
+        for d in "$DRIVERS_DIR"/*.sh; do
+            [ -x "$d" ] || continue
+            if [ "$("$d" capabilities 2>/dev/null | awk -F'\t' '$1=="structured_output" { print $2; exit }')" = "yes" ]; then
+                SUPPORTING="$SUPPORTING $(driver_name_of "$d")"
+            fi
+        done
+        die "driver '$DRIVER_NAME' reports structured_output=no — refusing to run the judge.
+    The judge pass parses a strict JSON verdict against lib/judge-schema.json. A
+    driver that cannot hold its CLI to that schema would produce unparseable
+    output or, worse, a partial verdict scored as if it were complete.
+    Shipped drivers reporting structured_output=yes here:${SUPPORTING:- none}
+    Of the shipped drivers, claude-code enforces it with --json-schema; codex
+    does so only on a build with --output-schema, and gemini-cli cannot.
+    Either judge with --driver <one of the above>, or drop --judge — the
+    mechanical pass is free and always runs."
+    fi
+
+    DRIVER_VERSION="$("$DRIVER" version 2>/dev/null | head -1 || true)"
+    if [ -z "$DRIVER_VERSION" ]; then
+        [ "$DRY_RUN" -eq 1 ] || die "driver '$DRIVER_NAME' could not report a version — is its CLI installed? (or use --dry-run)"
+        DRIVER_VERSION="unknown"
+    fi
+fi
+
 # The question set must be the one the run used, or the ground truth does not
 # line up with the answers.
 RUN_QSHA="$(sed -n 's/^questions_sha256=//p' "$RUN_DIR/run.env")"
@@ -112,6 +178,17 @@ done
 
 IDS="$(sed -n 's/^question_ids=//p' "$RUN_DIR/run.env" | tr ',' '\n' | sed '/^$/d')"
 [ -n "$IDS" ] || die "run.env records no question ids"
+
+# Both arms must have come from the same driver, or these numbers compare
+# harnesses rather than arms. run.sh will not produce a mixed run; a run
+# directory can also be assembled by hand, and a mixed one must not be scored.
+RUN_DRIVERS="$(awk -F'\t' '$1=="driver" { print $2 }' "$RUN_DIR"/*/*.meta.tsv 2>/dev/null | sort -u | sed '/^$/d')"
+if [ "$(printf '%s\n' "$RUN_DRIVERS" | sed '/^$/d' | wc -l | tr -d ' ')" -gt 1 ]; then
+    die "the arms of this run were not produced by the same driver:$(printf '%s\n' "$RUN_DRIVERS" | tr '\n' ' ')
+    Both arms of a run must use one driver. A difference between the arms would
+    be a difference between harnesses, not a measurement of the wiki.
+    Re-run both arms with a single --driver."
+fi
 
 # ── corpus facts the mechanical pass checks against ──────────────────────────
 KNOWN_FILES="$(cd "$FIXTURES_DIR/raw" && ls -1 *.md | tr '\n' ' ')"
@@ -213,9 +290,11 @@ JUDGE_RAN=0
 if [ "$DO_JUDGE" -eq 1 ]; then
     NJ=$((SCORED))
     rule
-    info "${C_BLD}The judge pass will make $NJ Claude API call(s) and cost real money.${C_OFF}"
+    info "${C_BLD}The judge pass will make $NJ agent call(s) and cost real money.${C_OFF}"
+    info "  judge driver: $DRIVER_NAME ($DRIVER_VERSION)"
     info "  judge model:  $JUDGE_MODEL"
     info "  per-call cap: \$$BUDGET_USD"
+    [ "$(cap budget_cap)" = "no" ] && warn "  driver '$DRIVER_NAME' cannot enforce that cap — judge spend is UNCAPPED"
     rule
 
     if [ "$DRY_RUN" -eq 1 ]; then
@@ -230,10 +309,8 @@ if [ "$DO_JUDGE" -eq 1 ]; then
         case "$reply" in y|Y|yes|YES) : ;; *) die "aborted by user" ;; esac
     fi
 
-    [ "$DRY_RUN" -eq 1 ] || need_cmd "$CLAUDE_BIN"
     [ -f "$LIB_DIR/judge-schema.json" ] || die "missing lib/judge-schema.json"
     JUDGE_SYS="$(cat "$PROMPTS_DIR/judge.md")"
-    SCHEMA="$(cat "$LIB_DIR/judge-schema.json")"
 
     if [ "$DRY_RUN" -eq 0 ]; then
         printf 'arm\tquestion_id\tcategory\tmetric\tvalue\n' > "$JUDGE"
@@ -256,21 +333,20 @@ if [ "$DO_JUDGE" -eq 1 ]; then
 
             info "  judging $arm/$qid ($CATEGORY)"
             if [ "$DRY_RUN" -eq 1 ]; then
-                dim "        $CLAUDE_BIN -p <payload $(printf '%s' "$PAYLOAD" | wc -c | tr -d ' ') bytes> --model $JUDGE_MODEL --tools '' --json-schema <schema>"
+                dim "        ALM_PROMPT=<payload $(printf '%s' "$PAYLOAD" | wc -c | tr -d ' ') bytes> ALM_MODEL=$JUDGE_MODEL \\"
+                dim "          ALM_TOOLS='' ALM_SCHEMA_FILE=lib/judge-schema.json ${DRIVER#$REPO_DIR/} run"
                 continue
             fi
 
             JRAW="$RUN_DIR/$arm/$qid.judge.json"
             set +e
-            "$CLAUDE_BIN" -p "$PAYLOAD" \
-                --safe-mode \
-                --model "$JUDGE_MODEL" \
-                --output-format json \
-                --tools "" \
-                --no-session-persistence \
-                --append-system-prompt "$JUDGE_SYS" \
-                --json-schema "$SCHEMA" \
-                --max-budget-usd "$BUDGET_USD" \
+            ALM_PROMPT="$PAYLOAD" \
+            ALM_SYSTEM="$JUDGE_SYS" \
+            ALM_MODEL="$JUDGE_MODEL" \
+            ALM_TOOLS="" \
+            ALM_BUDGET_USD="$BUDGET_USD" \
+            ALM_SCHEMA_FILE="$LIB_DIR/judge-schema.json" \
+                "$DRIVER" run \
                 < /dev/null > "$JRAW" 2> "$RUN_DIR/$arm/$qid.judge.stderr.log"
             rc=$?
             set -e

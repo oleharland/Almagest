@@ -4,7 +4,7 @@
 #
 # ┌──────────────────────────────────────────────────────────────────────────┐
 # │  THIS SCRIPT SPENDS REAL MONEY.                                          │
-# │  Every question is sent to the Claude API twice (once per arm). Scoring   │
+# │  Every question is put to the agent CLI twice (once per arm). Scoring     │
 # │  with --judge in score.sh sends each answer once more. Cost scales with   │
 # │  question count x arms x model. Use --dry-run first — it costs nothing.   │
 # └──────────────────────────────────────────────────────────────────────────┘
@@ -13,8 +13,12 @@
 # arena directories it builds are copies of benchmarks/fixtures/, so a real
 # knowledge base is never in scope for either arm.
 #
-# Dependencies: bash, awk, sed, find, cp — and the `claude` CLI. Nothing to
-# install. No language runtime, no package manager.
+# It does not know how to talk to an agent: a driver does. One script per
+# harness in benchmarks/drivers/, picked with --driver. Interface and rules for
+# writing your own: benchmarks/drivers/README.md.
+#
+# Dependencies: bash, awk, sed, find, cp — and the CLI of whichever driver you
+# run. Nothing to install. No language runtime, no package manager.
 
 set -euo pipefail
 
@@ -33,18 +37,21 @@ ASSUME_YES=0
 FORCE=0
 DRIFT_DETECTED=0
 
-# Testing hook. Point this at a stub that emits a `claude -p --output-format json`
-# shaped payload to exercise the whole harness — arena build, capture, metadata,
-# failure paths — without making a single API call. Used by benchmarks/selftest.sh.
-CLAUDE_BIN="${ALMAGEST_BENCH_CLAUDE_BIN:-claude}"
-# The arms run with the arena as cwd, so a path-qualified binary must be absolute.
-case "$CLAUDE_BIN" in */*) CLAUDE_BIN="$(abspath "$CLAUDE_BIN")" ;; esac
+# Which harness answers the questions. --driver wins over the environment; both
+# win over the default. `fake` is the test double used by benchmarks/selftest.sh:
+# it exercises every non-API path — arena build, capture, metadata, failure
+# branches — without making a single API call.
+DRIVER_SPEC="${ALMAGEST_BENCH_DRIVER:-}"
+DRIVER_SPEC_FROM_FLAG=""
 
 usage() {
     cat <<'USAGE'
 Usage: benchmarks/run.sh [options]
 
   --arm baseline|treatment|both   Which arm(s) to run          (default: both)
+  --driver NAME|PATH              Harness driver               (default: claude-code)
+                                  NAME resolves in benchmarks/drivers/.
+                                  Env: ALMAGEST_BENCH_DRIVER
   --model NAME                    Model for the answering agent (default: sonnet)
   --questions FILE                Question set                 (default: benchmarks/questions.yaml)
   --only q01,q05                  Run just these question ids
@@ -67,6 +74,7 @@ USAGE
 while [ $# -gt 0 ]; do
     case "$1" in
         --arm)        ARM="${2:?--arm needs a value}"; shift 2 ;;
+        --driver)     DRIVER_SPEC_FROM_FLAG="${2:?--driver needs a value}"; shift 2 ;;
         --model)      MODEL="${2:?--model needs a value}"; shift 2 ;;
         --questions)  QUESTIONS="${2:?--questions needs a value}"; shift 2 ;;
         --only)       ONLY="${2:?--only needs a value}"; shift 2 ;;
@@ -96,8 +104,40 @@ rule
 need_cmd awk
 need_cmd sed
 need_cmd find
-[ "$DRY_RUN" -eq 1 ] || need_cmd "$CLAUDE_BIN" "install Claude Code, or use --dry-run"
-[ "$CLAUDE_BIN" = "claude" ] || warn "using stub binary $CLAUDE_BIN — results are NOT real model output"
+
+# Deprecated hook, kept working because it was the documented way to point the
+# harness at a stub. It names a binary; drivers name a harness, so map it.
+if [ -n "${ALMAGEST_BENCH_CLAUDE_BIN:-}" ]; then
+    warn "ALMAGEST_BENCH_CLAUDE_BIN is deprecated — use --driver (or ALMAGEST_BENCH_DRIVER)."
+    if [ -n "$DRIVER_SPEC_FROM_FLAG" ] || [ -n "$DRIVER_SPEC" ]; then
+        warn "  a driver was given explicitly — ignoring ALMAGEST_BENCH_CLAUDE_BIN=$ALMAGEST_BENCH_CLAUDE_BIN"
+    else
+        case "$(basename "$ALMAGEST_BENCH_CLAUDE_BIN")" in
+            fake*)
+                warn "  mapping it onto --driver fake"
+                DRIVER_SPEC="fake" ;;
+            *)
+                warn "  mapping it onto --driver claude-code with ALM_CLI=$ALMAGEST_BENCH_CLAUDE_BIN"
+                DRIVER_SPEC="claude-code"
+                case "$ALMAGEST_BENCH_CLAUDE_BIN" in */*) export ALM_CLI="$(abspath "$ALMAGEST_BENCH_CLAUDE_BIN")" ;;
+                                                   *)    export ALM_CLI="$ALMAGEST_BENCH_CLAUDE_BIN" ;; esac ;;
+        esac
+    fi
+fi
+[ -n "$DRIVER_SPEC_FROM_FLAG" ] && DRIVER_SPEC="$DRIVER_SPEC_FROM_FLAG"
+[ -n "$DRIVER_SPEC" ] || DRIVER_SPEC="claude-code"
+
+DRIVER="$(resolve_driver "$DRIVER_SPEC")"
+DRIVER_NAME="$(driver_name_of "$DRIVER")"
+load_capabilities "$DRIVER" "$DRIVER_NAME"
+DRIVER_VERSION="$("$DRIVER" version 2>/dev/null | head -1 || true)"
+if [ -z "$DRIVER_VERSION" ]; then
+    [ "$DRY_RUN" -eq 1 ] || die "driver '$DRIVER_NAME' could not report a version — is its CLI installed? (or use --dry-run)"
+    DRIVER_VERSION="unknown"
+fi
+ok "driver $DRIVER_NAME — $DRIVER_VERSION"
+dim "        $(printf '%s\n' "$CAPS" | awk -F'\t' '{ printf "%s=%s ", $1, $2 }')"
+[ "$DRIVER_NAME" = "fake" ] && warn "using the fake driver — results are NOT real model output"
 
 [ -f "$QUESTIONS" ] || die "question set not found: $QUESTIONS"
 [ -f "$PROMPTS_DIR/_shared.md" ]    || die "missing prompts/_shared.md"
@@ -108,7 +148,7 @@ check_fixtures
 ok "fixtures present ($(find "$FIXTURES_DIR/raw" -name '*.md' | wc -l | tr -d ' ') sources, $(find "$FIXTURES_DIR/wiki" -name '*.md' | wc -l | tr -d ' ') wiki pages)"
 
 check_protocol_drift
-[ "$DRIFT_DETECTED" -eq 0 ] && ok "query protocol in sync with brain/CLAUDE.md"
+[ "$DRIFT_DETECTED" -eq 0 ] && ok "query protocol in sync with $PROTOCOL_NAME"
 
 QTSV="$(mktemp -t almagest-bench-q.XXXXXX)"
 trap 'rm -f "$QTSV"' EXIT
@@ -148,9 +188,53 @@ if [ -e "$RUN_DIR" ] && [ "$FORCE" -eq 0 ]; then
     die "run directory already exists: $RUN_DIR (use --force to overwrite)"
 fi
 
+# Both arms of a run must come from the same driver. Baseline on one harness and
+# treatment on another measures the harness, not the wiki — and --force makes
+# that mistake reachable by re-running one arm into an existing run directory.
+if [ -f "$RUN_DIR/run.env" ]; then
+    PREV_DRIVER="$(sed -n 's/^driver=//p' "$RUN_DIR/run.env" | head -1)"
+    if [ -n "$PREV_DRIVER" ] && [ "$PREV_DRIVER" != "$DRIVER_NAME" ]; then
+        die "this run directory was produced by driver '$PREV_DRIVER', not '$DRIVER_NAME'.
+    Both arms of a run must use the same driver, or the comparison is between
+    harnesses rather than between arms.
+    Use a new --label, or re-run both arms with --driver $PREV_DRIVER."
+    fi
+fi
+
+# ── comparability guard ──────────────────────────────────────────────────────
+# A capability the driver cannot enforce is a fact about the run, recorded in
+# run.env and repeated in the report. Two of them change what the numbers mean
+# badly enough to say so here, before anything is spent.
+if [ "$(cap tool_restriction)" = "no" ]; then
+    rule
+    warn "${C_BLD}Driver '$DRIVER_NAME' cannot enforce the read-only tool allowlist.${C_OFF}"
+    warn "  The arms will not be confined to Read/Grep/Glob. Nothing stops one from"
+    warn "  reaching material the other cannot see, and the single variable this"
+    warn "  design rests on stops being single."
+    warn "  This run is NOT comparable to a run whose driver enforced it."
+    rule
+fi
+if [ "$(cap budget_cap)" = "no" ] && [ "$DRY_RUN" -eq 0 ]; then
+    rule
+    warn "${C_BLD}Driver '$DRIVER_NAME' cannot cap per-call spend.${C_OFF}"
+    warn "  --budget-usd \$$BUDGET_USD is advisory only. This run has NO spend ceiling:"
+    warn "  a single call can cost whatever the model decides to spend on it."
+    rule
+    if [ "$ASSUME_YES" -eq 1 ]; then
+        warn "--yes given — proceeding with uncapped spend."
+    elif [ -t 0 ]; then
+        printf '%s' "👉 Run with UNCAPPED spend? [y/N] " >&2
+        read -r reply
+        case "$reply" in y|Y|yes|YES) : ;; *) die "aborted by user" ;; esac
+    else
+        die "uncapped spend, not a terminal, and --yes not given — refusing to spend money unattended"
+    fi
+fi
+
 # ── cost gate ────────────────────────────────────────────────────────────────
 rule
-info "${C_BLD}This run will make ${NCALLS} Claude API call(s) and cost real money.${C_OFF}"
+info "${C_BLD}This run will make ${NCALLS} agent call(s) and cost real money.${C_OFF}"
+info "  driver:       $DRIVER_NAME ($DRIVER_VERSION)"
 info "  model:        $MODEL"
 info "  arms:         $ARM"
 info "  questions:    $NQ"
@@ -209,11 +293,13 @@ if [ "$DRY_RUN" -eq 0 ]; then
         echo "shared_prompt_sha256=$(file_sha256 "$PROMPTS_DIR/_shared.md")"
         echo "protocol_drift=$DRIFT_DETECTED"
         echo "budget_usd_per_call=$BUDGET_USD"
-        echo "claude_bin=$CLAUDE_BIN"
-        echo "claude_version=$("$CLAUDE_BIN" --version 2>/dev/null | head -1 || echo unknown)"
+        echo "driver=$DRIVER_NAME"
+        echo "driver_path=${DRIVER#$REPO_DIR/}"
+        echo "driver_version=$DRIVER_VERSION"
+        printf '%s\n' "$CAPS" | awk -F'\t' '{ printf "cap_%s=%s\n", $1, $2 }'
         echo "git_sha=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
         echo "git_dirty=$(test -n "$(git -C "$REPO_DIR" status --porcelain 2>/dev/null)" && echo yes || echo no)"
-        echo "harness_version=1"
+        echo "harness_version=2"
     } > "$RUN_DIR/run.env"
 fi
 
@@ -241,10 +327,11 @@ for arm in $ARMS; do
         info "  [$i/$NQ] $qid ($CATEGORY)"
 
         if [ "$DRY_RUN" -eq 1 ]; then
-            dim "        cd $ARENA && $CLAUDE_BIN -p <question> --safe-mode --model $MODEL \\"
-            dim "          --output-format json --tools Read,Grep,Glob --no-session-persistence \\"
-            dim "          --append-system-prompt <${arm} protocol, $(printf '%s' "$SYS" | wc -c | tr -d ' ') bytes> \\"
-            dim "          --max-budget-usd $BUDGET_USD"
+            dim "        cd $ARENA && \\"
+            dim "          ALM_PROMPT=<question, $(printf '%s' "$QUESTION" | wc -c | tr -d ' ') bytes> \\"
+            dim "          ALM_SYSTEM=<${arm} protocol, $(printf '%s' "$SYS" | wc -c | tr -d ' ') bytes> \\"
+            dim "          ALM_MODEL=$MODEL ALM_TOOLS=Read,Grep,Glob ALM_BUDGET_USD=$BUDGET_USD \\"
+            dim "          ${DRIVER#$REPO_DIR/} run"
             dim "        → $OUT/$qid.answer.md"
             continue
         fi
@@ -255,15 +342,14 @@ for arm in $ARMS; do
 
         t0="$(date +%s)"
         set +e
-        ( cd "$ARENA" && "$CLAUDE_BIN" -p "$QUESTION" \
-              --safe-mode \
-              --model "$MODEL" \
-              --output-format json \
-              --tools "Read,Grep,Glob" \
-              --allowedTools "Read,Grep,Glob" \
-              --no-session-persistence \
-              --append-system-prompt "$SYS" \
-              --max-budget-usd "$BUDGET_USD" \
+        ( cd "$ARENA" && \
+          ALM_PROMPT="$QUESTION" \
+          ALM_SYSTEM="$SYS" \
+          ALM_MODEL="$MODEL" \
+          ALM_TOOLS="Read,Grep,Glob" \
+          ALM_BUDGET_USD="$BUDGET_USD" \
+          ALM_SCHEMA_FILE="" \
+          "$DRIVER" run \
         # stdin is /dev/null so the CLI cannot swallow the question-id list this
         # loop is reading from. Classic shell bug; it silently truncates a run.
         ) < /dev/null > "$RAW" 2> "$OUT/$qid.stderr.log"
@@ -273,7 +359,7 @@ for arm in $ARMS; do
         wall_ms=$(( (t1 - t0) * 1000 ))
 
         if [ "$rc" -ne 0 ]; then
-            warn "        claude exited $rc — see $OUT/$qid.stderr.log"
+            warn "        driver exited $rc — see $OUT/$qid.stderr.log"
             FAILURES=$((FAILURES + 1))
             printf 'status\tfailed\nexit_code\t%s\nwall_ms\t%s\n' "$rc" "$wall_ms" > "$META"
             : > "$ANS"
@@ -299,7 +385,7 @@ for arm in $ARMS; do
         get() { printf '%s\n' "$FIELDS" | awk -F'\t' -v k="$1" '$1==k { print $2; exit }'; }
 
         dur="$(get duration_ms)"
-        if [ -n "$dur" ]; then lat="$dur"; latsrc="claude_duration_ms"
+        if [ -n "$dur" ]; then lat="$dur"; latsrc="driver_duration_ms"
         else                   lat="$wall_ms"; latsrc="wall_clock_s"; fi
 
         {
@@ -307,6 +393,7 @@ for arm in $ARMS; do
             printf 'arm\t%s\n'            "$arm"
             printf 'question_id\t%s\n'    "$qid"
             printf 'category\t%s\n'       "$CATEGORY"
+            printf 'driver\t%s\n'         "$DRIVER_NAME"
             printf 'model\t%s\n'          "$MODEL"
             printf 'latency_ms\t%s\n'     "$lat"
             printf 'latency_source\t%s\n' "$latsrc"

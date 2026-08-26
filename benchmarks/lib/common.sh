@@ -11,12 +11,14 @@ REPO_DIR="$(cd "$BM_DIR/.." && pwd)"
 FIXTURES_DIR="$BM_DIR/fixtures"
 PROMPTS_DIR="$BM_DIR/prompts"
 LIB_DIR="$BM_DIR/lib"
+DRIVERS_DIR="$BM_DIR/drivers"
 DEFAULT_RESULTS_DIR="$BM_DIR/results"
 DEFAULT_QUESTIONS="$BM_DIR/questions.yaml"
 
-# The protocol prompt restates the contract in brain/CLAUDE.md. If that file
+# The protocol prompt restates the contract in agent/rules/read.md. If that file
 # changes, the benchmark may no longer be measuring the shipped protocol.
-PROTOCOL_SOURCE="$REPO_DIR/brain/CLAUDE.md"
+PROTOCOL_SOURCE="$REPO_DIR/agent/rules/read.md"
+PROTOCOL_NAME="agent/rules/read.md"
 
 if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
     C_RED=$'\033[31m'; C_YEL=$'\033[33m'; C_GRN=$'\033[32m'
@@ -44,23 +46,23 @@ file_sha256() {
     else echo "unavailable"; fi
 }
 
-# Warn if brain/CLAUDE.md has drifted from the version the shared prompt mirrors.
-# A warning, not an error: the harness still runs, but the operator needs to know
-# the prompt may no longer reflect the shipped query protocol.
+# Warn if agent/rules/read.md has drifted from the version the shared prompt
+# mirrors. A warning, not an error: the harness still runs, but the operator
+# needs to know the prompt may no longer reflect the shipped query protocol.
 check_protocol_drift() {
     local recorded actual
     recorded="$(sed -n 's/.*almagest-protocol-sha256: \([0-9a-f]*\).*/\1/p' \
                 "$PROMPTS_DIR/_shared.md" | head -1)"
     [ -n "$recorded" ] || { warn "no protocol sha recorded in prompts/_shared.md"; return 0; }
-    [ -f "$PROTOCOL_SOURCE" ] || { warn "brain/CLAUDE.md not found — cannot check protocol drift"; return 0; }
+    [ -f "$PROTOCOL_SOURCE" ] || { warn "$PROTOCOL_NAME not found — cannot check protocol drift"; return 0; }
     actual="$(file_sha256 "$PROTOCOL_SOURCE")"
     [ "$actual" = "unavailable" ] && return 0
     if [ "$recorded" != "$actual" ]; then
-        warn "brain/CLAUDE.md has changed since benchmarks/prompts/_shared.md was written."
+        warn "$PROTOCOL_NAME has changed since benchmarks/prompts/_shared.md was written."
         warn "  recorded: $recorded"
         warn "  actual:   $actual"
         warn "  The benchmark may no longer be measuring the shipped query protocol."
-        warn "  Re-read brain/CLAUDE.md, update prompts/_shared.md, and record the new sha."
+        warn "  Re-read $PROTOCOL_NAME, update prompts/_shared.md, and record the new sha."
         DRIFT_DETECTED=1
     fi
 }
@@ -107,3 +109,46 @@ qfield() {
 }
 
 qfield1() { qfield "$@" | head -1; }
+
+# ── driver layer ─────────────────────────────────────────────────────────────
+# Every agent CLI is reached through benchmarks/drivers/<name>.sh. The interface
+# — capabilities / version / run — is documented in benchmarks/drivers/README.md.
+
+# The capability keys a driver must report, in report order. A driver that omits
+# one, or answers anything but yes/no, is rejected at preflight.
+CAP_KEYS="tool_restriction budget_cap structured_output cost_reporting session_isolation sandbox"
+
+# A bare name is a shipped driver; anything with a slash is a path to one of
+# your own. Absolute, because the arms run with the arena as cwd.
+resolve_driver() {
+    local spec="$1" path
+    case "$spec" in
+        */*) path="$(abspath "$spec")" ;;
+        *)   path="$DRIVERS_DIR/$spec.sh" ;;
+    esac
+    [ -f "$path" ] || die "driver not found: $spec (looked for $path)
+    Shipped drivers: $(ls "$DRIVERS_DIR"/*.sh 2>/dev/null | sed 's|.*/||; s|\.sh$||' | tr '\n' ' ')"
+    [ -x "$path" ] || die "driver is not executable: $path"
+    printf '%s\n' "$path"
+}
+
+driver_name_of() { printf '%s\n' "$(basename "$1" .sh)"; }
+
+# Ask the driver what its CLI can genuinely enforce, and validate the answer
+# before anything downstream trusts it. Sets CAPS.
+load_capabilities() {
+    local path="$1" name="$2" out v k
+    out="$("$path" capabilities 2>/dev/null)" || die "driver '$name': 'capabilities' exited non-zero"
+    for k in $CAP_KEYS; do
+        v="$(printf '%s\n' "$out" | awk -F'\t' -v k="$k" '$1==k { print $2; exit }')"
+        case "$v" in
+            yes|no) : ;;
+            "")     die "driver '$name': 'capabilities' reported no value for '$k' — see benchmarks/drivers/README.md" ;;
+            *)      die "driver '$name': 'capabilities' reported '$k' as '$v' — must be yes or no" ;;
+        esac
+    done
+    CAPS="$out"
+}
+
+# cap <key> → yes|no, from the CAPS loaded above.
+cap() { printf '%s\n' "${CAPS:-}" | awk -F'\t' -v k="$1" '$1==k { print $2; exit }'; }

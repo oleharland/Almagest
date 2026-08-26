@@ -2,8 +2,8 @@
 
 Almagest ships a benchmark harness that compares an agent answering from raw
 source files against the same agent answering from a compiled Almagest wiki.
-Same questions, same model, same instructions, same scoring — the only variable
-is whether the material has been compiled.
+Same questions, same driver, same model, same instructions, same scoring — the
+only variable is whether the material has been compiled.
 
 **No results have been published.** The harness exists; the numbers do not. The
 results tables in `benchmarks/README.md` ship empty and can only be filled by
@@ -46,6 +46,7 @@ mechanically and which need a model to judge them.
 | `benchmarks/fixtures/` | A self-contained fictional corpus — five source documents and a hand-compiled wiki. Never `brain/`. |
 | `benchmarks/questions.yaml` | 15 questions with ground truth, one category per question. |
 | `benchmarks/prompts/_shared.md` | The answering protocol. **Identical for both arms.** |
+| `benchmarks/drivers/` | One script per harness — how a question is actually put to an agent. |
 | `benchmarks/run.sh` | Runs the arms, captures answers, timing, and cost. |
 | `benchmarks/score.sh` | Scores a run and writes the report. |
 | `benchmarks/selftest.sh` | Verifies the harness against a test double. No API calls. |
@@ -55,11 +56,90 @@ in scope for either arm.
 
 ## Requirements
 
-Bash, awk, sed, find, and the `claude` CLI. Nothing to install.
+Bash, awk, sed, find, and the CLI of whichever harness you are driving. Nothing
+to install.
 
-That is a constraint, not a coincidence. Almagest is markdown plus Claude Code,
-with Node only for the site. A benchmark that needed a package manager would not
-belong to the same project, so the YAML and JSON parsing is done in awk.
+That is a constraint, not a coincidence. Almagest is markdown plus a coding
+agent, with Node only for the site. A benchmark that needed a package manager
+would not belong to the same project, so the YAML and JSON parsing is done in
+awk — drivers included.
+
+## Drivers
+
+`run.sh` does not know how to talk to an agent. A **driver** does: one small
+script per harness in `benchmarks/drivers/`, chosen with `--driver`.
+
+| Driver | Drives | Notes |
+|--------|--------|-------|
+| `claude-code` | the `claude` CLI | Default. The reference harness |
+| `codex` | the `codex` CLI | |
+| `gemini-cli` | the `gemini` CLI | |
+| `antigravity` | the `agy` CLI (Google Antigravity) | Not the Gemini CLI — different binary and flags. Runs with `--dangerously-skip-permissions`, which the arena tolerates and a real `brain/` does not |
+| `fake` | nothing | Canned answers for `selftest.sh`. No API calls, no money |
+
+`--driver NAME` resolves inside `benchmarks/drivers/`; `--driver PATH` runs one
+of your own. `ALMAGEST_BENCH_DRIVER` sets the default. `score.sh` takes the same
+flag for the judge. The old `ALMAGEST_BENCH_CLAUDE_BIN` is deprecated — it still
+works and warns.
+
+Writing your own is three subcommands — `capabilities`, `version`, `run` —
+reading the job from environment variables and printing one flat JSON object.
+Interface in `benchmarks/drivers/README.md`.
+
+### Capabilities
+
+A driver declares what its CLI can genuinely enforce. `run.sh` asks at preflight
+and records every answer in `run.env`:
+
+| Capability | What a `no` means for the run |
+|-----------|------------------------------|
+| `tool_restriction` | The arms were not confined to the read-only tool allowlist. See below — this is the one that breaks comparisons |
+| `budget_cap` | Per-call spend is uncapped. `--budget-usd` is advisory, and the run needs an explicit confirmation |
+| `structured_output` | The judge cannot be held to a schema. `score.sh --judge` refuses to run and names the drivers that can |
+| `cost_reporting` | Cost columns read `n/a`. Latency is still real |
+| `session_isolation` | State may carry between calls. Answers are not independent samples |
+| `sandbox` | The arm was not run in a read-only mode |
+
+A driver reports what its CLI can do, not what would be convenient. A `no` is a
+recorded fact about the run, not something to work around.
+
+### Comparability
+
+> **A run whose driver cannot enforce the read-only tool allowlist is not
+> comparable to a run whose driver can.** With `tool_restriction no` nothing
+> stopped an arm from reaching material outside its arena — the baseline could
+> have opened the wiki, the treatment could have opened the raw sources — and
+> the single variable the whole design rests on stops being single.
+
+`run.sh` warns loudly at preflight and writes `cap_tool_restriction=no` into
+`run.env`. The rendered report carries a **Comparability** block naming every
+capability reported `no` and what it costs you. Quote a number from such a run
+only alongside that block.
+
+Both arms of one run must use the same driver — `run.sh` asserts it. Baseline on
+one harness and treatment on another measures the harness, not the wiki.
+
+### Cross-harness comparison
+
+One run per harness, everything else fixed:
+
+```bash
+for d in claude-code codex gemini-cli antigravity; do
+  benchmarks/run.sh --driver "$d" --label "$d"
+done
+```
+
+Score each and compare the per-question tables. Four conditions, all of them
+checkable in `run.env`:
+
+1. **Same question set.** The hash is in `run.env`.
+2. **Same capabilities.** Compare the `cap_*` lines before comparing any number.
+   A run with `tool_restriction no` is not in the comparison.
+3. **Same judge.** Same driver and same judge model across every run, or you are
+   comparing judges rather than harnesses.
+4. **Read the result as harness + model.** A harness's system prompt, tool set,
+   and retry behaviour are part of what you measured. Nothing here isolates the
+   model.
 
 ## 1. Run the selftest
 
@@ -70,8 +150,8 @@ benchmarks/selftest.sh
 ```
 
 It exercises the parsers, the fixture corpus, arena isolation, answer capture,
-mechanical scoring, report rendering, and every failure branch — against a stub
-binary that returns canned output.
+capability reporting, mechanical scoring, report rendering, and every failure
+branch — against `drivers/fake.sh`, which returns canned output.
 
 ## 2. Dry run
 
@@ -79,8 +159,8 @@ binary that returns canned output.
 benchmarks/run.sh --dry-run
 ```
 
-Prints the exact command each arm would issue. Calls nothing, writes nothing,
-costs nothing.
+Resolves the driver, prints its version and capabilities, and prints the exact
+command each arm would issue. Calls nothing, writes nothing, costs nothing.
 
 ## 3. One question
 
@@ -96,7 +176,7 @@ where you find out for two calls instead of thirty.
 ## 4. Full run
 
 ```bash
-benchmarks/run.sh --model sonnet --label v1
+benchmarks/run.sh --driver claude-code --model sonnet --label v1
 ```
 
 ### What it costs
@@ -118,7 +198,8 @@ refuses to run unattended without `--yes`, and caps per-call spend with
 | Flag | Meaning |
 |------|---------|
 | `--arm baseline\|treatment\|both` | Which arm(s) to run. Default `both` |
-| `--model NAME` | Model that answers. Default `sonnet` |
+| `--driver NAME\|PATH` | Harness driver. Default `claude-code`; env `ALMAGEST_BENCH_DRIVER` |
+| `--model NAME` | Model that answers, spelled the way the driver's CLI spells it. Default `sonnet` |
 | `--only q05,q10` | Run just these question ids |
 | `--label NAME` | Prefix for the run directory |
 | `--budget-usd N` | Per-call spend cap. Default `1.00` |
@@ -147,8 +228,12 @@ arm produced the answer.
 Use a different model for the judge than for the arms where you can:
 
 ```bash
-benchmarks/score.sh --run v1-<timestamp> --judge --judge-model opus
+benchmarks/score.sh --run v1-<timestamp> --judge --judge-model <other model>
 ```
+
+The judge needs schema-constrained output. A driver reporting
+`structured_output no` makes `--judge` refuse to run rather than score against
+whatever the CLI happened to print.
 
 The report labels every number with which pass produced it. Never quote one
 without the label.
@@ -157,7 +242,7 @@ without the label.
 
 ```
 benchmarks/results/<run-id>/
-├── run.env                    model, date, question-set hash, Claude Code version
+├── run.env                    driver, driver version, capabilities, model, date, question-set hash
 ├── report.md                  the rendered report
 ├── scores-mechanical.tsv      machine-readable
 ├── scores-judge.tsv           machine-readable, only if --judge ran
@@ -181,15 +266,16 @@ The per-question table is the useful part. Aggregates hide which question moved.
 ## Publishing a result
 
 If you publish numbers from this harness, publish the run configuration with
-them: model, judge model, date, question-set hash, and Claude Code version. All
-five are in `run.env` and in the report's metadata table. A benchmark figure
+them: driver and driver version, model, judge model, date, question-set hash,
+and every capability the driver reported `no`. All of them are in `run.env` and
+in the report's metadata and comparability blocks. A benchmark figure
 without them is not reproducible, and an unreproducible figure is exactly the
 kind of claim this project refuses to write into a wiki page.
 
 ## What it cannot tell you
 
 1. **It does not measure ingest.** The treatment arm reads a *gold wiki* —
-   hand-compiled from the fixtures to the letter of `.claude/rules/brain-wiki.md`.
+   hand-compiled from the fixtures to the letter of `agent/rules/wiki.md`.
    A treatment result is therefore an upper bound: it says what a correctly
    compiled wiki buys you, not whether Almagest's ingest produces one.
 
@@ -207,6 +293,10 @@ kind of claim this project refuses to write into a wiki page.
 
 5. **One corpus, one domain.** Nothing here establishes that a result
    generalises to your material.
+
+6. **It scores a harness, not a model.** The driver is the harness's own CLI,
+   with its system prompt, tool set, and retry behaviour intact. Swapping the
+   driver swaps both halves at once.
 
 These are restated at the end of `benchmarks/README.md` because a number quoted
 without them is a number misquoted.

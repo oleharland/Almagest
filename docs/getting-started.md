@@ -19,6 +19,7 @@ git remote add origin <your-new-repo-url>
 Edit `brain.config.yaml` to match your domain:
 
 - **name** — your knowledge base name
+- **agent.harness** — which coding agent you run, and the model each capability tier maps to. See [Agent Harnesses](agent-harnesses.md)
 - **page_types** — the types of wiki pages you'll create (e.g., topic, concept, decision, entity)
 - **type_fields** — extra frontmatter fields per page type
 - **canonical_pages** — which wiki pages serve as locked reference lists
@@ -41,9 +42,8 @@ If you want to pull content from GitHub or GitLab repos instead of dropping file
    export GITHUB_TOKEN="github_pat_..."      # GitHub
    export GITLAB_TOKEN="glpat-..."           # GitLab
    ```
-2. Start Claude Code — it reads `.mcp.json` automatically
-3. Approve the MCP server when prompted (`/mcp` to manage)
-4. List the repos to ingest under `sources.remote` in `brain.config.yaml`
+2. Point your agent at the MCP servers. Claude Code reads `.mcp.json` automatically and prompts you to approve each server (`/mcp` to manage); other harnesses need the same two entries in their own config — see [Agent Harnesses](agent-harnesses.md)
+3. List the repos to ingest under `sources.remote` in `brain.config.yaml`
 
 See [Remote Sources](remote-sources.md) for full details.
 
@@ -58,17 +58,19 @@ Canonical pages are the guardrails. Create them before ingesting anything:
 # The agent will help you draft it
 ```
 
-In Claude Code, say: "Create a canonical taxonomy page for [your domain]"
+Ask your agent: "Create a canonical taxonomy page for [your domain]"
 
 ## 5. Start ingesting
 
-Drop files into `brain/raw/` and start Claude Code:
+Drop files into `brain/raw/` and start your agent in the repo root:
 
 ```bash
-claude
+claude          # or codex, cursor-agent, gemini — whichever you run
 ```
 
 The agent will detect files in `raw/`, extract entities, and propose wiki pages for your approval.
+
+Stay in the session. Every write goes through an approval gate that only a human can pass, so Almagest must not be run by a headless or unattended agent — the contract is in [`agent/contract.md`](../agent/contract.md), the per-harness detail in [Agent Harnesses](agent-harnesses.md).
 
 ## 6. Build the site (optional)
 
@@ -102,5 +104,6 @@ See [Upstream Updates](upstream-updates.md) for details.
 
 ## Where to go next
 
+- [Agent Harnesses](agent-harnesses.md) — what a harness has to be able to do, and how to set up the one you use
 - [The Ingest Manifest](manifest.md) — how the agent tells a new source from one you edited, and what to do when the record drifts
 - [Benchmarks](benchmarks.md) — the harness for measuring whether the compiled wiki actually beats reading the raw sources

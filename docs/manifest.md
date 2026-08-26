@@ -21,7 +21,7 @@ The same problem exists remotely, in a milder form. Remote ingest already compar
 |-------|------|
 | `brain/index.md` | The **human-readable catalog**. What pages exist, what sources were ingested, in tables meant to be read. |
 | `brain/manifest.yaml` | The **machine record**. Fingerprints, dates, and the page slugs each source produced. What the agent reads to decide what to do. |
-| `.claude/rules/brain-ingest.md` | The protocol — how a lookup turns into work, and how a changed source is re-ingested. |
+| `agent/rules/ingest.md` | The protocol — how a lookup turns into work, and how a changed source is re-ingested. |
 | `brain.config.yaml` → `manifest.path` | Where the file lives. The only knob. |
 
 **The manifest supplements `index.md`. It does not replace it.** They record overlapping facts for different readers, and both are written on every ingest. Delete `index.md` and you lose the catalog humans and the query agent read first. Delete `manifest.yaml` and every source looks new again. Keep both.
@@ -153,7 +153,7 @@ An entry matches but the fingerprint differs. This is the interesting one, and i
    | Difference | Handling |
    |-----------|----------|
    | **Addition** — a new fact nothing disagrees with | Proposed as an additive update to the recorded page, or a new page if it is a new entity |
-   | **Revision** — the source now says something different from what the wiki records from it | A contradiction. Routed through the contradiction protocol in `.claude/rules/brain-wiki.md`: both claims quoted with sources, a resolution proposed, you decide |
+   | **Revision** — the source now says something different from what the wiki records from it | A contradiction. Routed through the contradiction protocol in `agent/rules/wiki.md`: both claims quoted with sources, a resolution proposed, you decide |
    | **Removal** — a claim the wiki cites is no longer in the source | Never deleted silently. Flagged, with amend / mark disputed / remove proposed |
 
 4. **A newer version is not automatic authority.** "The source was edited since we ingested it" is a strong argument for replacing the old claim, and the agent will recommend that — but it is a recommendation, and the contradiction gate still runs.
