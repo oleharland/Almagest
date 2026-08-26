@@ -1,0 +1,16 @@
+version: 1
+
+sources:
+  - id: alpha-pdf
+    kind: local
+    path: brain/raw/processed/alpha.pdf
+    sha256: 1111111111111111111111111111111111111111111111111111111111111111
+    extracted: brain/raw/extracted/alpha.pdf.txt
+    extracted_sha256: 3b50e003ca81fc8afceca1f8d8a259adfd2a3940144e429640ee160e4f8677d9
+    bytes: 1024
+    first_ingested: 2026-01-01
+    last_ingested: 2026-01-01
+    pages:
+      - alpha
+      - beta
+    status: ingested

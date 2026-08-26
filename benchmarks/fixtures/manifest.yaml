@@ -1,0 +1,96 @@
+# benchmarks/fixtures/manifest.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+# The machine record for the BENCHMARK FIXTURE corpus. Not `brain/manifest.yaml`
+# and never read by it — this file exists so the fixture is a complete Almagest
+# brain rather than a wiki with two of its three records missing.
+#
+# It is what lets `tools/audit.mjs` verify the fixture at all: PROV-003 asks
+# whether every cited source is a manifest entry, and CITE-005 asks whether the
+# digest each page carries still matches the one recorded here. Without this file
+# the gold wiki could only ever be audited with those two checks disabled, which
+# is the same as saying its provenance is unchecked.
+#
+# Every source here is a committed text file, so there are no sidecars: `sha256`
+# is the digest of `path` itself, and that is the value every page repeats in
+# `sources[].sha256`.
+#
+# NOT copied into any arena. The arena holds what a reader is given — sources,
+# the wiki, and the catalog. The manifest is an ingest artifact, and handing it
+# to the answering agent would turn the drift arm's question from "did you notice
+# the page disagrees with the document" into "did you compare two hex strings".
+# See fixtures/README.md.
+#
+# Regenerate the digests after any edit to raw/:
+#     shasum -a 256 benchmarks/fixtures/raw/*.md
+# selftest.sh checks them, so a stale digest here fails the selftest rather than
+# quietly turning CITE-005 into noise.
+# ──────────────────────────────────────────────────────────────────────────────
+
+version: 1
+
+sources:
+
+  - id: kb-01-charter
+    kind: local
+    path: raw/kb-01-programme-charter.md
+    sha256: 29de9f90400b5981439153b2d97b5b7ed4d24558e5d79cff840297341126c718
+    bytes: 2257
+    first_ingested: 2027-10-01
+    last_ingested: 2027-10-01
+    pages:
+      - kestrel-basin-tidal-array
+      - vm-320-turbine
+      - marrowfen-coastal-authority
+    status: ingested
+
+  - id: kb-02-survey
+    kind: local
+    path: raw/kb-02-site-survey-report.md
+    sha256: 0302378d51d72c323c7ac02f0dfba2962b4f1cc84fcaa30d06689a4eef060c46
+    bytes: 1928
+    first_ingested: 2027-10-01
+    last_ingested: 2027-10-01
+    pages:
+      - gannet-narrows-site-conditions
+      - harrowgate-grid-connection
+      - marrowfen-coastal-authority
+    status: ingested
+
+  - id: kb-03-vendor-note
+    kind: local
+    path: raw/kb-03-vendor-technical-note.md
+    sha256: cfc1a4c7899119c5565ffbd678af66c3bcd1312a8321dabae508adb7f07c9b76
+    bytes: 1681
+    first_ingested: 2027-10-01
+    last_ingested: 2027-10-01
+    pages:
+      - vm-320-turbine
+      - kestrel-basin-tidal-array
+    status: ingested
+
+  - id: kb-04-verification-memo
+    kind: local
+    path: raw/kb-04-independent-verification-memo.md
+    sha256: f3f0c0cedff67340c0ff2c94a23b2ba74ee6f3deae122a32093b9f55d16491c4
+    bytes: 1874
+    first_ingested: 2027-10-01
+    last_ingested: 2027-10-01
+    pages:
+      - vm-320-turbine
+      - kestrel-basin-tidal-array
+      - gannet-narrows-site-conditions
+      - marrowfen-coastal-authority
+    status: ingested
+
+  - id: kb-05-grid-agreement
+    kind: local
+    path: raw/kb-05-grid-connection-agreement.md
+    sha256: 73e3b6f11c935f58b203e4d480f416bf2cfdceb6637dbb07fdb3e592189b4e37
+    bytes: 1789
+    first_ingested: 2027-10-01
+    last_ingested: 2027-10-01
+    pages:
+      - harrowgate-grid-connection
+      - kestrel-basin-tidal-array
+      - marrowfen-coastal-authority
+    status: ingested

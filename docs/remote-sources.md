@@ -4,6 +4,41 @@ Almagest can read content directly from remote repositories over MCP (Model Cont
 
 Remote sources are entirely optional. If you only ever drop files into `brain/raw/`, skip this page.
 
+## Remote sync can now run unattended
+
+This is the change that makes this page worth reading. Under the old approval
+gate every write needed an in-session "yes", which meant a remote sync was
+something you sat and watched. A sync you have to babysit is not a sync — it is
+a manual ingest with extra network, and the feature was quietly useless for its
+main purpose.
+
+Under the [branch model](agent-harnesses.md#requirement-5-does-not-degrade) the
+agent ingests onto `ingest/<source-slug>-<sha7>`, runs `tools/audit.mjs`, commits
+what passed, and stops. You read the diff and merge. Nothing about the guarantee
+weakened: the guarantee was never "a human watched it happen", it was "nothing
+unreviewed reached `main`".
+
+So this is now a legitimate shape:
+
+```bash
+# cron, CI schedule, or a git worktree on a build box — pick your poison
+git checkout -b "ingest/platform-docs-$(date +%Y%m%d)"
+<your agent> --print "Sync all remote sources per agent/rules/ingest.md"
+node tools/audit.mjs || exit 1
+git push -u origin HEAD          # open a PR. Do not merge it.
+```
+
+Two rules that do not bend:
+
+- **Never `--auto-merge`, never push to `main`.** There is no flag for it in
+  Almagest and adding one to your job removes the only gate there is.
+- **Give it its own worktree or checkout.** An unattended agent with permissive
+  flags should not be sharing a working tree with your editor.
+
+Contradictions, canonical conflicts, deletions, renames, and low-confidence
+curated pages are not written by an unattended run at all — they block, and the
+run reports them unwritten. You resolve those interactively on the next pass.
+
 ## How it fits together
 
 | Piece | Role |
@@ -137,16 +172,30 @@ Ask your agent:
 2. Connects via the MCP server matching each entry's `provider`
 3. Lists files in the configured paths, compares against the last ingested commit SHA
 4. Reads changed files and extracts entities
-5. Proposes wiki page updates — **same approval flow as local ingest**
-6. Logs the source reference in `index.md` → Remote sources (provider, repo, path, commit SHA, date)
+5. Writes pages on an `ingest/<source-slug>-<sha7>` branch — **same branch, audit, and merge flow as local ingest**
+6. Logs the source reference in `index.md` → Remote sources and in `manifest.yaml` (provider, repo, path, commit SHA, date)
+7. Runs `tools/audit.mjs`; an exit `1` blocks the commit
+8. You read `git diff main...ingest/<branch>` and merge
 
-Nothing is written to the wiki without your approval, remote or local.
+Nothing reaches `main` without your merge, remote or local.
 
 ### Citations for remote sources
 
-```markdown
-[source: github:acme/platform-docs / docs/architecture.md, §Overview (sha: abc1234, 2026-08-25)]
+Remote sources use the same frozen citation grammar as local ones — `[source: <id>, <locator>]`, where `<id>` is an entry in that page's `sources`. The repo, path, and commit SHA live in the frontmatter and the manifest, not in the citation:
+
+```yaml
+sources:
+  - id: platform-arch
+    path: github:acme/platform-docs/docs/architecture.md@abc1234
+    sha256: "9f2a…"                       # of the file content at that commit
+    title: "Platform Docs — Architecture"
 ```
+
+```markdown
+Failover is constraint-aware. [source: platform-arch, §Overview]
+```
+
+The commit SHA is pinned in `path`, so the citation resolves to an exact revision rather than to whatever `main` says today. `manifest.yaml` carries the same SHA — that is what makes the next sync incremental, and what `CITE-005` compares against when the upstream file moves on.
 
 ## Using the same servers in a desktop chat app
 

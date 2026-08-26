@@ -64,7 +64,7 @@ Usage: tools/agent-shims.sh <generate|check>
 Sources of truth:
   agent/rules/read.md · agent/rules/ingest.md · agent/rules/wiki.md
   agent/routing.md    (overview + routing table blocks)
-  brain/rules-index.md     (the six non-negotiables)
+  brain/rules-index.md     (the non-negotiables)
 USAGE
 }
 
@@ -129,7 +129,7 @@ EOF
 
 # ── templates ────────────────────────────────────────────────────────────────
 
-# Always-on file: project overview + the six non-negotiables + routing table +
+# Always-on file: project overview + the non-negotiables + routing table +
 # one harness-specific section. Carried by every harness that loads exactly one
 # instruction file per session.
 always_on() {
@@ -140,7 +140,7 @@ always_on() {
     cat <<'EOF'
 ## Non-negotiables
 
-These six hold across every operation, on every harness. Everything else is in the rule files named by the routing table below.
+These hold across every operation, on every harness. Everything else is in the rule files named by the routing table below.
 
 EOF
     printf '%s\n\n' "$NONNEG"
@@ -155,7 +155,7 @@ EOF
     cat <<'EOF'
 ## Harness contract
 
-`agent/contract.md` states what a harness must provide to run Almagest at all. Requirement 5 is an interactive human who can approve or reject in-session: a harness running unattended MUST NOT run Almagest. The approval gate is the first non-negotiable and there is no auto-approve mode.
+`agent/contract.md` states what a harness must provide to run Almagest at all. Requirement 5 is a reviewer who merges: the agent commits to an `ingest/<source-slug>-<sha7>` branch and `main` moves only when a human merges a reviewed diff. Unattended ingest onto a branch is supported; an unattended merge to `main` is forbidden and there is no flag for it. Requirement 7 is Node 22+ for `tools/audit.mjs`, whose exit code gates the commit.
 EOF
 }
 
@@ -267,12 +267,12 @@ generate_all() {
     # Claude Code path-scoped rules.
     pointer "$(printf -- '---\npaths:\n  - "brain/raw/**"\n---')" \
         'Brain — Ingest Rules (pointer)' 'agent/rules/ingest.md' \
-        'ingest — `raw/` and remote sources into `wiki/`, fingerprinting, the manifest, terminal output' \
+        'ingest — `raw/` and remote sources into `wiki/`, fingerprinting, extracted sidecars, the manifest, the ingest branch' \
         'you are about to process anything in `brain/raw/`, or a source in `brain.config.yaml` → `sources.remote`' \
         | emit '.claude/rules/brain-ingest.md'
     pointer "$(printf -- '---\npaths:\n  - "brain/wiki/**"\n---')" \
         'Brain — Wiki Write Rules (pointer)' 'agent/rules/wiki.md' \
-        'writing — approval gates, contradictions, the page template, content tiers, audit' \
+        'writing — the ingest branch and its blocking cases, contradictions, the page template, content tiers, the audit' \
         'you are about to create, edit, delete, or merge anything in `brain/wiki/`, or run an audit' \
         | emit '.claude/rules/brain-wiki.md'
 
@@ -284,12 +284,12 @@ generate_all() {
         | emit '.cursor/rules/almagest-read.mdc'
     pointer "$(printf -- '---\ndescription: Almagest — ingest rules for brain/raw/\nglobs: brain/raw/**\nalwaysApply: false\n---')" \
         'Brain — Ingest Rules (pointer)' 'agent/rules/ingest.md' \
-        'ingest — `raw/` and remote sources into `wiki/`, fingerprinting, the manifest, terminal output' \
+        'ingest — `raw/` and remote sources into `wiki/`, fingerprinting, extracted sidecars, the manifest, the ingest branch' \
         'you are about to process anything in `brain/raw/`, or a source in `brain.config.yaml` → `sources.remote`' \
         | emit '.cursor/rules/almagest-ingest.mdc'
     pointer "$(printf -- '---\ndescription: Almagest — write rules for brain/wiki/\nglobs: brain/wiki/**\nalwaysApply: false\n---')" \
         'Brain — Wiki Write Rules (pointer)' 'agent/rules/wiki.md' \
-        'writing — approval gates, contradictions, the page template, content tiers, audit' \
+        'writing — the ingest branch and its blocking cases, contradictions, the page template, content tiers, the audit' \
         'you are about to create, edit, delete, or merge anything in `brain/wiki/`, or run an audit' \
         | emit '.cursor/rules/almagest-wiki.mdc'
 

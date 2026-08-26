@@ -18,8 +18,20 @@
 # dropped back into `raw/` is a CHANGED source, not a duplicate. That is the bug
 # this file exists to fix.
 #
-# Agent-maintained. Written only AFTER the user approves an ingest, never ahead
-# of approval. Hand-edit only to repair drift — see `docs/manifest.md`.
+# Binary sources are hashed TWICE, because two different files matter:
+#   sha256           — the gitignored original in `raw/processed/`. Change
+#                      detection compares this one.
+#   extracted_sha256 — the COMMITTED text sidecar in `raw/extracted/`. This is
+#                      the digest wiki pages carry in `sources[].sha256`, because
+#                      the sidecar is the file their citations point into.
+# `CITE-005` compares a page's `sources[].sha256` against the value here. When
+# they disagree the page is citing a version this manifest has moved past, and
+# the audit says so as a fact — "this page cites v1; the manifest is at v2 — 4
+# citations unverified" — not as a guess from a `last_verified` date.
+#
+# Agent-maintained. Written to an `ingest/<source-slug>-<sha7>` branch in the
+# same commit as the pages it describes, never in a commit of its own and never
+# ahead of them. Hand-edit only to repair drift — see `docs/manifest.md`.
 #
 # There is no separate revision history: this file is committed to git, so
 # `git log -p brain/manifest.yaml` is the history.
@@ -43,7 +55,8 @@ version: 1
 #                     `provider:repo:path` (remote). It survives renames — that
 #                     is the whole reason `id` is separate from `path`.
 #   kind            — local | remote
-#   path            — local:  path relative to repo root, current location
+#   path            — local:  path relative to repo root, current location of
+#                             the ORIGINAL (gitignored, if binary)
 #                     remote: path within the repo
 #   bytes           — size in bytes at last ingest
 #   first_ingested  — ISO-8601 date of the first successful ingest
@@ -59,10 +72,12 @@ version: 1
 #                       skipped    — deliberately not ingested (outside
 #                                    canonical scope). Recorded so it is not
 #                                    re-proposed on every run
-#                       missing    — the source file is gone from
+#                       missing    — the ORIGINAL is gone from
 #                                    `raw/processed/`. Usually a gitignored
-#                                    binary on a fresh clone. Pages stay,
-#                                    the entry stays, nothing is re-ingested
+#                                    binary on a fresh clone. Pages stay, the
+#                                    entry stays, nothing is re-ingested — and
+#                                    the sidecar is committed, so citations
+#                                    into it still verify
 #                       superseded — replaced by another entry, named in
 #                                    `superseded_by`
 #   superseded_by   — id of the replacing entry. Only with `status: superseded`.
@@ -71,7 +86,18 @@ version: 1
 #
 # local only:
 #
-#   sha256          — hex digest of the file's bytes at last ingest (64 chars)
+#   sha256          — hex digest of the ORIGINAL's bytes at last ingest
+#                     (64 chars). This is what change detection compares.
+#   extracted       — binary sources only: path to the committed text sidecar
+#                     under `brain/raw/extracted/`, named
+#                     `<original-filename>.txt`. `none` when the source has no
+#                     extractable text at all (unOCR'd scan, silent video) —
+#                     say why in `notes`. Text sources omit the field: the
+#                     original is committed and is cited directly.
+#                     The sidecar, not the original, is what pages cite.
+#   extracted_sha256 — hex digest of the sidecar (64 chars). Required whenever
+#                     `extracted` names a file. This is the value that must
+#                     equal `sources[].sha256` on every page citing this source.
 #   previous_paths  — earlier locations of this same content: renames, filename
 #                     sanitization, moves. Optional.
 #
@@ -90,12 +116,16 @@ version: 1
 #
 # sources:
 #
-#   # A local file, ingested once and later re-ingested after being edited.
+#   # A local binary, ingested once and later re-ingested after being edited.
 #   # `sha256` is the v2 digest; the v1 digest lives in git history.
+#   # The original is gitignored; the sidecar under `raw/extracted/` is not, and
+#   # it is what `system-architecture` and `data-pipeline` cite.
 #   - id: system-overview-pdf
 #     kind: local
 #     path: brain/raw/processed/system-overview.pdf
 #     sha256: b72fbfb7f607dc872d4ab091ca308a4f9c6d111e17e63ba81365c242d14e6c83
+#     extracted: brain/raw/extracted/system-overview.pdf.txt
+#     extracted_sha256: 4c1d9a2e0f83b7615ad4c02e9f7188bb35c6d4a1e0927fb3c85d61ae4f20c7d9
 #     bytes: 2481920
 #     first_ingested: 2026-07-14
 #     last_ingested: 2026-08-21
@@ -105,7 +135,19 @@ version: 1
 #       - system-architecture
 #       - data-pipeline
 #     status: ingested
-#     notes: "Re-ingested 2026-08-21 — §Failover rewritten upstream; auth claim replaced on system-architecture."
+#     notes: "Re-ingested 2026-08-21 — §Failover rewritten upstream; auth claim replaced on system-architecture. Extracted with pdftotext -layout."
+#
+#   # A local text file. Committed as-is, so no sidecar: pages cite `path`.
+#   - id: notes-2026-q2-md
+#     kind: local
+#     path: brain/raw/processed/notes-2026-q2.md
+#     sha256: 1f0be0c6cf7a2b8d5e3901c47f6ab2d8e5c40917bb3d62ae0f8143c9d572be40
+#     bytes: 14203
+#     first_ingested: 2026-07-02
+#     last_ingested: 2026-07-02
+#     pages:
+#       - quarterly-priorities
+#     status: ingested
 #
 #   # A remote file read over MCP. No local copy exists; `commit` is the anchor.
 #   - id: "github:acme/platform-docs:docs/architecture/overview.md"

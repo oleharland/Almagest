@@ -82,6 +82,14 @@ BEGIN {
     printf("| Answering model | `%s` |\n", env["model"])
     printf("| Arms | %s |\n", env["arms"])
     printf("| Questions | %s |\n", env["questions_count"])
+    if ("scale" in env) {
+        printf("| Corpus | %s document(s)%s |\n", env["corpus_documents"],
+               (env["scale_generated"] + 0 > 0 \
+                ? sprintf(" — %s real, **%s generated distractors**, seed `%s`", \
+                          env["corpus_documents"] - env["scale_generated"], \
+                          env["scale_generated"], env["scale_seed"]) \
+                : ""))
+    }
     printf("| Question set sha256 | `%s` |\n", substr(env["questions_sha256"], 1, 16) "…")
     printf("| Shared prompt sha256 | `%s` |\n", substr(env["shared_prompt_sha256"], 1, 16) "…")
     printf("| Driver | `%s` — %s |\n", (env["driver"] == "" ? "unknown" : env["driver"]),
@@ -114,9 +122,17 @@ BEGIN {
     row("`must_not_contain` hits (advisory)", "mnc",             0)
     row("Synthesis marker on synthesis Qs",   "syn_hit",         0)
     row("Synthesis marker on other Qs",       "syn_over",        0)
+    row("Source value present (advisory)",    "poison_true",     0)
+    row("Compiled-claim value present (advisory)", "poison_false", 0)
     row("Median latency",                     "lat_med",         0)
     row("Mean latency",                       "lat_mean",        0)
     row("Total cost (USD)",                   "cost_sum",        0)
+    print ""
+    print "The two advisory rows are literal-string checks on `poisoned_claim` and"
+    print "`drift*` questions. An answer that reports the source value AND names the"
+    print "conflicting one on the compiled page — the best possible answer — trips both."
+    print "They narrow down which answers to read. **Neither is a propagation rate.** That is"
+    print "`compiled_error`, below, and it needs a judge."
     print ""
 
     # ── judge aggregate ─────────────────────────────────────────────────────
@@ -132,17 +148,19 @@ BEGIN {
         print "Format of the table this will produce — the tokens below are placeholders,"
         print "not results:"
         print ""
-        print "| Metric | baseline | treatment |"
-        print "|--------|----------|-----------|"
-        print "| Correctness (mean, 0–2) | — | — |"
-        print "| Fully correct | — | — |"
-        print "| Citation support (mean, 0–2) | — | — |"
-        print "| Unsourced claims (total) | — | — |"
-        print "| Confabulation rate on unanswerable Qs | — | — |"
-        print "| Correct declines (named the gap) | — | — |"
-        print "| Contradictions fully surfaced | — | — |"
-        print "| Synthesis correctly flagged | — | — |"
-        print "| Synthesis over-flagged elsewhere | — | — |"
+        print "| Metric | " armhdr() " |"
+        print "|--------|" armsep()
+        blankrow("Correctness (mean, 0–2)")
+        blankrow("Fully correct")
+        blankrow("Citation support (mean, 0–2)")
+        blankrow("Unsourced claims (total)")
+        blankrow("Confabulation rate on unanswerable Qs")
+        blankrow("Correct declines (named the gap)")
+        blankrow("Contradictions fully surfaced")
+        blankrow("Synthesis correctly flagged")
+        blankrow("Synthesis over-flagged elsewhere")
+        blankrow("Compiled-error propagation rate")
+        blankrow("Compiled errors caught and named")
         print ""
     } else {
         print "A model scored these against the ground truth, blind to which arm produced"
@@ -161,14 +179,22 @@ BEGIN {
         row("Contradictions fully surfaced",        "j_contra",    0)
         row("Synthesis correctly flagged",          "j_syn",       0)
         row("Synthesis over-flagged elsewhere",     "j_overflag",  0)
+        row("Compiled-error propagation rate",      "j_prop",      0)
+        row("Compiled errors caught and named",     "j_caught",    0)
+        print ""
+        print "**Compiled-error propagation rate** counts answers that asserted a claim a"
+        print "compiled wiki page makes and the source documents contradict. An arm with no"
+        print "wiki, or with a correct one, has nothing false in front of it and should sit"
+        print "at zero — that is the control, not a result. Only an arm given a wiki that is"
+        print "wrong or stale can put a number in this row that means anything."
         print ""
     }
 
     # ── per-question detail ─────────────────────────────────────────────────
     print "## Per-question detail"
     print ""
-    print "| Q | Category | Arm | Cited | Broken links | Fabricated IDs | Recall | Latency (ms) | Judge: correct / citation / abstain |"
-    print "|---|----------|-----|-------|--------------|----------------|--------|--------------|-------------------------------------|"
+    print "| Q | Category | Arm | Cited | Broken links | Fabricated IDs | Recall | Latency (ms) | Judge: correct / citation / abstain / compiled |"
+    print "|---|----------|-----|-------|--------------|----------------|--------|--------------|-----------------------------------------------|"
     for (qi = 1; qi <= nq; qi++) {
         q = qorder[qi]
         for (ai = 1; ai <= narm; ai++) {
@@ -178,6 +204,7 @@ BEGIN {
                 printf("| `%s` | %s | %s | — | — | — | — | — | unscorable |\n", q, qcat[q], a)
                 continue
             }
+            je = ((a SUBSEP q SUBSEP "judge_compiled_error") in J) ? J[a, q, "judge_compiled_error"] : "—"
             et = M[a, q, "expected_sources_total"] + 0
             ec = M[a, q, "expected_sources_cited"] + 0
             mt = M[a, q, "must_contain_total"] + 0
@@ -185,14 +212,14 @@ BEGIN {
             jc = ((a SUBSEP q SUBSEP "judge_correctness") in J) ? J[a, q, "judge_correctness"] : "—"
             js = ((a SUBSEP q SUBSEP "judge_citation_support") in J) ? J[a, q, "judge_citation_support"] : "—"
             ja = ((a SUBSEP q SUBSEP "judge_abstention") in J) ? J[a, q, "judge_abstention"] : "—"
-            printf("| `%s` | %s | %s | %s | %s | %s | %s | %s | %s / %s / %s |\n",
+            printf("| `%s` | %s | %s | %s | %s | %s | %s | %s | %s / %s / %s / %s |\n",
                    q, qcat[q], a,
                    (et > 0 ? ec "/" et : "n/a"),
                    M[a, q, "cited_pages_broken"] + 0,
                    M[a, q, "fabricated_doc_ids"] + 0,
                    (mt > 0 ? mh "/" mt : "n/a"),
                    (M[a, q, "latency_ms"] == "" ? "—" : M[a, q, "latency_ms"]),
-                   jc, js, ja)
+                   jc, js, ja, je)
         }
     }
     print ""
@@ -234,6 +261,35 @@ function comparability(   keys, meaning, i, n, k, v, nbad, have) {
 
     print "## Comparability"
     print ""
+
+    # Corpus size is the first thing that has to match, because it is the axis
+    # this benchmark is least able to hide. At five documents an agent reads the
+    # whole corpus and retrieval is not a constraint at all; at 500 it is the
+    # constraint. A number from one tier says nothing about another.
+    if (("scale" in env) && (env["scale_generated"] + 0) > 0) {
+        printf("**Scaled corpus (`--scale %s`, seed `%s`).** %s of the %s documents are\n",
+               env["scale"], env["scale_seed"], env["scale_generated"], env["corpus_documents"])
+        print "generated distractors. They answer nothing, and they are shallower and more"
+        print "uniform than real material would be, so this measures **retrieval pressure**"
+        print "and not domain breadth — a weaker instrument than the same number of"
+        print "genuinely distinct documents. Compare this run only against runs at the same"
+        print "`--scale` AND the same `--scale-seed`; both are in `run.env`."
+        print ""
+    } else if ("scale" in env) {
+        print "**Corpus: the five real sources.** Small enough that an agent can read all of"
+        print "it, so retrieval is not yet a constraint and nothing here separates the"
+        print "summarisation benefit of a compiled wiki from its retrieval benefit. Run at"
+        print "`--scale 50` and `--scale 500` before claiming the second one exists."
+        print ""
+    }
+
+    if ("arms" in env && index(" " env["arms"] " ", " poisoned ") == 0 \
+        && index(" " env["arms"] " ", " drift ") == 0) {
+        print "**No arm was given a defective wiki.** Neither `poisoned` nor `drift` ran, so"
+        print "the compiled-error propagation rate has no arm that could produce a non-zero"
+        print "value and this run says nothing about it."
+        print ""
+    }
 
     have = 0
     for (i = 1; i <= n; i++) if (("cap_" keys[i]) in env) have = 1
@@ -280,6 +336,15 @@ function row(label, key,   i, s) {
     print s
 }
 
+# A row of em-dashes, one cell per arm. Used only for the not-run judge table:
+# it must show the SHAPE of the table without ever showing a number, and the
+# shape depends on how many arms this run had.
+function blankrow(label,   i, s) {
+    s = "| " label " |"
+    for (i = 1; i <= narm; i++) s = s " — |"
+    print s
+}
+
 function cell(a, key,   qi, q, n, hit, sum, tot, den, nlat, v, unscorable, lats) {
     n = 0; hit = 0; sum = 0; tot = 0; den = 0; nlat = 0
     delete lats
@@ -302,6 +367,8 @@ function cell(a, key,   qi, q, n, hit, sum, tot, den, nlat, v, unscorable, lats)
         else if (key == "mnc")          { sum += M[a,q,"must_not_contain_hits"]+0 }
         else if (key == "syn_hit")      { if (qcat[q] == "synthesis") { den++; if ((M[a,q,"synthesis_marker"]+0) == 1) hit++ } }
         else if (key == "syn_over")     { if (qcat[q] != "synthesis") { den++; if ((M[a,q,"synthesis_marker"]+0) == 1) hit++ } }
+        else if (key == "poison_true")  { if ((a SUBSEP q SUBSEP "poison_true_present") in M)  { den++; if ((M[a,q,"poison_true_present"]+0)  == 1) hit++ } }
+        else if (key == "poison_false") { if ((a SUBSEP q SUBSEP "poison_false_present") in M) { den++; if ((M[a,q,"poison_false_present"]+0) == 1) hit++ } }
         else if (key == "lat_med" || key == "lat_mean") {
             v = M[a,q,"latency_ms"]; if (v != "") { nlat++; lats[nlat] = v + 0; sum += v + 0 } }
         else if (key == "cost_sum") { v = M[a,q,"cost_usd"]; if (v != "") sum += v + 0 }
@@ -318,6 +385,7 @@ function cell(a, key,   qi, q, n, hit, sum, tot, den, nlat, v, unscorable, lats)
     if (key == "recall")        return (tot == 0 ? "n/a" : sum " / " tot "  (" pct(sum, tot) ")")
     if (key == "mnc")           return sum ""
     if (key == "syn_hit" || key == "syn_over") return (den == 0 ? "n/a" : hit " / " den)
+    if (key == "poison_true" || key == "poison_false") return (den == 0 ? "n/a" : hit " / " den "  (" pct(hit, den) ")")
     if (key == "lat_med")       return (nlat == 0 ? "n/a" : fmt(median(lats, nlat), 0))
     if (key == "lat_mean")      return (nlat == 0 ? "n/a" : fmt(sum / nlat, 0))
     if (key == "cost_sum")      return (sum == 0 ? "n/a" : "$" fmt(sum, 4))
@@ -334,6 +402,11 @@ function applies(q, key,   c) {
     if (key == "j_contra")   return (c == "contradiction")
     if (key == "j_syn")      return (c == "synthesis")
     if (key == "j_overflag") return (c != "synthesis")
+    # A compiled page can only be caught being wrong on a question where one is
+    # known to be wrong. Both fixture families qualify: `poisoned_claim` (a page
+    # that never matched its source) and `drift*` (a page whose source moved).
+    if (key == "j_prop" || key == "j_caught")
+        return (c == "poisoned_claim" || substr(c, 1, 5) == "drift")
     return 1
 }
 
@@ -349,6 +422,8 @@ function jaccum(a, q, key,   v) {
     if (key == "j_contra")    { v = J[a,q,"judge_contradiction"];    if (v != "") { JN++; if (v == "both_surfaced") JH++ } }
     if (key == "j_syn")       { v = J[a,q,"judge_synthesis_flag"];   if (v != "") { JN++; if (v == "flagged") JH++ } }
     if (key == "j_overflag")  { v = J[a,q,"judge_synthesis_flag"];   if (v != "") { JN++; if (v == "over_flagged") JH++ } }
+    if (key == "j_prop")      { v = J[a,q,"judge_compiled_error"];   if (v != "") { JN++; if (v == "propagated") JH++ } }
+    if (key == "j_caught")    { v = J[a,q,"judge_compiled_error"];   if (v != "") { JN++; if (v == "caught") JH++ } }
 }
 
 function jreport(key,   r) {

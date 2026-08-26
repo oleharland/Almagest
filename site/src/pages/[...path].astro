@@ -16,7 +16,24 @@ interface Props {
 const { page } = Astro.props;
 const allPages = getPages();
 const titleOf = (id: string) => allPages.find((p) => p.id === id)?.title ?? id;
-const relatedExisting = page.related.filter((id) => allPages.some((p) => p.id === id));
+const exists = (id: string) => allPages.some((p) => p.id === id);
+const relatedExisting = page.related.filter(exists);
+
+/** Typed edges, in report order, with dangling targets kept visible. */
+const RELATION_LABELS: Record<string, string> = {
+  supports: 'Supports',
+  contradicts: 'Contradicts',
+  supersedes: 'Supersedes',
+  depends_on: 'Depends on',
+};
+const relationGroups = Object.entries(RELATION_LABELS)
+  .map(([key, label]) => ({
+    label,
+    targets: (page.relations[key as keyof typeof page.relations] ?? []) as string[],
+  }))
+  .filter((group) => group.targets.length > 0);
+
+const brokenRelations = relationGroups.flatMap((g) => g.targets.filter((t) => !exists(t)));
 const extraEntries = Object.entries(page.extra).filter(([, v]) => v != null && v !== '');
 ---
 
@@ -50,7 +67,15 @@ const extraEntries = Object.entries(page.extra).filter(([, v]) => v != null && v
 
       {page.brokenLinks.length > 0 && (
         <p class="notice">
-          Broken links to pages that don't exist: {page.brokenLinks.join(', ')}.
+          <strong>Broken links [LINK-001].</strong> These wikilinks point at pages that
+          don't exist: {page.brokenLinks.map((t) => `[[${t}]]`).join(', ')}. A production
+          build fails on this — see <code>tools/audit.mjs</code>.
+        </p>
+      )}
+
+      {brokenRelations.length > 0 && (
+        <p class="notice">
+          <strong>Dangling relations [LINK-003].</strong> {brokenRelations.map((t) => `[[${t}]]`).join(', ')}.
         </p>
       )}
 
@@ -61,7 +86,39 @@ const extraEntries = Object.entries(page.extra).filter(([, v]) => v != null && v
       {page.sources.length > 0 && (
         <section>
           <h2>Sources</h2>
-          <ul>{page.sources.map((s) => <li class="src">{s}</li>)}</ul>
+          <ul>
+            {page.sources.map((s) => (
+              <li class="src">
+                {s.id && <code>{s.id}</code>}
+                {s.title ? ` ${s.title}` : ''}
+                <span class="src-path">{s.path}</span>
+                {s.sha256 && <span class="src-sha">{s.sha256.slice(0, 8)}</span>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {relationGroups.length > 0 && (
+        <section>
+          <h2>Relations</h2>
+          <dl>
+            {relationGroups.map((group) => (
+              <>
+                <dt>{group.label}</dt>
+                <dd>
+                  {group.targets.map((id, i) => (
+                    <>
+                      {i > 0 && ', '}
+                      {exists(id)
+                        ? <a href={hrefFor(id)}>{titleOf(id)}</a>
+                        : <span class="wikilink is-broken">{id}</span>}
+                    </>
+                  ))}
+                </dd>
+              </>
+            ))}
+          </dl>
         </section>
       )}
 

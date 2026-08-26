@@ -7,7 +7,7 @@ import { getPages, groupPages, allTags } from '../lib/wiki';
 const pages = getPages();
 const groups = groupPages(pages, siteConfig.groupBy);
 const tags = allTags(pages);
-const sourceCount = new Set(pages.flatMap((p) => p.sources)).size;
+const sourceCount = new Set(pages.flatMap((p) => p.sourcePaths)).size;
 const needsAttention = pages.filter((p) => p.status === 'stub' || p.brokenLinks.length > 0).length;
 ---
 

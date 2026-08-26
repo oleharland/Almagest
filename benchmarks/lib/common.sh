@@ -77,8 +77,119 @@ check_fixtures() {
     [ "$n" -gt 0 ] || die "no source documents in $FIXTURES_DIR/raw"
     n="$(find "$FIXTURES_DIR/wiki" -name '*.md' -type f | wc -l | tr -d ' ')"
     [ "$n" -gt 0 ] || die "no wiki pages in $FIXTURES_DIR/wiki"
-    [ -f "$FIXTURES_DIR/wiki/index.md" ] || die "fixture wiki has no index.md"
+    # The catalog lives BESIDE the wiki, not inside it — the same shape as a real
+    # brain, where index.md is at brain/ and the pages are at brain/wiki/. It is
+    # not a wiki page and must not be audited as one.
+    [ -f "$FIXTURES_DIR/index.md" ]    || die "fixture catalog missing: $FIXTURES_DIR/index.md"
+    [ -f "$FIXTURES_DIR/manifest.yaml" ] || die "fixture manifest missing: $FIXTURES_DIR/manifest.yaml"
+    [ ! -f "$FIXTURES_DIR/wiki/index.md" ] || die "$FIXTURES_DIR/wiki/index.md exists — the catalog belongs one level up, beside wiki/, or the audit scans it as a page"
 }
+
+# The extra fixture trees, checked only when an arm actually needs one so a
+# stripped-down corpus can still run the original two arms.
+check_fixture_wiki() {
+    local dir="$FIXTURES_DIR/$1"
+    [ -d "$dir" ] || die "fixture wiki missing: $dir"
+    [ -n "$(find "$dir" -name '*.md' -type f -print -quit)" ] || die "no wiki pages in $dir"
+    [ ! -f "$dir/index.md" ] || die "$dir/index.md exists — the catalog is shared, at fixtures/index.md"
+}
+check_fixture_drift() {
+    [ -d "$FIXTURES_DIR/drift" ] || die "drift fixture missing: $FIXTURES_DIR/drift"
+    local n
+    n="$(find "$FIXTURES_DIR/drift" -name '*.md' -type f | wc -l | tr -d ' ')"
+    [ "$n" -gt 0 ] || die "no amended sources in $FIXTURES_DIR/drift"
+    # Every drift file must SHADOW a real one. A drift fixture with a filename of
+    # its own would be a new document, not an edited version of an existing one,
+    # and the whole point is that the filename is stable while the bytes are not.
+    local f b
+    for f in "$FIXTURES_DIR"/drift/*.md; do
+        b="$(basename "$f")"
+        [ -f "$FIXTURES_DIR/raw/$b" ] || \
+            die "drift fixture $b has no counterpart in fixtures/raw/ — it would be a new source, not a revision"
+    done
+}
+
+# ── arms ─────────────────────────────────────────────────────────────────────
+# An arm is a working directory recipe: which sources, which wiki (if any), and
+# which corpus-orientation prompt. Everything else — the answering protocol, the
+# model, the tool allowlist — is identical across all of them by construction.
+#
+#   baseline            raw sources, no wiki. Instructions say nothing about search.
+#   baseline-retrieval  raw sources, no wiki. Told to search, and shown how.
+#   treatment           raw sources + the gold wiki.
+#   poisoned            raw sources + the gold wiki with planted false claims.
+#   drift-baseline      AMENDED sources, no wiki.
+#   drift               AMENDED sources + the wiki compiled from the old ones.
+#
+# `poisoned` and `drift` deliberately reuse prompts/treatment.md. If they had
+# prompts of their own, the arm would differ from `treatment` in two ways at
+# once and neither difference could be attributed.
+MAIN_ARMS="baseline baseline-retrieval treatment poisoned"
+DRIFT_ARMS="drift-baseline drift"
+ALL_ARMS="$MAIN_ARMS $DRIFT_ARMS"
+
+arm_prompt() {
+    case "$1" in
+        baseline|drift-baseline) printf 'baseline\n' ;;
+        baseline-retrieval)      printf 'baseline-retrieval\n' ;;
+        treatment|poisoned|drift) printf 'treatment\n' ;;
+        *) die "no prompt mapping for arm: $1" ;;
+    esac
+}
+
+# Which fixture wiki this arm gets, or empty for none.
+arm_wiki() {
+    case "$1" in
+        treatment|drift) printf 'wiki\n' ;;
+        poisoned)        printf 'wiki-poisoned\n' ;;
+        *)               printf '\n' ;;
+    esac
+}
+
+arm_is_drift() {
+    case "$1" in drift|drift-baseline) return 0 ;; *) return 1 ;; esac
+}
+
+# Expand an --arm value into a space-separated arm list. Accepts a comma list,
+# any single arm name, or one of two groups:
+#   both  baseline + treatment — the original pair, kept so old invocations and
+#         old run directories still mean what they meant
+#   all   every non-drift arm. Drift arms are never in a group: they need the
+#         drift question set, so sweeping them in by accident must be impossible.
+expand_arms() {
+    local spec="$1" out="" want
+    case "$spec" in
+        both) printf '%s\n' "baseline treatment"; return ;;
+        all)  printf '%s\n' "$MAIN_ARMS"; return ;;
+    esac
+    local IFS=','
+    for want in $spec; do
+        want="$(printf '%s' "$want" | tr -d ' ')"
+        [ -n "$want" ] || continue
+        case " $ALL_ARMS " in
+            *" $want "*) : ;;
+            *) unset IFS; die "unknown arm: $want
+    Arms: $ALL_ARMS
+    Groups: both (baseline treatment), all ($MAIN_ARMS)" ;;
+        esac
+        case " $out " in *" $want "*) unset IFS; die "--arm names '$want' twice" ;; esac
+        out="$out $want"
+    done
+    unset IFS
+    [ -n "$out" ] || die "--arm selected nothing"
+    printf '%s\n' "${out# }"
+}
+
+# ── corpus facts ─────────────────────────────────────────────────────────────
+# Every document ID in a corpus directory. score.sh checks cited IDs against
+# this set, so it has to describe the corpus the ARM actually saw — which is not
+# fixtures/raw once --scale or a drift arm is in play.
+corpus_docids() {
+    awk '/^\*\*(Document ID|Agreement reference):\*\*/ {
+             sub(/^[^:]*:\*\*[ \t]*/, ""); gsub(/[ \t\r]/, ""); print }' "$1"/*.md \
+    | sort -u
+}
+corpus_files() { (cd "$1" && ls -1 *.md); }
 
 # Guard rail: every path the harness writes to must be inside benchmarks/.
 # The benchmark must never touch a user's real knowledge base.

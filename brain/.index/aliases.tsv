@@ -1,0 +1,4 @@
+alias	slug
+example subject	_example
+example topic	_example
+fixed retry backoff makes feature x unsuitable for bursty workloads	_example-claim

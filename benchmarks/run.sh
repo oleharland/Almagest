@@ -4,14 +4,15 @@
 #
 # ┌──────────────────────────────────────────────────────────────────────────┐
 # │  THIS SCRIPT SPENDS REAL MONEY.                                          │
-# │  Every question is put to the agent CLI twice (once per arm). Scoring     │
-# │  with --judge in score.sh sends each answer once more. Cost scales with   │
-# │  question count x arms x model. Use --dry-run first — it costs nothing.   │
+# │  Every question is put to the agent CLI once PER ARM. Scoring with       │
+# │  --judge in score.sh sends each answer once more. Cost scales with        │
+# │  question count x arms x model, and --scale raises the tokens per call.   │
+# │  Use --dry-run first — it costs nothing.                                  │
 # └──────────────────────────────────────────────────────────────────────────┘
 #
 # It reads and writes ONLY inside benchmarks/. It never touches brain/, and the
 # arena directories it builds are copies of benchmarks/fixtures/, so a real
-# knowledge base is never in scope for either arm.
+# knowledge base is never in scope for any arm.
 #
 # It does not know how to talk to an agent: a driver does. One script per
 # harness in benchmarks/drivers/, picked with --driver. Interface and rules for
@@ -36,6 +37,8 @@ DRY_RUN=0
 ASSUME_YES=0
 FORCE=0
 DRIFT_DETECTED=0
+SCALE=""
+SCALE_SEED=1
 
 # Which harness answers the questions. --driver wins over the environment; both
 # win over the default. `fake` is the test double used by benchmarks/selftest.sh:
@@ -48,12 +51,31 @@ usage() {
     cat <<'USAGE'
 Usage: benchmarks/run.sh [options]
 
-  --arm baseline|treatment|both   Which arm(s) to run          (default: both)
+  --arm LIST                      Which arm(s) to run          (default: both)
+                                  A comma list of arm names, or a group:
+                                    both  baseline,treatment      (the original pair)
+                                    all   baseline,baseline-retrieval,treatment,poisoned
+                                  Arms:
+                                    baseline            raw sources only
+                                    baseline-retrieval  raw sources, told to search
+                                    treatment           raw sources + gold wiki
+                                    poisoned            raw sources + wiki with planted errors
+                                    drift-baseline      amended sources only
+                                    drift               amended sources + wiki compiled from
+                                                        the pre-amendment ones
+                                  The drift arms need --questions questions-drift.yaml.
   --driver NAME|PATH              Harness driver               (default: claude-code)
                                   NAME resolves in benchmarks/drivers/.
                                   Env: ALMAGEST_BENCH_DRIVER
   --model NAME                    Model for the answering agent (default: sonnet)
   --questions FILE                Question set                 (default: benchmarks/questions.yaml)
+  --scale N                       Corpus size in documents     (default: 5, the real sources)
+                                  Shipped tiers 5 / 50 / 500. Above 5 the corpus is
+                                  padded with generated distractors that answer nothing.
+                                  That measures RETRIEVAL PRESSURE, not domain breadth —
+                                  see fixtures/scale/generate.sh before quoting it.
+  --scale-seed N                  Seed for the padding         (default: 1)
+                                  Same seed + same --scale = byte-identical corpus.
   --only q01,q05                  Run just these question ids
   --label NAME                    Prefix for the run directory
   --out DIR                       Results root                 (default: benchmarks/results)
@@ -63,7 +85,8 @@ Usage: benchmarks/run.sh [options]
   --force                         Overwrite an existing run directory
   -h, --help                      This
 
-Cost: two API calls per question with --arm both. Start with
+Cost: one API call per question PER ARM. --arm all is four times --arm one.
+Start with
   benchmarks/run.sh --dry-run
 then
   benchmarks/run.sh --only q01 --arm both
@@ -77,6 +100,8 @@ while [ $# -gt 0 ]; do
         --driver)     DRIVER_SPEC_FROM_FLAG="${2:?--driver needs a value}"; shift 2 ;;
         --model)      MODEL="${2:?--model needs a value}"; shift 2 ;;
         --questions)  QUESTIONS="${2:?--questions needs a value}"; shift 2 ;;
+        --scale)      SCALE="${2:?--scale needs a value}"; shift 2 ;;
+        --scale-seed) SCALE_SEED="${2:?--scale-seed needs a value}"; shift 2 ;;
         --only)       ONLY="${2:?--only needs a value}"; shift 2 ;;
         --label)      LABEL="${2:?--label needs a value}"; shift 2 ;;
         --out)        RESULTS_DIR="${2:?--out needs a value}"; shift 2 ;;
@@ -91,9 +116,13 @@ done
 
 RESULTS_DIR="$(abspath "$RESULTS_DIR")"
 
-case "$ARM" in
-    baseline|treatment|both) : ;;
-    *) die "--arm must be baseline, treatment, or both (got: $ARM)" ;;
+ARMS="$(expand_arms "$ARM")"
+
+case "${SCALE:-5}" in
+    ''|*[!0-9]*) die "--scale must be a positive integer (got: $SCALE)" ;;
+esac
+case "$SCALE_SEED" in
+    ''|*[!0-9]*) die "--scale-seed must be a non-negative integer (got: $SCALE_SEED)" ;;
 esac
 
 # ── preflight — fail loudly, before spending anything ────────────────────────
@@ -145,7 +174,19 @@ dim "        $(printf '%s\n' "$CAPS" | awk -F'\t' '{ printf "%s=%s ", $1, $2 }')
 [ -f "$PROMPTS_DIR/treatment.md" ]  || die "missing prompts/treatment.md"
 
 check_fixtures
+
+# Only the trees the selected arms actually need. An arm asking for a fixture
+# that is not there must stop the run, not fall back to a different one.
+NEED_DRIFT=0
+for arm in $ARMS; do
+    [ -f "$PROMPTS_DIR/$(arm_prompt "$arm").md" ] || die "missing prompts/$(arm_prompt "$arm").md, needed by arm '$arm'"
+    w="$(arm_wiki "$arm")"
+    [ -n "$w" ] && check_fixture_wiki "$w"
+    arm_is_drift "$arm" && NEED_DRIFT=1
+done
+[ "$NEED_DRIFT" -eq 1 ] && check_fixture_drift
 ok "fixtures present ($(find "$FIXTURES_DIR/raw" -name '*.md' | wc -l | tr -d ' ') sources, $(find "$FIXTURES_DIR/wiki" -name '*.md' | wc -l | tr -d ' ') wiki pages)"
+ok "arms: $ARMS"
 
 check_protocol_drift
 [ "$DRIFT_DETECTED" -eq 0 ] && ok "query protocol in sync with $PROTOCOL_NAME"
@@ -153,6 +194,26 @@ check_protocol_drift
 QTSV="$(mktemp -t almagest-bench-q.XXXXXX)"
 trap 'rm -f "$QTSV"' EXIT
 parse_questions "$QUESTIONS" > "$QTSV" || die "question set failed to parse — fix $QUESTIONS and retry"
+
+# ── drift arms and the drift question set are a matched pair ─────────────────
+# The drift arms see an AMENDED source, so the same question has a different
+# correct answer than it does in the main set. Scoring a drift arm against the
+# main ground truth, or a main arm against the drift ground truth, produces
+# numbers that look fine and mean nothing. Refuse both.
+NDRIFT_Q="$(awk -F'\t' '$2=="category" && $3 ~ /^drift/' "$QTSV" | wc -l | tr -d ' ')"
+NALL_Q="$(awk -F'\t' '$2=="category"' "$QTSV" | wc -l | tr -d ' ')"
+if [ "$NEED_DRIFT" -eq 1 ] && [ "$NDRIFT_Q" -ne "$NALL_Q" ]; then
+    die "a drift arm was selected but $QUESTIONS is not a drift-only question set
+    ($NDRIFT_Q of $NALL_Q questions carry a drift* category).
+    The drift arms answer from an amended source; the main question set's ground
+    truth describes the corpus before the amendment. Run:
+      benchmarks/run.sh --questions benchmarks/questions-drift.yaml --arm drift,drift-baseline"
+fi
+if [ "$NEED_DRIFT" -eq 0 ] && [ "$NDRIFT_Q" -gt 0 ]; then
+    die "$QUESTIONS contains drift* questions but no drift arm was selected.
+    Their ground truth describes the amended corpus, which the arms '$ARMS' will
+    not be given. Use --arm drift,drift-baseline."
+fi
 
 # Ordered id list, filtered by --only
 ALL_IDS="$(awk -F'\t' '$2=="id" { print $3 }' "$QTSV")"
@@ -174,10 +235,8 @@ NQ="$(printf '%s\n' "$IDS" | sed '/^$/d' | wc -l | tr -d ' ')"
 [ "$NQ" -gt 0 ] || die "no questions selected"
 ok "$NQ question(s) selected"
 
-case "$ARM" in
-    both) ARMS="baseline treatment"; NCALLS=$((NQ * 2)) ;;
-    *)    ARMS="$ARM";               NCALLS="$NQ" ;;
-esac
+NARMS="$(printf '%s\n' $ARMS | wc -l | tr -d ' ')"
+NCALLS=$((NQ * NARMS))
 
 # ── run directory ────────────────────────────────────────────────────────────
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -236,11 +295,21 @@ rule
 info "${C_BLD}This run will make ${NCALLS} agent call(s) and cost real money.${C_OFF}"
 info "  driver:       $DRIVER_NAME ($DRIVER_VERSION)"
 info "  model:        $MODEL"
-info "  arms:         $ARM"
+info "  arms:         $ARMS ($NARMS)"
 info "  questions:    $NQ"
+info "  corpus:       ${SCALE:-5} document(s)$([ -n "$SCALE" ] && [ "$SCALE" -gt 5 ] && printf ' — %s generated distractors, seed %s' "$((SCALE - 5))" "$SCALE_SEED")"
 info "  per-call cap: \$$BUDGET_USD"
 info "  output:       $RUN_DIR"
 rule
+
+if [ -n "$SCALE" ] && [ "$SCALE" -gt 5 ]; then
+    warn "Scaled corpus: the extra $((SCALE - 5)) documents are generated padding."
+    warn "  They answer nothing. This measures retrieval pressure, not domain"
+    warn "  breadth, and is a weaker instrument than $SCALE genuinely distinct"
+    warn "  documents would be. Results are comparable only to runs at the same"
+    warn "  --scale and --scale-seed."
+    rule
+fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
     warn "DRY RUN — no API calls will be made, nothing will be written."
@@ -254,20 +323,53 @@ elif [ "$ASSUME_YES" -eq 0 ]; then
     case "$reply" in y|Y|yes|YES) : ;; *) die "aborted by user" ;; esac
 fi
 
+# ── build the corpus ─────────────────────────────────────────────────────────
+# At the default scale every arm reads fixtures/raw directly. At a larger scale
+# the corpus is generated once, into the run directory, and every arm copies
+# from that one tree — so the arms cannot be reading different padding.
+build_corpus() {
+    if [ -z "$SCALE" ] || [ "$SCALE" -le 5 ]; then
+        printf '%s\n' "$FIXTURES_DIR/raw"
+        return
+    fi
+    local dir="$RUN_DIR/corpus"
+    assert_inside_benchmarks "$dir"
+    [ "$DRY_RUN" -eq 1 ] && { printf '%s\n' "$dir"; return; }
+    "$FIXTURES_DIR/scale/generate.sh" --tier "$SCALE" --seed "$SCALE_SEED" \
+        --out "$dir" --force >/dev/null 2>&1 \
+        || die "corpus generation failed — run fixtures/scale/generate.sh --tier $SCALE --out $dir --force to see why"
+    printf '%s\n' "$dir"
+}
+
 # ── build the arena ──────────────────────────────────────────────────────────
 # Each arm runs with its arena directory as cwd, holding only what that arm is
 # allowed to see. Copies, never symlinks into fixtures/, so a run can never
 # mutate the corpus.
 build_arena() {
-    local arm="$1" dir="$RUN_DIR/arena/$arm"
+    local arm="$1" dir="$RUN_DIR/arena/$arm" wiki
     assert_inside_benchmarks "$dir"
     [ "$DRY_RUN" -eq 1 ] && { echo "$dir"; return; }
     rm -rf "$dir"
     mkdir -p "$dir/sources"
-    cp "$FIXTURES_DIR"/raw/*.md "$dir/sources/"
-    if [ "$arm" = "treatment" ]; then
+    cp "$CORPUS_DIR"/*.md "$dir/sources/"
+    # A drift arm overlays the amended documents ON TOP of the originals, under
+    # the same filenames. Same path, same document reference, different bytes —
+    # which is precisely the case incremental re-ingest exists to detect.
+    if arm_is_drift "$arm"; then
+        cp "$FIXTURES_DIR"/drift/*.md "$dir/sources/"
+    fi
+    wiki="$(arm_wiki "$arm")"
+    if [ -n "$wiki" ]; then
         mkdir -p "$dir/wiki"
-        cp "$FIXTURES_DIR"/wiki/*.md "$dir/wiki/"
+        cp "$FIXTURES_DIR/$wiki"/*.md "$dir/wiki/"
+        # The catalog sits BESIDE wiki/, the same shape as a real brain. Both
+        # fixture wikis share it: they cover the same sources, and nothing
+        # planted in wiki-poisoned/ touches the catalog.
+        # manifest.yaml is deliberately NOT copied — it is an ingest artifact,
+        # and handing it over would turn the drift arm's question from "did you
+        # notice the page disagrees with the document" into "did you compare two
+        # hex strings". See fixtures/README.md.
+        cp "$FIXTURES_DIR/index.md" "$dir/index.md"
     fi
     echo "$dir"
 }
@@ -275,17 +377,31 @@ build_arena() {
 system_prompt_for() {
     cat "$PROMPTS_DIR/_shared.md"
     printf '\n\n'
-    cat "$PROMPTS_DIR/$1.md"
+    cat "$PROMPTS_DIR/$(arm_prompt "$1").md"
 }
 
 # ── run ──────────────────────────────────────────────────────────────────────
+[ "$DRY_RUN" -eq 0 ] && mkdir -p "$RUN_DIR"
+
+CORPUS_DIR="$(build_corpus)"
+
 if [ "$DRY_RUN" -eq 0 ]; then
-    mkdir -p "$RUN_DIR"
+    # The corpus the arms actually saw, recorded so score.sh checks cited
+    # document ids against that and not against fixtures/raw. At --scale 500
+    # they are not the same set, and treating a real distractor id as
+    # fabricated would be a metric that lies in the project's own favour.
+    corpus_docids "$CORPUS_DIR" > "$RUN_DIR/corpus.docids"
+    corpus_files  "$CORPUS_DIR" > "$RUN_DIR/corpus.files"
     {
         echo "run_id=$RUN_ID"
         echo "date_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo "model=$MODEL"
-        echo "arms=$ARM"
+        echo "arms=$ARMS"
+        echo "arms_count=$NARMS"
+        echo "scale=${SCALE:-5}"
+        echo "scale_seed=$SCALE_SEED"
+        echo "scale_generated=$([ -n "$SCALE" ] && [ "$SCALE" -gt 5 ] && echo $((SCALE - 5)) || echo 0)"
+        echo "corpus_documents=$(wc -l < "$RUN_DIR/corpus.files" | tr -d ' ')"
         echo "questions_file=$QUESTIONS"
         echo "questions_sha256=$(file_sha256 "$QUESTIONS")"
         echo "questions_count=$NQ"
@@ -299,7 +415,7 @@ if [ "$DRY_RUN" -eq 0 ]; then
         printf '%s\n' "$CAPS" | awk -F'\t' '{ printf "cap_%s=%s\n", $1, $2 }'
         echo "git_sha=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
         echo "git_dirty=$(test -n "$(git -C "$REPO_DIR" status --porcelain 2>/dev/null)" && echo yes || echo no)"
-        echo "harness_version=2"
+        echo "harness_version=3"
     } > "$RUN_DIR/run.env"
 fi
 

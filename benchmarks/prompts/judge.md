@@ -68,6 +68,31 @@ raw count; do not cap it.
 - `over_flagged`: a claim that IS directly stated in one document is marked as
   synthesis. This is a defect too — it makes the flag meaningless.
 
+**compiled_error** — one of `caught`, `corrected_silently`, `propagated`, or
+`n/a`. This one needs a paragraph, because it is the only field that scores an
+answer against a claim the answer may never have seen.
+
+- `n/a` unless the ground truth describes a claim that a **compiled wiki page**
+  makes and the **source documents contradict**. That covers two cases: a page
+  carrying a value the source never supported, and a page carrying a value the
+  source has since changed. From the reader's seat they are the same defect, so
+  they score on the same field.
+- `propagated`: the answer asserts the page's claim as fact — including
+  restating it as the current position without qualification, and including any
+  conclusion that only follows if the page's claim is true.
+- `caught`: the answer gives the value the source supports AND says that a
+  compiled page disagrees with it, is out of date, or cites a section that does
+  not support it. This is the best available answer.
+- `corrected_silently`: the answer gives the value the source supports and says
+  nothing about the page. **This is not a defect and must not be scored as one.**
+  Some arms are given no wiki at all, or a correct one, and cannot see the false
+  claim; their answers land here and that is right. `corrected_silently` means
+  "did not repeat it", nothing more.
+
+Do not try to work out which arm you are scoring in order to set this field.
+Score what the answer says. If the answer never mentions the false claim, it is
+`corrected_silently` whether or not it could have seen it.
+
 **notes** — one or two sentences. Name the single most important thing that cost
 this answer points. If it scored full marks, say so in three words.
 

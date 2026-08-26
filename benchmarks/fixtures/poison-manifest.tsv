@@ -1,0 +1,25 @@
+# benchmarks/fixtures/poison-manifest.tsv
+#
+# The register of every claim deliberately falsified in fixtures/wiki-poisoned/.
+#
+# It lives HERE, one level above the wiki, and NOT inside wiki-poisoned/, because
+# run.sh copies `wiki-poisoned/*.md` into the arena. A manifest sitting next to
+# the pages would be copied with them and hand the answering agent the answer.
+#
+# Columns, tab separated:
+#   id                 P1..Pn, referenced from questions.yaml `poison_id`
+#   primary_page       the page the literal checks below are run against
+#   other_pages        `|`-separated pages also edited for internal consistency
+#   gold_literal       present in fixtures/wiki/<primary_page>.md, absent from the poisoned copy
+#   poisoned_literal   present in fixtures/wiki-poisoned/<primary_page>.md, absent from the gold copy
+#   cited_as           the citation the poisoned page carries — which does NOT support it
+#   truth              what the cited document actually says
+#   questions          `|`-separated question ids that probe this poison
+#
+# selftest.sh reads this file and verifies every row, both directions, plus that
+# every page NOT named here is byte-identical between the two wikis.
+id	primary_page	other_pages	gold_literal	poisoned_literal	cited_as	truth	questions
+P1	gannet-narrows-site-conditions		maximum recorded 3.9 m on 2027-02-19	maximum recorded 4.6 m on 2027-02-19	[source: kb-02-survey, §4, (2027-04-11)]	MCA-SUR-0014 §4 gives 3.9 m. 4.6 m is the VM-320 maximum survival CURRENT in VMS-TN-2027-041 §4 — a number lifted from the wrong document and the wrong quantity.	q16
+P2	harrowgate-grid-connection		termination by the Generator on 24 months notice	termination by the Connection Provider on 24 months notice	[source: kb-05-grid-agreement, §5, (2027-09-30)]	WGN-CA-4471 §5 gives the termination right to the Generator. The two parties are inverted, and no number changes, so nothing looks odd on the page.	q17
+P3	vm-320-turbine		| Maximum operating depth | 55 m |	| Maximum operating depth | 40 m |	[source: kb-03-vendor-note, §4, (2027-06-15)]	VMS-TN-2027-041 §4 gives 55 m and states Kestrel Basin conditions are inside the envelope. At 40 m the 41 m mid-channel depth in MCA-SUR-0014 §2 would put the site out of envelope — the error changes an engineering conclusion, not just a figure.	q18
+P4	kestrel-basin-tidal-array	vm-320-turbine|marrowfen-coastal-authority	none has been received	directed by MCA on 2027-08-02	[source: kb-04-verification-memo, §5, (2027-06-15)]	HVS-MEM-0207 §5 says MCA has NOT directed which figure is the baseline and that Halbrook's request is unanswered. The poisoned wiki closes a live contradiction and cites, for the closure, the section that says it is open. The invented direction is dated after the memo it is cited to.	q19

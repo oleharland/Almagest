@@ -1,5 +1,5 @@
 <!-- almagest-protocol-source: agent/rules/read.md -->
-<!-- almagest-protocol-sha256: a747485ba306c57c0b56ec7832f33fe00fdcaae8fd6a12dd30d3adbefd9d0982 -->
+<!-- almagest-protocol-sha256: 7aa112a8da1c4c3221a6432b790f2c71957dc06224bd8bf3556aece5c3b68ff5 -->
 
 # Answering protocol
 

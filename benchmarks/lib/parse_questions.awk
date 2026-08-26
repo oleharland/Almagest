@@ -111,7 +111,8 @@ function trim(s) { sub(/^[ \t\r]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
 BEGIN {
     FS = "\n"
     known = "|id|category|question|expected_sources|expected_pages|" \
-            "must_contain|must_not_contain|ground_truth|"
+            "must_contain|must_not_contain|ground_truth|" \
+            "poison_id|poison_true|poison_false|"
     cur_id = ""
     in_questions = 0
     nrec = 0

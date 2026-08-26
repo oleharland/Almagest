@@ -7,7 +7,7 @@ paths:
 
 # Brain — Wiki Write Rules (pointer)
 
-Governs: writing — approval gates, contradictions, the page template, content tiers, audit
+Governs: writing — the ingest branch and its blocking cases, contradictions, the page template, content tiers, the audit
 
 Applies when: you are about to create, edit, delete, or merge anything in `brain/wiki/`, or run an audit
 
