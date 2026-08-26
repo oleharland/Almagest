@@ -1,18 +1,109 @@
-# Almagest
+<div align="center">
+
+```
+    ▄▄▄       ██▓     ███▄ ▄███▓ ▄▄▄        ▄████ ▓█████   ██████ ▄▄▄█████▓
+   ▒████▄    ▓██▒    ▓██▒▀█▀ ██▒▒████▄     ██▒ ▀█▒▓█   ▀ ▒██    ▒ ▓  ██▒ ▓▒
+   ▒██  ▀█▄  ▒██░    ▓██    ▓██░▒██  ▀█▄  ▒██░▄▄▄░▒███   ░ ▓██▄   ▒ ▓██░ ▒░
+   ░██▄▄▄▄██ ▒██░    ▒██    ▒██ ░██▄▄▄▄██ ░▓█  ██▓▒▓█  ▄   ▒   ██▒░ ▓██▓ ░
+    ▓█   ▓██▒░██████▒▒██▒   ░██▒ ▓█   ▓██▒░▒▓███▀▒░▒████▒▒██████▒▒  ▒██▒ ░
+    ▒▒   ▓▒█░░ ▒░▓  ░░ ▒░   ░  ░ ▒▒   ▓▒█░ ░▒   ▒ ░░ ▒░ ░▒ ▒▓▒ ▒ ░  ▒ ░░
+     ▒   ▒▒ ░░ ░ ▒  ░░  ░      ░  ▒   ▒▒ ░  ░   ░  ░ ░  ░░ ░▒  ░ ░    ░
+     ░   ▒     ░ ░   ░      ░     ░   ▒   ░ ░   ░    ░   ░  ░  ░    ░
+         ░  ░    ░  ░       ░         ░  ░      ░    ░  ░      ░
+```
+
+**A knowledge base your agent can't lie to you about.**
+
+</div>
 
 An AI-powered knowledge base framework built for Claude Code.
 
 Fork it, point it at your domain, and drop in source material. Claude reads what you give it, proposes structured wiki pages, and refuses to write a single claim it can't trace back to a source. The result is a cross-linked markdown wiki that both you and an agent can query — plus a static site to read it in.
 
+## How it works
+
+```
+    ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+    │   PDFs·docs  │   │  transcripts │   │ GitHub/GitLab│
+    │  spreadsheets│   │    videos    │   │   over MCP   │
+    └──────┬───────┘   └──────┬───────┘   └──────┬───────┘
+           └──────────────────┼──────────────────┘
+                              ▼
+                     ╔══════════════════╗
+                     ║   brain/raw/     ║   ← drop anything here
+                     ╚════════╤═════════╝
+                              ▼
+              ┌───────────────────────────────┐
+              │       CLAUDE CODE AGENT       │
+              │  reads index → extracts       │
+              │  entities → checks for        │
+              │  contradictions → drafts      │
+              └───────────────┬───────────────┘
+                              ▼
+              ╭ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─╮
+              │         YOU APPROVE          │
+              │  nothing is written without  │
+              │   an explicit yes   [y/n]    │
+              ╰ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─╯
+                              ▼
+     ┌────────────────────────────────────────────────┐
+     │  brain/wiki/     flat .md · typed frontmatter  │
+     │                  [[wikilinks]] · sources cited │
+     └───────┬────────────────────────────────┬───────┘
+             ▼                                ▼
+      ┌─────────────┐                  ┌─────────────┐
+      │  you query  │                  │ static site │
+      │  the agent  │                  │  (Astro)    │
+      └─────────────┘                  └─────────────┘
+```
+
 ## What makes it different
 
 Most AI note-taking tools optimise for capture. Almagest optimises for **trust**:
+
+```
+   ┌───────────────────────────┐      ┌───────────────────────────┐
+   │     MOST AI NOTE TOOLS    │      │          ALMAGEST         │
+   ├───────────────────────────┤      ├───────────────────────────┤
+   │ ✗ writes on its own       │      │ ✓ drafts, then asks       │
+   │ ✗ claims float free of    │      │ ✓ every claim carries a   │
+   │    any source             │      │    citation               │
+   │ ✗ newest note wins,       │      │ ✓ conflicts stop and      │
+   │    silently               │      │    ask you                │
+   │ ✗ gaps look like facts    │      │ ✓ gaps become questions   │
+   │ ✗ you re-verify by hand   │      │ ✓ you trust the page      │
+   └───────────────────────────┘      └───────────────────────────┘
+```
 
 - **Nothing gets written without your approval.** The agent drafts, you decide. Every create, update, and delete passes through an explicit approval gate.
 - **Every claim cites its source** — down to the section, page, or timestamp. A page with no sources is flagged as a defect, in the wiki and on the site.
 - **Contradictions surface instead of silently overwriting.** When a new source disagrees with what's already there, the agent quotes both, recommends a resolution, and waits.
 - **Unknowns are first-class.** Missing data gets named in an `## Open questions` section, not quietly omitted.
 - **Canonical pages are locked.** Your agreed taxonomies and definitions are guardrails the agent cannot edit — data that contradicts them is rejected, not merged.
+
+What that looks like in practice:
+
+```
+  $ claude
+
+  ● Read brain/index.md (142 pages, 61 sources)
+  ● Read brain/raw/q3-architecture-review.pdf (38 pages)
+
+    Proposed: 2 new pages, 1 update, 1 conflict
+
+    + wiki/service-ledger.md          type: system    5 sources
+    + wiki/retention-policy.md        type: policy    2 sources
+    ~ wiki/data-platform.md           +3 claims, +2 [[links]]
+
+    ! CONFLICT — wiki/retention-policy.md
+        existing  "retained for 30 days"      source: runbook.md §4
+        incoming  "retained for 90 days"      source: q3-review.pdf p.12
+        → incoming source is newer. Recommend update, keep both cited.
+
+    ? Open question logged: no source states who owns the ledger.
+
+    Apply these changes? (y / n / edit)  ▏
+```
 
 ## Features
 
