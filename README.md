@@ -34,9 +34,15 @@ Fork it, point it at your domain, and drop in source material. Claude reads what
                      ╚════════╤═════════╝
                               ▼
               ┌───────────────────────────────┐
+              │   FINGERPRINT vs manifest     │
+              │   new · changed · unchanged   │  ← unchanged is skipped
+              └───────────────┬───────────────┘
+                              ▼
+              ┌───────────────────────────────┐
               │       CLAUDE CODE AGENT       │
               │  reads index → extracts       │
-              │  entities → checks for        │
+              │  entities → diffs changed     │
+              │  sources → checks for         │
               │  contradictions → drafts      │
               └───────────────┬───────────────┘
                               ▼
@@ -49,6 +55,7 @@ Fork it, point it at your domain, and drop in source material. Claude reads what
      ┌────────────────────────────────────────────────┐
      │  brain/wiki/     flat .md · typed frontmatter  │
      │                  [[wikilinks]] · sources cited │
+     │  manifest.yaml   fingerprints · page slugs     │
      └───────┬────────────────────────────────┬───────┘
              ▼                                ▼
       ┌─────────────┐                  ┌─────────────┐
@@ -72,6 +79,8 @@ Most AI note-taking tools optimise for capture. Almagest optimises for **trust**
    │    silently               │      │    ask you                │
    │ ✗ gaps look like facts    │      │ ✓ gaps become questions   │
    │ ✗ you re-verify by hand   │      │ ✓ you trust the page      │
+   │ ✗ re-drop an edited file, │      │ ✓ content fingerprint     │
+   │    it's skipped as a dupe │      │    catches the edit       │
    └───────────────────────────┘      └───────────────────────────┘
 ```
 
