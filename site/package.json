@@ -3,14 +3,17 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
+  "engines": {
+    "node": ">=22.22.0"
+  },
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview"
   },
   "dependencies": {
-    "astro": "^5.6.0",
+    "astro": "^7.4.0",
     "gray-matter": "^4.0.3",
-    "marked": "^15.0.7"
+    "marked": "^18.1.1"
   }
 }

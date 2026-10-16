@@ -9,8 +9,6 @@
  *
  * Runs at build time only. Nothing here ships to the browser.
  */
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import matter from 'gray-matter';
 import { marked } from 'marked';
 import siteConfig from '../../site.config';
@@ -22,8 +20,9 @@ import {
   loadWiki,
 } from '../../../tools/lib/wiki-core.mjs';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(HERE, '../../..');
+/** Injected by astro.config.mjs, which runs unbundled and so knows where it is. */
+declare const __ALMAGEST_REPO_ROOT__: string;
+const REPO_ROOT = __ALMAGEST_REPO_ROOT__;
 
 /**
  * Which brain directories to read.

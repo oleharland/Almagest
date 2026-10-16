@@ -255,7 +255,7 @@ Full walkthrough in [Getting Started](docs/getting-started.md).
 
 - **An AI coding agent** meeting [`agent/contract.md`](agent/contract.md). Known-good: [Claude Code](https://claude.com/claude-code) (the reference harness), Codex, Cursor, Gemini CLI, Antigravity, Copilot. Setup per harness in [Agent Harnesses](docs/agent-harnesses.md).
 - **Git, and a human who merges.** The agent commits to a branch; `main` moves only when a person merges a reviewed diff. Nothing else enforces that, and there is no auto-merge mode.
-- **Node.js 22+** — for `tools/audit.mjs` and for the site. This is a hard dependency now, not a site-only one: the audit and the site call the same parser (`tools/lib/wiki-core.mjs`) rather than keeping two that would drift apart, and Node cannot import the site's TypeScript, so the shared file is plain ESM. The site still builds from `cd site && npm install && npm run build` on a fresh clone with no root install — the core imports no packages, by design.
+- **Node.js 22+** — for `tools/audit.mjs` and for the site (the site needs 22.22+, Astro 7's floor). This is a hard dependency now, not a site-only one: the audit and the site call the same parser (`tools/lib/wiki-core.mjs`) rather than keeping two that would drift apart, and Node cannot import the site's TypeScript, so the shared file is plain ESM. The site still builds from `cd site && npm install && npm run build` on a fresh clone with no root install — the core imports no packages, by design.
 - `shasum -a 256` or `sha256sum` — for source fingerprinting.
 - Bash and coreutils — for `tools/agent-shims.sh` and the benchmark harness, which deliberately need no language runtime at all.
 
