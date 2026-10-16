@@ -65,6 +65,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # The selftest audits the fixture wikis with tools/audit.mjs, which needs
+      # Node 22 and the root dependencies. Without node on PATH those checks
+      # are skipped; with node but no `npm ci` they fail.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+
       - name: Benchmark selftest
         run: benchmarks/selftest.sh
 
