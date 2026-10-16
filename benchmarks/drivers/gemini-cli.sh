@@ -46,7 +46,7 @@ if command -v "$CLI" >/dev/null 2>&1; then
 else
     HELP=""
 fi
-has_flag() { printf '%s' "$HELP" | grep -q -- "$1"; }
+has_flag() { printf '%s' "$HELP" | grep -- "$1" >/dev/null; }
 yesno()    { if has_flag "$1"; then echo yes; else echo no; fi; }
 
 # Harness tool vocabulary → Gemini tool names.

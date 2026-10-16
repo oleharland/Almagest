@@ -43,7 +43,9 @@ DRIVER_SPEC_FROM_FLAG=""
 # that is not in the corpus is a fabricated citation. Tight on purpose: it must
 # not match model names (VM-320) or station codes (KB-N). Adjust this if you
 # replace the fixture corpus with your own.
-DOCID_RE='[A-Z]{2,5}-[A-Z]{2,5}-[0-9]{4}(-[0-9]{3})?'
+# Spelled out as [A-Z]{2,5}-[A-Z]{2,5}-[0-9]{4}(-[0-9]{3})? would read better,
+# but mawk (Ubuntu's default awk) panics on {m,n} intervals. Keep it expanded.
+DOCID_RE='[A-Z][A-Z][A-Z]?[A-Z]?[A-Z]?-[A-Z][A-Z][A-Z]?[A-Z]?[A-Z]?-[0-9][0-9][0-9][0-9](-[0-9][0-9][0-9])?'
 
 usage() {
     cat <<'USAGE'

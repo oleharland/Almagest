@@ -222,7 +222,7 @@ if [ -n "$ONLY" ]; then
     IFS=','
     for want in $ONLY; do
         want="$(printf '%s' "$want" | tr -d ' ')"
-        printf '%s\n' "$ALL_IDS" | grep -qx "$want" || { unset IFS; die "--only names a question id that is not in $QUESTIONS: $want"; }
+        printf '%s\n' "$ALL_IDS" | grep -x "$want" >/dev/null || { unset IFS; die "--only names a question id that is not in $QUESTIONS: $want"; }
         SEL="$SEL$want
 "
     done

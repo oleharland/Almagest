@@ -21,6 +21,9 @@ WORK="$BM_DIR/results/_selftest"
 SCRATCH="$(mktemp -d -t almagest-selftest.XXXXXX)"
 PASS=0; FAIL=0
 
+# No `producer | grep -q` in a check: -q exits on the first match, the producer
+# takes SIGPIPE, and pipefail turns that into a failure (seen on Linux CI). Plain
+# grep reads to EOF; check() discards the output anyway.
 check() {
     if eval "$2" >/dev/null 2>&1; then printf '  %s %s\n' "${C_GRN}✓${C_OFF}" "$1"; PASS=$((PASS+1))
     else                               printf '  %s %s\n' "${C_RED}✗${C_OFF}" "$1"; FAIL=$((FAIL+1)); fi
@@ -47,15 +50,15 @@ rule
 info "Parsers"
 check "questions.yaml parses"            "parse_questions '$DEFAULT_QUESTIONS'"
 check "every question has a category"    "test \$(parse_questions '$DEFAULT_QUESTIONS' | awk -F'\t' '\$2==\"category\"' | wc -l) -eq \$(parse_questions '$DEFAULT_QUESTIONS' | awk -F'\t' '\$2==\"id\"' | wc -l)"
-check "unanswerable questions exist"     "parse_questions '$DEFAULT_QUESTIONS' | grep -q 'unanswerable'"
-check "contradiction questions exist"    "parse_questions '$DEFAULT_QUESTIONS' | grep -q 'contradiction'"
-check "synthesis questions exist"        "parse_questions '$DEFAULT_QUESTIONS' | grep -q 'synthesis'"
+check "unanswerable questions exist"     "parse_questions '$DEFAULT_QUESTIONS' | grep 'unanswerable'"
+check "contradiction questions exist"    "parse_questions '$DEFAULT_QUESTIONS' | grep 'contradiction'"
+check "synthesis questions exist"        "parse_questions '$DEFAULT_QUESTIONS' | grep 'synthesis'"
 check "malformed yaml is rejected"       "! printf 'questions:\n  - id: bad\n' | awk -f '$LIB_DIR/parse_questions.awk'"
-check "poisoned-claim questions exist"   "parse_questions '$DEFAULT_QUESTIONS' | grep -q 'poisoned_claim'"
+check "poisoned-claim questions exist"   "parse_questions '$DEFAULT_QUESTIONS' | grep 'poisoned_claim'"
 check "drift question set parses"        "parse_questions '$BM_DIR/questions-drift.yaml'"
 check "drift set is drift-only"          "test \$(parse_questions '$BM_DIR/questions-drift.yaml' | awk -F'\t' '\$2==\"category\" && \$3 ~ /^drift/' | wc -l) -eq \$(parse_questions '$BM_DIR/questions-drift.yaml' | awk -F'\t' '\$2==\"id\"' | wc -l)"
-check "main set carries no drift question" "! parse_questions '$DEFAULT_QUESTIONS' | awk -F'\t' '\$2==\"category\" && \$3 ~ /^drift/' | grep -q ."
-check "json extractor reads a payload"   "ALM_PROMPT=x '$STUB' run | awk -v raw=result -f '$LIB_DIR/json_scalar.awk' | grep -q 'Gannet'"
+check "main set carries no drift question" "! parse_questions '$DEFAULT_QUESTIONS' | awk -F'\t' '\$2==\"category\" && \$3 ~ /^drift/' | grep ."
+check "json extractor reads a payload"   "ALM_PROMPT=x '$STUB' run | awk -v raw=result -f '$LIB_DIR/json_scalar.awk' | grep 'Gannet'"
 check "json extractor rejects non-object" "! echo '[]' | awk -f '$LIB_DIR/json_scalar.awk'"
 
 # Quote, backslash, tab and newline are the four that turn a driver's plain-text
@@ -72,7 +75,7 @@ check "json escaper survives a round trip" "json_roundtrip"
 info "Driver layer"
 check "fake driver reports capabilities" "test \$('$STUB' capabilities | wc -l) -eq 6"
 check "every capability key is present"  "for k in $CAP_KEYS; do '$STUB' capabilities | awk -F'\t' -v k=\$k '\$1==k{f=1} END{exit !f}' || exit 1; done"
-check "every capability is yes or no"    "! '$STUB' capabilities | awk -F'\t' '\$2!=\"yes\" && \$2!=\"no\"' | grep -q ."
+check "every capability is yes or no"    "! '$STUB' capabilities | awk -F'\t' '\$2!=\"yes\" && \$2!=\"no\"' | grep ."
 check "capability overrides work"        "ALMAGEST_STUB_CAPS=structured_output=no '$STUB' capabilities | awk -F'\t' '\$1==\"structured_output\" && \$2==\"no\" {f=1} END{exit !f}'"
 check "driver reports a version"         "test -n \"\$('$STUB' version)\""
 check "unknown subcommand -> nonzero"    "! '$STUB' banana"
@@ -89,8 +92,8 @@ check "unknown driver name -> nonzero exit" \
 # ── 3. fixtures ──────────────────────────────────────────────────────────────
 info "Fixtures"
 check "fixture corpus is present"        "check_fixtures"
-check "no fixture leaks into brain/raw"  "! ls '$REPO_DIR'/brain/raw/kb-*.md 2>/dev/null | grep -q ."
-check "no fixture leaks into brain/wiki" "! ls '$REPO_DIR'/brain/wiki/kestrel*.md 2>/dev/null | grep -q ."
+check "no fixture leaks into brain/raw"  "! ls '$REPO_DIR'/brain/raw/kb-*.md 2>/dev/null | grep ."
+check "no fixture leaks into brain/wiki" "! ls '$REPO_DIR'/brain/wiki/kestrel*.md 2>/dev/null | grep ."
 check "planted contradiction present"    "grep -q '2.9 MW' '$FIXTURES_DIR/raw/kb-04-independent-verification-memo.md' && grep -q '3.2 MW' '$FIXTURES_DIR/raw/kb-03-vendor-technical-note.md'"
 check "absent topic really is absent"    "! grep -rlqi 'decommissioning cost' '$FIXTURES_DIR/raw/'"
 check "every expected_source exists"     "for f in \$(parse_questions '$DEFAULT_QUESTIONS' | awk -F'\t' '\$2==\"expected_sources\"{print \$3}' | sort -u); do test -f '$FIXTURES_DIR/raw/'\$f || exit 1; done"
@@ -191,7 +194,7 @@ unpoisoned_pages_identical() {
     named="$(poison_rows | awk -F'\t' '{ print $2; if ($3 != "") { n = split($3, a, "|"); for (i = 1; i <= n; i++) print a[i] } }')"
     for f in "$FIXTURES_DIR"/wiki/*.md; do
         b="$(basename "$f" .md)"
-        printf '%s\n' "$named" | grep -qx "$b" && continue
+        printf '%s\n' "$named" | grep -x "$b" >/dev/null && continue
         cmp -s "$f" "$FIXTURES_DIR/wiki-poisoned/$b.md" || return 1
     done
     return 0
@@ -273,7 +276,7 @@ check "all means the four main arms"     "test \"\$(expand_arms all)\" = '$MAIN_
 check "a comma list expands in order"    "test \"\$(expand_arms treatment,baseline)\" = 'treatment baseline'"
 check "an unknown arm is refused"        "! ( expand_arms nosucharm )"
 check "a repeated arm is refused"        "! ( expand_arms baseline,baseline )"
-check "drift arms are not in any group"  "! expand_arms all | grep -q drift"
+check "drift arms are not in any group"  "! expand_arms all | grep drift"
 check "every arm maps to a prompt file"  "for a in $ALL_ARMS; do test -f '$PROMPTS_DIR/'\$(arm_prompt \$a)'.md' || exit 1; done"
 check "poisoned reuses the treatment prompt" "test \"\$(arm_prompt poisoned)\" = treatment"
 check "poisoned gets the poisoned wiki"  "test \"\$(arm_wiki poisoned)\" = wiki-poisoned"
@@ -370,12 +373,12 @@ set -e
 check "score.sh completes"               "test $rc -eq 0"
 MECH="$RUN_DIR/scores-mechanical.tsv"
 check "mechanical scores written"        "test -s '$MECH'"
-check "broken wikilink detected"         "awk -F'\t' '\$4==\"cited_pages_broken\" && \$5>0' '$MECH' | grep -q ."
-check "fabricated doc id detected"       "awk -F'\t' '\$4==\"fabricated_doc_ids\" && \$5>0' '$MECH' | grep -q ."
+check "broken wikilink detected"         "awk -F'\t' '\$4==\"cited_pages_broken\" && \$5>0' '$MECH' | grep ."
+check "fabricated doc id detected"       "awk -F'\t' '\$4==\"fabricated_doc_ids\" && \$5>0' '$MECH' | grep ."
 check "real doc id NOT flagged"          "! grep -q 'MCA-SUR-0014' \$(awk -F'\t' '\$4==\"fabricated_doc_id_list\"{print}' '$MECH' >/dev/null; echo '$MECH')"
-check "section precision detected"       "awk -F'\t' '\$4==\"section_precision\" && \$5==1' '$MECH' | grep -q ."
-check "synthesis marker detected"        "awk -F'\t' '\$4==\"synthesis_marker\" && \$5==1' '$MECH' | grep -q ."
-check "must_contain recall computed"     "awk -F'\t' '\$4==\"must_contain_hits\"' '$MECH' | grep -q ."
+check "section precision detected"       "awk -F'\t' '\$4==\"section_precision\" && \$5==1' '$MECH' | grep ."
+check "synthesis marker detected"        "awk -F'\t' '\$4==\"synthesis_marker\" && \$5==1' '$MECH' | grep ."
+check "must_contain recall computed"     "awk -F'\t' '\$4==\"must_contain_hits\"' '$MECH' | grep ."
 check "report written"                   "test -s '$RUN_DIR/report.md'"
 check "report marks judge as NOT run"    "grep -q 'Not run' '$RUN_DIR/report.md'"
 check "report flags the stub binary"     "grep -q 'stub, not the real CLI' '$RUN_DIR/report.md'"
@@ -386,7 +389,7 @@ check "report has a comparability block" "grep -q '^## Comparability' '$RUN_DIR/
 check "not-run judge table is all placeholders" \
       "test \$(grep -cE '^\| (Correctness|Fully correct|Citation support|Unsourced claims|Confabulation|Correct declines|Contradictions|Synthesis correctly|Synthesis over-flagged|Compiled-error|Compiled errors)[^|]*(\\| — )+\\|\$' '$RUN_DIR/report.md') -eq 11"
 check "report has no numeral in the not-run table" \
-      "! grep -E '^\| (Confabulation rate|Correct declines|Contradictions fully|Unsourced claims|Compiled-error propagation|Compiled errors caught)' '$RUN_DIR/report.md' | grep -qE '\\| *[0-9]'"
+      "! grep -E '^\| (Confabulation rate|Correct declines|Contradictions fully|Unsourced claims|Compiled-error propagation|Compiled errors caught)' '$RUN_DIR/report.md' | grep -E '\\| *[0-9]'"
 check "report names the compiled-error metric" \
       "grep -q 'Compiled-error propagation rate' '$RUN_DIR/report.md'"
 check "report says no defective wiki ran" \
@@ -440,13 +443,13 @@ check "run.env lists all three arms"     "grep -q '^arms=baseline-retrieval trea
 check "the retrieval arm has no wiki"    "! test -e '$MULTI/arena/baseline-retrieval/wiki'"
 check "the poisoned arm has a wiki"      "test -f '$MULTI/arena/poisoned/wiki/kestrel-basin-tidal-array.md'"
 check "the poisoned arm has the catalog" "test -f '$MULTI/arena/poisoned/index.md'"
-check "no manifest reached an arena"     "! find '$MULTI/arena' -name 'manifest.yaml' | grep -q ."
+check "no manifest reached an arena"     "! find '$MULTI/arena' -name 'manifest.yaml' | grep ."
 check "the poisoned arena carries the planted error" \
       "grep -q 'maximum recorded 4.6 m on 2027-02-19' '$MULTI/arena/poisoned/wiki/gannet-narrows-site-conditions.md'"
 check "the treatment arena carries the truth" \
       "grep -q 'maximum recorded 3.9 m on 2027-02-19' '$MULTI/arena/treatment/wiki/gannet-narrows-site-conditions.md'"
 check "no poison manifest reached an arena" \
-      "! find '$MULTI/arena' -name 'poison-manifest.tsv' | grep -q ."
+      "! find '$MULTI/arena' -name 'poison-manifest.tsv' | grep ."
 set +e
 "$BM_DIR/score.sh" --run "$MULTI" >/dev/null 2>&1
 rc=$?
@@ -454,7 +457,7 @@ set -e
 check "a three-arm run scores"           "test $rc -eq 0"
 check "the report has three arm columns" "grep -q '^| Metric | baseline-retrieval | treatment | poisoned |\$' '$MULTI/report.md'"
 check "the advisory poison rows are computed" \
-      "awk -F'\t' '\$4==\"poison_false_present\"' '$MULTI/scores-mechanical.tsv' | grep -q ."
+      "awk -F'\t' '\$4==\"poison_false_present\"' '$MULTI/scores-mechanical.tsv' | grep ."
 check "the advisory rows are labelled advisory" \
       "grep -q 'Neither is a propagation rate' '$MULTI/report.md'"
 
