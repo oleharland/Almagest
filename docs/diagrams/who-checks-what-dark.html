@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Who checks what</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:  #2B2C31;
+      --color-ink:    #F4F4F5;
+      --color-muted:  #A2A3A6;
+      --font-sans:    'Geist Variable', 'Geist', system-ui, sans-serif;
+      --font-mono:    'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1200px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-sans);
+      font-size: 1.75rem;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 960px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Layer stack · Almagest</p>
+    <h1>Who checks what</h1>
+    <div class="diagram-container">
+        <svg viewBox="0 0 960 552" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="who-checks-what-dark-title who-checks-what-dark-desc">
+        <title id="who-checks-what-dark-title">Who checks what</title>
+        <desc id="who-checks-what-dark-desc">Three layers guard every ingest: the agent follows the rules but nothing proves it did; the audit mechanically proves citations, sources, hashes, links and schema but cannot read the source; your review of the diff judges whether the claims are true, and is the only way anything reaches main.</desc>
+        <defs>
+        <marker id="who-checks-what-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#A2A3A6"/></marker>
+        <marker id="who-checks-what-dark-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7B9EFF"/></marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#2B2C31"/>
+        <path d="M 140,136 V 184" fill="none" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#who-checks-what-dark-arrow)"/>
+        <path d="M 140,280 V 328" fill="none" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#who-checks-what-dark-arrow)"/>
+        <path d="M 140,424 V 464" fill="none" stroke="#7B9EFF" stroke-width="1.2" marker-end="url(#who-checks-what-dark-arrow-accent)"/>
+        <rect x="148" y="148" width="320" height="24" fill="#2B2C31"/>
+        <text x="156" y="164" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">CAN'T PROVE</text>
+        <text x="232" y="164" fill="#A2A3A6" font-size="11" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">that the agent followed them</text>
+        <rect x="148" y="292" width="320" height="24" fill="#2B2C31"/>
+        <text x="156" y="308" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">CAN'T PROVE</text>
+        <text x="232" y="308" fill="#A2A3A6" font-size="11" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">that page 12 says what the claim says</text>
+        <rect x="148" y="436" width="56" height="16" fill="#2B2C31"/>
+        <text x="156" y="447" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">MERGE</text>
+        <rect x="40" y="40" width="880" height="96" rx="6" fill="#2B2C31"/>
+        <rect x="40" y="40" width="880" height="96" rx="6" fill="#2B2C31" stroke="rgba(244,244,245,0.32)" stroke-width="1" stroke-dasharray="4,3"/>
+        <text x="60" y="64" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L1 · CONVENTION</text>
+        <text x="60" y="88" fill="#F4F4F5" font-size="14" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Rules</text>
+        <text x="60" y="106" fill="#A2A3A6" font-size="10" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">agent/rules/</text>
+        <text x="60" y="122" fill="#A2A3A6" font-size="10" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">followed by the agent, any harness</text>
+        <line x1="312" y1="56" x2="312" y2="120" stroke="rgba(244,244,245,0.13)" stroke-width="1"/>
+        <text x="332" y="64" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">PROMISES</text>
+        <rect x="332" y="85" width="4" height="4" fill="#A2A3A6"/>
+        <text x="344" y="92" fill="#F4F4F5" font-size="11" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Cites every claim</text>
+        <rect x="620" y="85" width="4" height="4" fill="#A2A3A6"/>
+        <text x="632" y="92" fill="#F4F4F5" font-size="11" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Surfaces contradictions, stops to ask</text>
+        <rect x="332" y="109" width="4" height="4" fill="#A2A3A6"/>
+        <text x="344" y="116" fill="#F4F4F5" font-size="11" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Logs conflicts with canonical pages</text>
+        <rect x="620" y="109" width="4" height="4" fill="#A2A3A6"/>
+        <text x="632" y="116" fill="#F4F4F5" font-size="11" font-family="'Geist Variable', 'Geist', system-ui, sans-serif"><tspan font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Works only on an </tspan><tspan font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" font-size="10">ingest/…</tspan><tspan font-family="'Geist Variable', 'Geist', system-ui, sans-serif"> branch</tspan></text>
+        <rect x="40" y="184" width="880" height="96" rx="6" fill="#2B2C31"/>
+        <rect x="40" y="184" width="880" height="96" rx="6" fill="#2B2C31" stroke="rgba(244,244,245,0.32)" stroke-width="1"/>
+        <text x="60" y="208" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L2 · ENFORCED BY CODE</text>
+        <text x="60" y="232" fill="#F4F4F5" font-size="14" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Audit</text>
+        <text x="60" y="250" fill="#A2A3A6" font-size="10" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">tools/audit.mjs</text>
+        <text x="60" y="266" fill="#A2A3A6" font-size="10" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">gates the commit, reruns in CI</text>
+        <line x1="312" y1="200" x2="312" y2="264" stroke="rgba(244,244,245,0.13)" stroke-width="1"/>
+        <text x="332" y="208" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">PROVES THE PLUMBING</text>
+        <rect x="332" y="229" width="4" height="4" fill="#A2A3A6"/>
+        <text x="344" y="236" fill="#F4F4F5" font-size="11" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Every claim has a well-formed citation</text>
+        <rect x="620" y="229" width="4" height="4" fill="#A2A3A6"/>
+        <text x="632" y="236" fill="#F4F4F5" font-size="11" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Each cites a source the page declares</text>
+        <rect x="332" y="253" width="4" height="4" fill="#A2A3A6"/>
+        <text x="344" y="260" fill="#F4F4F5" font-size="11" font-family="'Geist Variable', 'Geist', system-ui, sans-serif"><tspan font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Source on disk, </tspan><tspan font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" font-size="10">sha256</tspan><tspan font-family="'Geist Variable', 'Geist', system-ui, sans-serif"> matches manifest</tspan></text>
+        <rect x="620" y="253" width="4" height="4" fill="#A2A3A6"/>
+        <text x="632" y="260" fill="#F4F4F5" font-size="11" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Links resolve, frontmatter fits schema</text>
+        <rect x="40" y="328" width="880" height="96" rx="6" fill="#2B2C31"/>
+        <rect x="40" y="328" width="880" height="96" rx="6" fill="#7B9EFF" stroke="#7B9EFF" stroke-width="1"/>
+        <text x="60" y="352" fill="#1A1C21" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L3 · YOU</text>
+        <text x="60" y="376" fill="#1A1C21" font-size="14" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Review</text>
+        <text x="60" y="394" fill="#1A1C21" font-size="10" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">git diff main...ingest/…</text>
+        <text x="60" y="410" fill="#1A1C21" font-size="10" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">you read it, then merge</text>
+        <line x1="312" y1="344" x2="312" y2="408" stroke="rgba(26,28,33,0.30)" stroke-width="1"/>
+        <text x="332" y="352" fill="#1A1C21" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">JUDGES THE MEANING</text>
+        <rect x="332" y="373" width="4" height="4" fill="#1A1C21"/>
+        <text x="344" y="380" fill="#1A1C21" font-size="11" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">The citation is true</text>
+        <rect x="620" y="373" width="4" height="4" fill="#1A1C21"/>
+        <text x="632" y="380" fill="#1A1C21" font-size="11" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Contradictions were noticed</text>
+        <rect x="332" y="397" width="4" height="4" fill="#1A1C21"/>
+        <text x="344" y="404" fill="#1A1C21" font-size="11" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Canonical pages were respected</text>
+        <rect x="620" y="397" width="4" height="4" fill="#1A1C21"/>
+        <text x="632" y="404" fill="#1A1C21" font-size="11" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Extraction is faithful to the source</text>
+        <rect x="40" y="464" width="200" height="48" rx="6" fill="#2B2C31"/>
+        <rect x="40" y="464" width="200" height="48" rx="6" fill="#3E4044" stroke="rgba(244,244,245,0.32)" stroke-width="1"/>
+        <text x="140" y="484" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Main branch</text>
+        <text x="140" y="500" fill="#A2A3A6" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">reached only through review</text>
+        </svg>
+    </div>
+  </div>
+</body>
+</html>

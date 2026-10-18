@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Almagest ingest flow</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #F4F4F5;
+      --color-ink:     #1A1C21;
+      --color-muted:   #55565B;
+      --color-accent:  #3B5DEF;
+      --font-sans:     'Geist Variable', 'Geist', system-ui, sans-serif;
+      --font-mono:     'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1200px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-sans);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 1.75rem);
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 960px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Swimlane · Almagest</p>
+    <h1>How a source becomes wiki pages</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 528" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ingest-flow-title ingest-flow-desc">
+        <title id="ingest-flow-title">How a source becomes wiki pages</title>
+        <desc id="ingest-flow-desc">Swimlane of Almagest ingest: you drop a source, the AI agent fingerprints it, extracts a text sidecar and drafts pages on an ingest branch, stopping to ask you on blocking cases; code-based audit gates the commit, and only your review and merge moves pages onto main.</desc>
+        <defs>
+          <marker id="ingest-flow-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#6F7074"/></marker>
+          <marker id="ingest-flow-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#3B5DEF"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#F4F4F5"/>
+
+        <line x1="40" y1="40" x2="920" y2="40" stroke="#D4D4D6" stroke-width="1"/>
+        <line x1="40" y1="136" x2="920" y2="136" stroke="#D4D4D6" stroke-width="1"/>
+        <line x1="40" y1="272" x2="920" y2="272" stroke="#D4D4D6" stroke-width="1"/>
+        <line x1="40" y1="376" x2="920" y2="376" stroke="#D4D4D6" stroke-width="1"/>
+        <line x1="40" y1="472" x2="920" y2="472" stroke="#D4D4D6" stroke-width="1"/>
+        <line x1="144" y1="40" x2="144" y2="472" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="52" y="86" fill="#55565B" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">YOU</text>
+        <text x="52" y="100" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">a person</text>
+        <text x="52" y="190" fill="#55565B" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">AGENT</text>
+        <text x="52" y="204" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">AI coding agent</text>
+        <text x="52" y="322" fill="#55565B" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">AUDIT</text>
+        <text x="52" y="336" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">code, not AI</text>
+        <text x="52" y="349" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">runs in CI too</text>
+        <text x="52" y="422" fill="#55565B" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">MAIN</text>
+        <text x="52" y="436" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">git branch</text>
+        <path d="M 228,120 V 160" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#ingest-flow-arrow)"/>
+        <path d="M 228,224 V 250" fill="none" stroke="#6F7074" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#ingest-flow-arrow)"/>
+        <path d="M 296,192 H 328" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#ingest-flow-arrow)"/>
+        <path d="M 464,192 H 496" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#ingest-flow-arrow)"/>
+        <path d="M 544,160 V 120" fill="none" stroke="#6F7074" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#ingest-flow-arrow)"/>
+        <path d="M 592,120 V 160" fill="none" stroke="#6F7074" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#ingest-flow-arrow)"/>
+        <path d="M 544,224 V 296" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#ingest-flow-arrow)"/>
+        <path d="M 592,296 V 224" fill="none" stroke="#6F7074" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#ingest-flow-arrow)"/>
+        <path d="M 688,328 H 776 Q 784,328 784,320 V 224" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#ingest-flow-arrow)"/>
+        <path d="M 784,160 V 120" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#ingest-flow-arrow)"/>
+        <path d="M 864,88 H 896 Q 904,88 904,96 V 392" fill="none" stroke="#3B5DEF" stroke-width="1.4" marker-end="url(#ingest-flow-arrow-accent)"/>
+        <rect x="476" y="134" width="60" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="506" y="143" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">STOP &amp; ASK</text>
+        <rect x="600" y="134" width="52" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="626" y="143" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">DECISION</text>
+        <rect x="236" y="231" width="56" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="264" y="240" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">UNCHANGED</text>
+        <rect x="456" y="254" width="80" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="496" y="263" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">BEFORE COMMIT</text>
+        <rect x="600" y="254" width="68" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="634" y="263" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">EXIT 1 · FIX</text>
+        <rect x="792" y="254" width="40" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="812" y="263" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">EXIT 0</text>
+        <rect x="860" y="300" width="36" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="878" y="309" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">MERGE</text>
+        <text x="228" y="264" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">skipped</text>
+        <rect x="160" y="56" width="136" height="64" rx="6" fill="#F4F4F5"/>
+        <rect x="160" y="56" width="136" height="64" rx="6" fill="#E8E8E9" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="228" y="79" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Drop a source</text>
+        <text x="228" y="95" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">brain/raw/</text>
+        <text x="228" y="108" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">or a repo via MCP</text>
+        <rect x="400" y="56" width="240" height="64" rx="6" fill="#F4F4F5"/>
+        <rect x="400" y="56" width="240" height="64" rx="6" fill="#FFFFFF" stroke="#88898C" stroke-width="1"/>
+        <text x="520" y="79" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Settle blockers</text>
+        <text x="520" y="95" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">contradiction · canonical conflict</text>
+        <text x="520" y="108" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">delete, merge, rename, low confidence</text>
+        <rect x="704" y="56" width="160" height="64" rx="6" fill="#F4F4F5"/>
+        <rect x="704" y="56" width="160" height="64" rx="6" fill="#3B5DEF" stroke="#3B5DEF" stroke-width="1"/>
+        <text x="784" y="79" fill="#FFFFFF" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Review &amp; merge</text>
+        <text x="784" y="95" fill="#FFFFFF" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">git diff main...ingest/…</text>
+        <text x="784" y="108" fill="#FFFFFF" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">the only way into main</text>
+        <rect x="160" y="160" width="136" height="64" rx="6" fill="#F4F4F5"/>
+        <rect x="160" y="160" width="136" height="64" rx="6" fill="#FFFFFF" stroke="#88898C" stroke-width="1"/>
+        <text x="228" y="183" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Fingerprint</text>
+        <text x="228" y="199" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">sha256 vs manifest</text>
+        <text x="228" y="212" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">changed: diff only</text>
+        <rect x="328" y="160" width="136" height="64" rx="6" fill="#F4F4F5"/>
+        <rect x="328" y="160" width="136" height="64" rx="6" fill="#FFFFFF" stroke="#88898C" stroke-width="1"/>
+        <text x="396" y="183" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Text sidecar</text>
+        <text x="396" y="199" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">raw/extracted/*.txt</text>
+        <text x="396" y="212" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">=== page N ===</text>
+        <rect x="496" y="160" width="144" height="64" rx="6" fill="#F4F4F5"/>
+        <rect x="496" y="160" width="144" height="64" rx="6" fill="#FFFFFF" stroke="#88898C" stroke-width="1"/>
+        <text x="568" y="183" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Draft pages</text>
+        <text x="568" y="199" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">ingest/&lt;slug&gt;-&lt;sha7&gt;</text>
+        <text x="568" y="212" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">never on main</text>
+        <rect x="704" y="160" width="160" height="64" rx="6" fill="#F4F4F5"/>
+        <rect x="704" y="160" width="160" height="64" rx="6" fill="#FFFFFF" stroke="#88898C" stroke-width="1"/>
+        <text x="784" y="188" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Commit to branch</text>
+        <text x="784" y="204" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">only if the audit passes</text>
+        <rect x="456" y="296" width="232" height="64" rx="6" fill="#F4F4F5"/>
+        <rect x="456" y="296" width="232" height="64" rx="6" fill="#FFFFFF" stroke="#88898C" stroke-width="1"/>
+        <text x="572" y="319" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Check every page</text>
+        <text x="572" y="335" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">tools/audit.mjs</text>
+        <text x="572" y="348" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">schema · links · citations · provenance</text>
+        <rect x="664" y="392" width="256" height="64" rx="6" fill="#F4F4F5"/>
+        <rect x="664" y="392" width="256" height="64" rx="6" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="792" y="415" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Cited wiki pages</text>
+        <text x="792" y="431" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">brain/wiki/</text>
+        <text x="792" y="444" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">read on the site or ask the agent</text>
+        <text x="160" y="428" fill="#1A1C21" font-size="14" font-style="italic" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Nothing reaches main except your merge.</text>
+        <text x="40" y="500" fill="#55565B" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">LEGEND</text>
+        <rect x="120" y="491" width="14" height="10" rx="2" fill="#E8E8E9" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="140" y="499.5" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Your source</text>
+        <rect x="216" y="491" width="14" height="10" rx="2" fill="#FFFFFF" stroke="#88898C" stroke-width="1"/>
+        <text x="236" y="499.5" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Step</text>
+        <rect x="276" y="491" width="14" height="10" rx="2" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="296" y="499.5" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Result on main</text>
+        <rect x="388" y="491" width="14" height="10" rx="2" fill="#3B5DEF" stroke="#3B5DEF" stroke-width="1"/>
+        <text x="408" y="499.5" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">The only gate to main</text>
+        <line x1="552" y1="496" x2="580" y2="496" stroke="#6F7074" stroke-width="1.2" marker-end="url(#ingest-flow-arrow)"/>
+        <text x="588" y="499.5" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Flow</text>
+        <line x1="640" y1="496" x2="668" y2="496" stroke="#6F7074" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#ingest-flow-arrow)"/>
+        <text x="676" y="499.5" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Stop, return or skip</text>
+        <line x1="812" y1="496" x2="840" y2="496" stroke="#3B5DEF" stroke-width="1.2" marker-end="url(#ingest-flow-arrow-accent)"/>
+        <text x="848" y="499.5" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Merge</text>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>

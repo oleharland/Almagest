@@ -42,6 +42,13 @@ It used to be a promise. It is now a program you can run.
 
 The same checks run in CI, so a merge cannot land a page that fails them.
 
+Here is one claim followed back to its source. Every hop is checked by the audit except the last one, which is yours:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/citation-chain-dark.png">
+  <img src="docs/diagrams/citation-chain.png" alt="A claim on wiki/retention-policy.md cites [source: q3-review, p.12]. CITE-001 and CITE-003 check the citation; CITE-002 checks that q3-review is in the page's sources; PROV-001 checks that the source path, a committed text sidecar, exists; PROV-003 and CITE-005 check the source against its manifest.yaml entry and fingerprint. The original PDF is gitignored. Whether page 12 actually says what the claim says is checked by you, in the diff review.">
+</picture>
+
 **What is still convention, enforced by nothing but the rules and your review:**
 
 - **That the citation is *true*.** The audit proves `[source: arch-overview, p.3]` points at a real source you really declared. It cannot read page 3 and confirm it says what the page claims it says. That is what the diff review is for — and why the text sidecar in `brain/raw/extracted/` is committed with `=== page 3 ===` markers, so checking takes seconds instead of reopening a PDF.
@@ -49,72 +56,19 @@ The same checks run in CI, so a merge cannot land a page that fails them.
 - **That canonical pages were respected during drafting.** `CANON-001` reports what got logged to `brain/canonical-challenges.md`. It cannot report what got quietly absorbed instead of logged.
 - **That the extraction is faithful to the source.** No tool checks reading comprehension.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/who-checks-what-dark.png">
+  <img src="docs/diagrams/who-checks-what.png" alt="Three layers. Rules in agent/rules/ are convention the agent follows: it cites every claim, surfaces contradictions, logs canonical conflicts and works only on an ingest branch, but nothing proves it followed them. The audit, tools/audit.mjs, proves the plumbing: well-formed citations to declared sources that exist on disk with matching sha256, resolving links and valid frontmatter, but it cannot prove page 12 says what the claim says. Your review judges the meaning: the citation is true, contradictions were noticed, canonical pages respected, extraction faithful. Only your merge reaches main.">
+</picture>
+
 The line worth holding onto: the audit makes provenance *plumbing* mechanical, so your review can spend all its attention on the part that needs a human.
 
 ## How it works
 
-```
-    ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-    │   PDFs·docs  │   │  transcripts │   │ GitHub/GitLab│
-    │  spreadsheets│   │    videos    │   │   over MCP   │
-    └──────┬───────┘   └──────┬───────┘   └──────┬───────┘
-           └──────────────────┼──────────────────┘
-                              ▼
-                     ╔══════════════════╗
-                     ║   brain/raw/     ║   ← drop anything here
-                     ╚════════╤═════════╝
-                              ▼
-              ┌───────────────────────────────┐
-              │   FINGERPRINT vs manifest     │
-              │   new · changed · unchanged   │  ← unchanged is skipped
-              └───────────────────────────────┘
-                              ▼
-              ┌───────────────────────────────┐
-              │   EXTRACT TEXT SIDECAR        │
-              │   raw/extracted/*.pdf.txt     │  ← committed, page-marked —
-              │   === page 12 ===             │  ← a locator you can check
-              └───────────────────────────────┘
-                              ▼
-              ┌───────────────────────────────┐
-              │   AI CODING AGENT             │
-              │   greps .index/ → extracts    │
-              │   entities → diffs changed    │
-              │   sources → checks for        │
-              │   contradictions → drafts     │
-              └───────────────────────────────┘
-                              ▼
-              ┌───────────────────────────────┐
-              │   BRANCH  ingest/<slug>-<sha7>│  ← the agent commits here,
-              │   contradiction · canonical   │  ← never to main. Blocking
-              │   delete · rename · low conf  │  ← cases stop, unwritten
-              │   → stop and ask              │
-              └───────────────────────────────┘
-                              ▼
-              ┌───────────────────────────────┐
-              │   tools/audit.mjs             │
-              │   schema · links · citations  │  ← exit 1 blocks the commit
-              │   provenance · staleness      │
-              └───────────────────────────────┘
-                              ▼
-              ╭ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ╮
-              │      YOU REVIEW THE DIFF      │
-              │     git diff main…ingest/…    │
-              │      nothing reaches main     │
-              │    except a merge you made    │
-              ╰ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─ ╯
-                              ▼
-     ┌────────────────────────────────────────────────┐
-     │  brain/wiki/    flat .md · typed frontmatter   │
-     │                 [[wikilinks]] · typed relations│
-     │  manifest.yaml  fingerprints · page slugs      │
-     │  brain/.index/  pages.tsv · aliases.tsv        │
-     └───────┬────────────────────────────────┬───────┘
-             ▼                                ▼
-      ┌─────────────┐                  ┌─────────────┐
-      │  you query  │                  │ static site │
-      │  the agent  │                  │  (Astro)    │
-      └─────────────┘                  └─────────────┘
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/ingest-flow-dark.png">
+  <img src="docs/diagrams/ingest-flow.png" alt="Swimlane of one ingest. You drop a source into brain/raw/. The agent fingerprints it against the manifest (unchanged sources are skipped), extracts a page-marked text sidecar, and drafts pages on an ingest branch, stopping to ask you about contradictions, canonical conflicts, deletions, merges, renames and low-confidence pages. tools/audit.mjs checks every page before the commit; exit 1 sends it back to the agent, exit 0 lets it commit to the branch. You review the diff and merge, which is the only way anything reaches the cited wiki pages on main.">
+</picture>
 
 ## Where it sits
 
@@ -226,6 +180,13 @@ Full walkthrough in [Getting Started](docs/getting-started.md).
 - [Upstream Updates](docs/upstream-updates.md) — pulling framework improvements
 
 ## Structure
+
+Two things exist exactly once, and everything else is generated from them or calls into them, so nothing can drift:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/one-source-dark.png">
+  <img src="docs/diagrams/one-source.png" alt="Two single sources. agent/rules/ is turned into per-harness pointer files (CLAUDE.md, AGENTS.md, .cursor/rules, GEMINI.md, Copilot instructions) by tools/agent-shims.sh, and CI fails if one drifts. tools/lib/wiki-core.mjs is the one wiki parser: it reads brain/wiki/ and both tools/audit.mjs and the Astro site call it, so the audit certifies exactly what the site renders.">
+</picture>
 
 | Path | Purpose |
 |------|---------|

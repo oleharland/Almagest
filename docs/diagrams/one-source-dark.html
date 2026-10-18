@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>One source, everything else generated</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #2B2C31;
+      --color-ink:     #F4F4F5;
+      --color-muted:   #BCBCBE;
+      --color-accent:  #7B9EFF;
+      --font-sans:     'Geist Variable', 'Geist', system-ui, sans-serif;
+      --font-mono:     'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1200px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-sans);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 1.75rem);
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 960px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Architecture · Almagest</p>
+    <h1>One source, everything else generated</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="one-source-dark-title one-source-dark-desc">
+        <title id="one-source-dark-title">One source, everything else generated</title>
+        <desc id="one-source-dark-desc">Almagest keeps two things exactly once: the agent rules in agent/rules/, which tools/agent-shims.sh turns into 12 pointer files for Claude Code, Codex, Cursor, Gemini CLI and Copilot with a CI drift check, and the wiki parser tools/lib/wiki-core.mjs, which both the audit and the static site call, so the audit certifies exactly what the site renders.</desc>
+        <defs>
+          <marker id="one-source-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#A2A3A6"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#2B2C31"/>
+        <rect x="40" y="40" width="880" height="228" rx="8" fill="rgba(244,244,245,0.02)" stroke="rgba(244,244,245,0.16)" stroke-width="0.8"/>
+        <text x="64" y="57" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">RULES · ONE SOURCE, EVERY HARNESS</text>
+        <rect x="40" y="292" width="880" height="228" rx="8" fill="rgba(244,244,245,0.02)" stroke="rgba(244,244,245,0.16)" stroke-width="0.8"/>
+        <text x="64" y="309" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">WIKI · ONE PARSER, AUDIT AND SITE</text>
+        <line x1="264" y1="124" x2="303" y2="124" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#one-source-dark-arrow)"/>
+        <line x1="464" y1="124" x2="519" y2="124" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#one-source-dark-arrow)"/>
+        <rect x="470.0" y="104" width="44" height="12" rx="2" fill="#2B2C31"/>
+        <text x="492" y="113" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">WRITES</text>
+        <line x1="464" y1="212" x2="519" y2="212" stroke="#A2A3A6" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#one-source-dark-arrow)"/>
+        <rect x="472.0" y="192" width="40" height="12" rx="2" fill="#2B2C31"/>
+        <text x="492" y="201" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">DIFFS</text>
+        <line x1="264" y1="400" x2="303" y2="400" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#one-source-dark-arrow)"/>
+        <line x1="464" y1="356" x2="519" y2="356" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#one-source-dark-arrow)"/>
+        <line x1="464" y1="444" x2="519" y2="444" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#one-source-dark-arrow)"/>
+        <rect x="64" y="72" width="200" height="104" rx="6" fill="#2B2C31"/>
+        <rect x="64" y="72" width="200" height="104" rx="6" fill="#7B9EFF" stroke="#7B9EFF" stroke-width="1"/>
+        <rect x="80" y="84" width="72" height="12" rx="2" fill="none" stroke="rgba(26,28,33,0.55)" stroke-width="0.8"/>
+        <text x="116.0" y="93" fill="#1A1C21" font-size="7" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">SINGLE SOURCE</text>
+        <text x="80" y="124" fill="#1A1C21" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" font-weight="600">Agent rules</text>
+        <text x="80" y="140" fill="#1A1C21" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">agent/rules/</text>
+        <text x="80" y="154" fill="#1A1C21" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">read.md · ingest.md · wiki.md</text>
+        <text x="80" y="168" fill="#1A1C21" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">+ routing.md · contract.md</text>
+        <rect x="304" y="92" width="160" height="64" rx="6" fill="#2B2C31"/>
+        <rect x="304" y="92" width="160" height="64" rx="6" fill="#2B2C31" stroke="#88898C" stroke-width="1"/>
+        <text x="320" y="120" fill="#F4F4F5" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" font-weight="600">Shim generator</text>
+        <text x="320" y="136" fill="#A2A3A6" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">tools/agent-shims.sh</text>
+        <rect x="304" y="180" width="160" height="64" rx="6" fill="#2B2C31"/>
+        <rect x="304" y="180" width="160" height="64" rx="6" fill="#2B2C31" stroke="#88898C" stroke-width="1"/>
+        <text x="320" y="203" fill="#F4F4F5" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" font-weight="600">CI drift check</text>
+        <text x="320" y="218" fill="#A2A3A6" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">agent-shims.sh check</text>
+        <text x="320" y="232" fill="#A2A3A6" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">fails if a shim drifts</text>
+        <rect x="520" y="72" width="376" height="172" rx="6" fill="#2B2C31"/>
+        <rect x="520" y="72" width="376" height="172" rx="6" fill="#2B2C31" stroke="#55565B" stroke-width="1"/>
+        <text x="536" y="98" fill="#F4F4F5" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" font-weight="600">Harness shims</text>
+        <text x="536" y="113" fill="#A2A3A6" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">generated pointer files, never copies</text>
+        <line x1="536" y1="124" x2="880" y2="124" stroke="rgba(244,244,245,0.16)" stroke-width="0.8"/>
+        <text x="536" y="144" fill="#F4F4F5" font-size="10" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" font-weight="500">Claude Code</text>
+        <text x="632" y="144" fill="#A2A3A6" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">CLAUDE.md · brain/CLAUDE.md · .claude/rules/</text>
+        <text x="536" y="164" fill="#F4F4F5" font-size="10" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" font-weight="500">Codex, others</text>
+        <text x="632" y="164" fill="#A2A3A6" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">AGENTS.md · brain/AGENTS.md</text>
+        <text x="536" y="184" fill="#F4F4F5" font-size="10" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" font-weight="500">Cursor</text>
+        <text x="632" y="184" fill="#A2A3A6" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">.cursor/rules/*.mdc</text>
+        <text x="536" y="204" fill="#F4F4F5" font-size="10" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" font-weight="500">Gemini CLI</text>
+        <text x="632" y="204" fill="#A2A3A6" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">GEMINI.md</text>
+        <text x="536" y="224" fill="#F4F4F5" font-size="10" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" font-weight="500">Copilot</text>
+        <text x="632" y="224" fill="#A2A3A6" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">.github/copilot-instructions.md</text>
+        <rect x="64" y="368" width="200" height="64" rx="6" fill="#2B2C31"/>
+        <rect x="64" y="368" width="200" height="64" rx="6" fill="#2B2C31" stroke="#55565B" stroke-width="1"/>
+        <text x="80" y="389" fill="#F4F4F5" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" font-weight="600">Wiki pages</text>
+        <text x="80" y="405" fill="#A2A3A6" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">brain/wiki/*.md</text>
+        <text x="80" y="419" fill="#A2A3A6" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">flat markdown, one page per file</text>
+        <rect x="304" y="340" width="160" height="120" rx="6" fill="#2B2C31"/>
+        <rect x="304" y="340" width="160" height="120" rx="6" fill="#7B9EFF" stroke="#7B9EFF" stroke-width="1"/>
+        <rect x="320" y="356" width="72" height="12" rx="2" fill="none" stroke="rgba(26,28,33,0.55)" stroke-width="0.8"/>
+        <text x="356.0" y="365" fill="#1A1C21" font-size="7" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">SINGLE SOURCE</text>
+        <text x="320" y="396" fill="#1A1C21" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" font-weight="600">Wiki parser</text>
+        <text x="320" y="412" fill="#1A1C21" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">tools/lib/wiki-core.mjs</text>
+        <text x="320" y="426" fill="#1A1C21" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">plain ESM, no packages</text>
+        <rect x="520" y="324" width="376" height="64" rx="6" fill="#2B2C31"/>
+        <rect x="520" y="324" width="376" height="64" rx="6" fill="#2B2C31" stroke="#88898C" stroke-width="1"/>
+        <text x="536" y="351" fill="#F4F4F5" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" font-weight="600">Audit</text>
+        <text x="536" y="366" fill="#A2A3A6" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">tools/audit.mjs</text>
+        <text x="880" y="359" fill="#A2A3A6" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="end">gates commits and CI</text>
+        <rect x="520" y="412" width="376" height="64" rx="6" fill="#2B2C31"/>
+        <rect x="520" y="412" width="376" height="64" rx="6" fill="#2B2C31" stroke="#88898C" stroke-width="1"/>
+        <text x="536" y="439" fill="#F4F4F5" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" font-weight="600">Static site</text>
+        <text x="536" y="454" fill="#A2A3A6" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace">site/src/lib/wiki.ts</text>
+        <text x="880" y="447" fill="#A2A3A6" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="end">Astro build, thin typed wrapper</text>
+        <text x="520" y="504" fill="#BCBCBE" font-size="14" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" font-style="italic">The audit certifies exactly what the site renders.</text>
+        <line x1="40" y1="544" x2="920" y2="544" stroke="rgba(244,244,245,0.13)" stroke-width="0.8"/>
+        <text x="40" y="571" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="112" y="562" width="20" height="12" rx="3" fill="#7B9EFF"/>
+        <text x="140" y="571" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Single source</text>
+        <rect x="248" y="562" width="20" height="12" rx="3" fill="#2B2C31" stroke="#88898C" stroke-width="1"/>
+        <text x="276" y="571" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Tool or caller</text>
+        <rect x="388" y="562" width="20" height="12" rx="3" fill="#2B2C31" stroke="#55565B" stroke-width="1"/>
+        <text x="416" y="571" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Files</text>
+        <line x1="476" y1="568" x2="507" y2="568" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#one-source-dark-arrow)"/>
+        <text x="516" y="571" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Reads or writes</text>
+        <line x1="628" y1="568" x2="659" y2="568" stroke="#A2A3A6" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#one-source-dark-arrow)"/>
+        <text x="668" y="571" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Checks in CI</text>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>
