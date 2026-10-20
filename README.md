@@ -152,6 +152,32 @@ What that looks like in practice:
 - **Harness portability** — one set of rules in `agent/rules/`, projected into each agent's own format (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/`, `GEMINI.md`) by a single generator. One source of truth, no drift. Claude Code is the reference harness.
 - **Upstream updates** — pull framework improvements with `git merge`. Your content and customisation live in files upstream never touches.
 
+## The service (v2)
+
+Everything above runs with nothing but an agent session and git. `server/` adds an optional long-running service around the same repo and the same rules — for when the brain should keep itself current and be reviewed by people who don't read diffs.
+
+| | What it does | Guide |
+|---|---|---|
+| **Background ingest** | Files dropped in `brain/raw/`, scheduled connector syncs and chat submissions become jobs. A headless agent ingests each one in its own worktree with no git, network or MCP access; the service runs the audit and commits to the branch | [Ingest](docs/v2/ingest.md) |
+| **Any MCP as input** | Google Drive, Granola, Linear, Notion, Slack, GitHub, GitLab, or any server that exposes resources. The service fetches, snapshots and fingerprints each item, so citations stay checkable | [Connectors](docs/v2/connectors.md) |
+| **Review inbox** | Each branch becomes a proposal: every new or changed fact next to the source passage it cites, questions as decision cards. Approve in the web inbox, from chat via a confirmation link, in Slack, by email, or keep GitHub PRs. Approval is pinned to the version you saw; agents can never approve | [Governance](docs/v2/governance.md) |
+| **Brain as MCP server** | Search, ask and cite the brain from Claude, Cursor or any MCP client — over stdio from a clone, or over HTTP from anywhere, with OIDC or built-in OAuth | [MCP](docs/v2/mcp.md) |
+| **Demand** | Every request is recorded. Frequently read pages need stricter approval and get re-verified sooner; questions the brain couldn't answer become a gap list | [Telemetry](docs/v2/telemetry.md) |
+
+One code path, three profiles — `service.profile` in `brain.config.yaml`:
+
+- **solo** — your laptop or one small container. SQLite, a pasted token, approve from your phone or from chat.
+- **team** — SSO sign-in, the person who submitted can't approve their own proposal, hot pages need two approvals.
+- **enterprise** — Postgres, SSO required to approve, owner-team sign-off on hot pages, Slack and GitHub-PR channels, remote MCP behind your IdP.
+
+```bash
+npm install
+ALMAGEST_TOKENS="me:owner:$(openssl rand -hex 16)" ALMAGEST_SECRET_KEY=$(openssl rand -hex 32) npm run serve
+# inbox:  http://127.0.0.1:4747/inbox     MCP:  http://127.0.0.1:4747/mcp     or:  node server/bin/almagest.mjs mcp
+```
+
+Containers: `deploy/docker/` (the image clones your brain at start). Always-on on a laptop: `deploy/launchd/`, `deploy/systemd/`. The design and every contract between the parts: [docs/v2/spec.md](docs/v2/spec.md).
+
 ## Quick start
 
 ```bash
@@ -178,6 +204,7 @@ Full walkthrough in [Getting Started](docs/getting-started.md).
 - [Benchmarks](docs/benchmarks.md) — measuring whether the wiki actually helps
 - [Multi-Brain](docs/multi-brain.md) — running several knowledge domains side by side
 - [Upstream Updates](docs/upstream-updates.md) — pulling framework improvements
+- [v2 service](docs/v2/spec.md) — [ingest](docs/v2/ingest.md) · [connectors](docs/v2/connectors.md) · [governance](docs/v2/governance.md) · [MCP](docs/v2/mcp.md) · [telemetry](docs/v2/telemetry.md)
 
 ## Structure
 
@@ -199,6 +226,8 @@ Two things exist exactly once, and everything else is generated from them or cal
 | `brain/canonical-challenges.md` | Data that contradicts a canonical page — logged, never merged |
 | `brain/log.md` | Audit trail of every action |
 | `site/` | Astro frontend, reads from `brain/wiki/` |
+| `server/` | The v2 service — background ingest, connectors, review inbox, MCP server, telemetry |
+| `deploy/` | Docker image and compose, launchd and systemd units for the service |
 | `agent/contract.md` | The minimum capabilities a harness must have to run Almagest |
 | `agent/rules/` | The agent rules — read, ingest, wiki write. One copy, every harness |
 | `tools/audit.mjs` | The audit — schema, links, citations, provenance. Gates every commit and CI run |
@@ -210,12 +239,13 @@ Two things exist exactly once, and everything else is generated from them or cal
 | `benchmarks/drivers/` | One driver per harness — how the benchmark invokes an agent |
 | `docs/` | Framework documentation |
 | `brain.config.yaml` | Instance configuration |
-| `.mcp.json` | MCP servers for remote sources |
+| `.mcp.json` | MCP servers the connectors read from |
 
 ## Requirements
 
 - **An AI coding agent** meeting [`agent/contract.md`](agent/contract.md). Known-good: [Claude Code](https://claude.com/claude-code) (the reference harness), Codex, Cursor, Gemini CLI, Antigravity, Copilot. Setup per harness in [Agent Harnesses](docs/agent-harnesses.md).
-- **Git, and a human who merges.** The agent commits to a branch; `main` moves only when a person merges a reviewed diff. Nothing else enforces that, and there is no auto-merge mode.
+- **Git, and a human who merges.** The agent commits to a branch; `main` moves only when a person merges a reviewed diff — or, with the service, approves the exact version in the review inbox and the service merges for them. There is no auto-merge mode in either.
+- **For the service only:** Node.js 22.13+ (it uses the built-in `node:sqlite`) and git 2.38+ (`merge-tree --write-tree`). `node server/bin/almagest.mjs doctor` checks both.
 - **Node.js 22+** — for `tools/audit.mjs` and for the site (the site needs 22.22+, Astro 7's floor). This is a hard dependency now, not a site-only one: the audit and the site call the same parser (`tools/lib/wiki-core.mjs`) rather than keeping two that would drift apart, and Node cannot import the site's TypeScript, so the shared file is plain ESM. The site still builds from `cd site && npm install && npm run build` on a fresh clone with no root install — the core imports no packages, by design.
 - `shasum -a 256` or `sha256sum` — for source fingerprinting.
 - Bash and coreutils — for `tools/agent-shims.sh` and the benchmark harness, which deliberately need no language runtime at all.

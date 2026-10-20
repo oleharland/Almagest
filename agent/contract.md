@@ -50,6 +50,17 @@ intact. Requirements 8-10 are optional and each degrades in a stated way.
    | `confidence: low` on a curated page | **Blocks** |
    | Any audit error (`tools/audit.mjs` exit `1`) | **Blocks the commit entirely** |
 
+   **With the v2 service** (`server/`, `docs/v2/governance.md`), "a human
+   merging a reviewed diff" may happen through the review inbox or any
+   configured approval channel — web, chat confirmation link, Slack, email, or
+   a merged GitHub PR. A human with a reviewer role approves the exact version
+   (headSha) shown to them; a new commit on the branch voids that approval; the
+   service re-runs the audit on the merge result and merges under the
+   approver's identity. Agents — the ingest agent and every chat connected over
+   MCP — can never approve. That is enforced in code, and there is no setting
+   for it. The service does not weaken this requirement; it moves the review
+   surface from a diff to the claims-and-sources view the diff encodes.
+
    A harness with no interactive human still runs: it does the additive work,
    commits it to the branch, and leaves every blocking case unwritten with the
    reason in the run summary. A harness that cannot make a branch fails this

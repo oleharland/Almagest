@@ -22,6 +22,8 @@ The seven non-negotiables those shims also carry come from `brain/rules-index.md
 | write to `brain/canonical-challenges.md` | `agent/rules/wiki.md` → Canonical |
 | regenerate `brain/.index/` | `docs/audit.md` — run `tools/audit.mjs index`, never hand-edit the files |
 | print a run summary to the terminal | `agent/rules/ingest.md`, `docs/terminal-output.md` |
+| run as the service's headless ingest agent | `agent/rules/ingest.md` → Runner mode |
+| change or run the v2 service in `server/` | `docs/v2/spec.md`, then the `docs/v2/` page for that module |
 | anything at all | `brain.config.yaml`, `brain/.index/pages.tsv`, `brain/index.md`, `brain/manifest.yaml` |
 <!-- SHIM:END routing -->
 
@@ -115,7 +117,9 @@ almagest/
 │   ├── contract.md        ← the minimum harness contract
 │   ├── routing.md         ← which rule file applies to which paths
 │   └── rules/             ← read.md · ingest.md · wiki.md
-├── tools/                 ← agent-shims.sh (pointer files) · audit.mjs (the checker)
+├── tools/                 ← agent-shims.sh (pointer files) · audit.mjs (the checker) · hooks/pre-commit
+├── server/                ← v2 service: background ingest, connectors, review inbox, MCP server, telemetry
+├── deploy/                ← Docker image + compose, launchd and systemd units for the service
 ├── site/                  ← Astro frontend (reads from brain/wiki/)
 │   ├── src/
 │   │   ├── lib/wiki.ts    ← typed wrapper over tools/lib/wiki-core.mjs
@@ -128,7 +132,7 @@ almagest/
 ├── benchmarks/            ← benchmark harness (fixtures, questions, runner)
 ├── docs/                  ← framework documentation
 ├── brain.config.yaml      ← instance configuration (page types, sources, etc.)
-├── .mcp.json              ← MCP server config (GitHub + GitLab)
+├── .mcp.json              ← MCP servers the connectors read from (GitHub, GitLab, any other)
 ├── LICENSE                ← MIT
 └── .gitignore
 ```
@@ -153,6 +157,18 @@ almagest/
 3. Agent reads files from remote repos, runs the same extraction flow
 4. Source reference logged in `index.md` and `manifest.yaml` (provider, repo, path, commit SHA, date) — no local copy. The recorded commit SHA is what makes the next run incremental
 5. Same branch, audit, and merge flow as local ingest. This is the one path that can run unattended end to end: a scheduled sync ingests onto a branch and leaves you a diff
+
+### The v2 service (optional — `server/`, `docs/v2/`)
+
+Everything above works with an agent session alone. `npx almagest serve` adds a long-running service around the same repo and the same rules — it holds no second copy of the knowledge:
+
+1. **Background ingest** — files dropped in `brain/raw/`, scheduled connector syncs, and chat submissions queue jobs. Each job runs a headless agent in its own git worktree on an `ingest/<source-slug>-<sha7>` branch, with no git, network or MCP access; the service runs the audit and commits
+2. **Connectors** — any MCP server is an input (`brain.config.yaml` → `sources.connectors`). The service fetches, snapshots and fingerprints each item; the agent cites the committed snapshot
+3. **Review inbox** — each branch becomes a proposal: every new or changed fact next to the source passage it cites, blocking cases as decision cards. A human approves in the web inbox, from chat via a confirmation link, in Slack, by email, or by merging a GitHub PR. Approval is pinned to the exact version shown; the service re-audits and merges. Agents never approve
+4. **Almagest as an MCP server** — `almagest mcp` (stdio) or `/mcp` over HTTP lets any chat search and cite the brain without a clone
+5. **Demand** — every request is recorded; frequently read pages get stricter approval and a re-verify queue, unanswered questions become a gap list
+
+Profiles (`service.profile`: `solo` · `team` · `enterprise`) set the defaults. Contract: `docs/v2/spec.md`.
 
 ## Wiki page types
 
