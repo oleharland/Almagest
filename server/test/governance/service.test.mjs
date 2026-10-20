@@ -5,7 +5,7 @@ import { after, describe, it } from 'node:test';
 
 import { agentActor } from '../../src/core/auth.mjs';
 import {
-  ada, ALPHA_V2, bob, CLEAN_AUDIT, cleanup, DELTA, git, govApp, job, page, proposalBranch, repo, vic,
+  ada, ALPHA_V2, bob, CLEAN_AUDIT, cleanup, DELTA, G, git, govApp, job, page, proposalBranch, repo, vic,
 } from './fixtures.mjs';
 
 after(cleanup);
@@ -14,7 +14,7 @@ const show = (r, ref, file) => git(r, 'show', `${ref}:${file}`);
 
 async function openProposal(app, branch = 'ingest/q3-board-deck-abcdef1', files = { 'brain/wiki/alpha.md': ALPHA_V2, 'brain/wiki/delta.md': DELTA }, extra = {}) {
   const b = await proposalBranch(app, branch, files);
-  const p = await app.ctx.governance.createFromJob(job(branch, extra.job), { ...b, audit: CLEAN_AUDIT, runReport: extra.runReport || { source: { id: 'alpha-pdf' }, outcome: 'written', pages: [] } });
+  const p = await G(app).createFromJob(job(branch, extra.job), { ...b, audit: CLEAN_AUDIT, runReport: extra.runReport || { source: { id: 'alpha-pdf' }, outcome: 'written', pages: [] } });
   return { ...b, p };
 }
 
@@ -23,7 +23,7 @@ describe('governance: happy path', () => {
     const r = repo();
     git(r, 'checkout', '-q', '--detach');               // main checked out nowhere → update-ref path
     const app = await govApp(r);
-    const gov = app.ctx.governance;
+    const gov = G(app);
     const created = app.ctx.bus.waitFor('proposal.created');
     const merged = app.ctx.bus.waitFor('proposal.merged');
     const { p, headSha } = await openProposal(app);
@@ -69,7 +69,7 @@ describe('governance: happy path', () => {
     const r = repo();
     const app = await govApp(r);
     const { p } = await openProposal(app);
-    const out = await app.ctx.governance.approve(p.id, ada);
+    const out = await G(app).approve(p.id, ada);
     assert.equal(out.status, 'merged', out.mergeError?.message);
     assert.equal(out.merge.method, 'ff-only');
     assert.equal(git(r, 'rev-parse', 'HEAD').trim(), out.merge.sha);
@@ -84,13 +84,13 @@ describe('governance: happy path', () => {
     const { p } = await openProposal(app);
     fs.writeFileSync(path.join(r, 'brain/wiki/alpha.md'), 'my unsaved edit\n');
     const before = git(r, 'rev-parse', 'main').trim();
-    const out = await app.ctx.governance.approve(p.id, ada);
+    const out = await G(app).approve(p.id, ada);
     assert.equal(out.status, 'approved');
     assert.equal(out.mergeError.reason, 'checkout');
     assert.match(out.mergeError.message, /unsaved edits/);
     assert.equal(git(r, 'rev-parse', 'main').trim(), before);
     git(r, 'checkout', '--', 'brain/wiki/alpha.md');
-    const again = await app.ctx.governance.retryMerge(p.id, ada);
+    const again = await G(app).retryMerge(p.id, ada);
     assert.equal(again.status, 'merged');
     await app.stop();
   });
@@ -101,8 +101,8 @@ describe('governance: happy path', () => {
     const app = await govApp(r);
     const a = await openProposal(app, 'ingest/a-1111111', { 'brain/wiki/delta.md': DELTA, 'brain/log.md': '# Log\n\n| Date | Action | Details |\n|---|---|---|\n| 2026-10-01 | ingest | a |\n' });
     const b = await openProposal(app, 'ingest/b-2222222', { 'brain/wiki/alpha.md': ALPHA_V2, 'brain/log.md': '# Log\n\n| Date | Action | Details |\n|---|---|---|\n| 2026-10-02 | ingest | b |\n' }, { job: { source: { kind: 'local', id: 'other', title: 'B' } } });
-    assert.equal((await app.ctx.governance.approve(a.p.id, ada)).status, 'merged');
-    const second = await app.ctx.governance.approve(b.p.id, ada);
+    assert.equal((await G(app).approve(a.p.id, ada)).status, 'merged');
+    const second = await G(app).approve(b.p.id, ada);
     assert.equal(second.status, 'merged', second.mergeError?.message);
     const log = show(r, 'main', 'brain/log.md');
     for (const s of ['| ingest | a |', '| ingest | b |', a.p.id, b.p.id]) assert.ok(log.includes(s), s);
@@ -115,7 +115,7 @@ describe('governance: pinning, conflicts, the audit gate', () => {
   it('an approval stops counting when the branch gets a new head (upsert by branch)', async () => {
     const r = repo();
     const app = await govApp(r, { overrides: { governance: { rules: [{ when: {}, require: { approvals: 2 } }] } } });
-    const gov = app.ctx.governance;
+    const gov = G(app);
     const { p } = await openProposal(app);
     await gov.approve(p.id, ada);
     assert.equal((await gov.evaluate(p.id)).evaluation.approvers.length, 1);
@@ -146,7 +146,7 @@ describe('governance: pinning, conflicts, the audit gate', () => {
     await app.ctx.git.worktreeRemove(mainWt);
     const before = git(r, 'rev-parse', 'main').trim();
 
-    const out = await app.ctx.governance.approve(p.id, ada);
+    const out = await G(app).approve(p.id, ada);
     assert.equal(out.status, 'conflicted');
     assert.deepEqual(out.mergeError.files, ['brain/wiki/alpha.md']);
     assert.equal(git(r, 'rev-parse', 'main').trim(), before);
@@ -164,7 +164,7 @@ describe('governance: pinning, conflicts, the audit gate', () => {
     const broken = DELTA.replace('Delta relies on the Alpha overview.', 'Delta relies on [[nowhere-page]].');
     const { p } = await openProposal(app, 'ingest/bad-3333333', { 'brain/wiki/delta.md': broken });
     const before = git(r, 'rev-parse', 'main').trim();
-    const out = await app.ctx.governance.approve(p.id, ada);
+    const out = await G(app).approve(p.id, ada);
     assert.equal(out.status, 'conflicted');
     assert.equal(out.mergeError.reason, 'audit');
     assert.equal(git(r, 'rev-parse', 'main').trim(), before);
@@ -176,10 +176,10 @@ describe('governance: pinning, conflicts, the audit gate', () => {
     const r = repo();
     const app = await govApp(r);
     const b = await proposalBranch(app, 'ingest/x-4444444', { 'brain/wiki/delta.md': DELTA });
-    const p = await app.ctx.governance.createFromJob(job(b.branch), { ...b, audit: { exit: 1, errors: 2, warnings: 0, findings: [] } });
-    const out = await app.ctx.governance.approve(p.id, ada);
+    const p = await G(app).createFromJob(job(b.branch), { ...b, audit: { exit: 1, errors: 2, warnings: 0, findings: [] } });
+    const out = await G(app).approve(p.id, ada);
     assert.equal(out.status, 'open');
-    assert.match((await app.ctx.governance.evaluate(p.id)).evaluation.explanation, /found 2 problems/);
+    assert.match((await G(app).evaluate(p.id)).evaluation.explanation, /found 2 problems/);
     await app.stop();
   });
 });
@@ -189,7 +189,7 @@ describe('governance: actions', () => {
     const r = repo();
     const app = await govApp(r, { overrides: { governance: { separation_of_duties: true } } });
     const { p } = await openProposal(app, undefined, undefined, { job: { requestedBy: 'agent:mcp:claude', onBehalfOf: 'usr_ada' } });
-    const gov = app.ctx.governance;
+    const gov = G(app);
     await assert.rejects(() => gov.approve(p.id, agentActor('claude', ada)), /cannot approve/);
     await assert.rejects(() => gov.approve(p.id, vic), /approver role/);
     await assert.rejects(() => gov.approve(p.id, ada), /separation of duties/);
@@ -200,7 +200,7 @@ describe('governance: actions', () => {
   it('decisions from the run report block, and resolving one enqueues a revise job with the effect', async () => {
     const r = repo();
     const app = await govApp(r);
-    const gov = app.ctx.governance;
+    const gov = G(app);
     const created = app.ctx.bus.waitFor('decision.created');
     const { p } = await openProposal(app, undefined, undefined, {
       runReport: {
@@ -230,7 +230,7 @@ describe('governance: actions', () => {
     fs.writeFileSync(cfg, fs.readFileSync(cfg, 'utf-8').replace('canonical_pages: []', 'canonical_pages:\n  - beta'));
     git(r, 'commit', '-qam', 'beta is canonical');
     const app = await govApp(r);
-    const gov = app.ctx.governance;
+    const gov = G(app);
     const beta = show(r, 'main', 'brain/wiki/beta.md').replace('Beta is a 2U rack appliance.', 'Beta is a 4U rack appliance.');
     const { p } = await openProposal(app, 'ingest/c-5555555', { 'brain/wiki/beta.md': beta });
     assert.equal(p.changes[0].canonical, true);
@@ -259,7 +259,7 @@ describe('governance: actions', () => {
   it('request changes, take a page out, turn down', async () => {
     const r = repo();
     const app = await govApp(r);
-    const gov = app.ctx.governance;
+    const gov = G(app);
     const { p } = await openProposal(app);
     await assert.rejects(() => gov.requestChanges(p.id, ada, { feedback: '  ' }), /Say what should change/);
     const page1 = await gov.rejectPage(p.id, 'delta', ada);
@@ -285,8 +285,8 @@ describe('governance: actions', () => {
     const ingest = { enqueue: async () => { throw new Error('down'); }, start: async () => {}, stop: async () => {} };
     const app = await govApp(r, { ingest });
     const { p } = await openProposal(app);
-    await assert.rejects(() => app.ctx.governance.requestChanges(p.id, ada, { feedback: 'x' }), /isn't reachable/);
-    assert.equal((await app.ctx.governance.getProposal(p.id)).status, 'open');
+    await assert.rejects(() => G(app).requestChanges(p.id, ada, { feedback: 'x' }), /isn't reachable/);
+    assert.equal((await G(app).getProposal(p.id)).status, 'open');
     await app.stop();
   });
 
@@ -295,8 +295,8 @@ describe('governance: actions', () => {
     const app = await govApp(r);
     const a = await openProposal(app, 'ingest/q3-1111111');
     const b = await openProposal(app, 'ingest/q3-2222222', { 'brain/wiki/delta.md': DELTA });
-    assert.equal((await app.ctx.governance.getProposal(a.p.id)).status, 'superseded');
-    assert.equal((await app.ctx.governance.getProposal(b.p.id)).status, 'open');
+    assert.equal((await G(app).getProposal(a.p.id)).status, 'superseded');
+    assert.equal((await G(app).getProposal(b.p.id)).status, 'open');
     await app.stop();
   });
 
@@ -304,11 +304,11 @@ describe('governance: actions', () => {
     const r = repo();
     const app = await govApp(r);
     const { p } = await openProposal(app);
-    const c = await app.ctx.governance.createConfirmation(p.id, ada, 'approve');
+    const c = await G(app).createConfirmation(p.id, ada, 'approve');
     assert.match(c.code, /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
     assert.ok(c.url.endsWith(`/inbox/confirm/${c.code}`));
     assert.ok(Date.parse(c.expiresAt) > Date.now());
-    await assert.rejects(() => app.ctx.governance.createConfirmation(p.id, ada, 'merge-now'), /unknown confirmation action/);
+    await assert.rejects(() => G(app).createConfirmation(p.id, ada, 'merge-now'), /unknown confirmation action/);
     await app.stop();
   });
 

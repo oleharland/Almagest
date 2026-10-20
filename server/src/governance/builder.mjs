@@ -106,6 +106,9 @@ export async function buildChanges({ git, baseSha, headSha, wikiDir = 'brain/wik
       demand: 0,
       claims,
       fields: action === 'update' || action === 'rename' ? fieldChanges(before, after) : [],
+      // A new page the claim extractor found nothing in (a citation only on a
+      // heading, say) is not "no change" — the whole page needs reading.
+      ...(action === 'create' && claims.length === 0 ? { needsManualLook: true, preview: String(after?.body || '').trim().slice(0, 1500) } : {}),
       pageStatus: 'pending',
     });
   }

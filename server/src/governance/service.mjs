@@ -9,6 +9,11 @@
  * (assertCanApprove — agents never get past the first line), then policy, then
  * side effects that can fail (enqueueing a job), and only then the state
  * change. A request that cannot be carried out leaves nothing half-done.
+ *
+ * Defence in depth: every review action also checks HOW the actor got here
+ * (trust.mjs → assertMayAct). Only a signed-in browser session, or the
+ * verified Slack / GitHub paths, may act — never a bearer token, whatever
+ * HTTP route or in-process caller passed it in.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,7 +26,9 @@ import { NotFoundError } from '../core/store/index.mjs';
 import { attachDemand, buildChanges } from './builder.mjs';
 import { appendChallenge, challengeFrom, challengeRow } from './challenges.mjs';
 import { normalizeAudit, runAudit } from './merge.mjs';
+import { listChanges, outsideFiles } from './paths.mjs';
 import * as policy from './policy.mjs';
+import { assertMayAct } from './trust.mjs';
 import { describe, titleFor } from './summary.mjs';
 
 /** canonical_conflict has exactly one non-dismiss effect (spec → Decision). Enforced by construction. */
@@ -31,6 +38,9 @@ export const CANONICAL_OPTIONS = [
 ];
 
 const NOOP_EFFECT = /^\s*(none|no-?op|nothing)?\s*$/i;
+
+/** Automatic "redo it on top of main" revisions per proposal before a person must step in. */
+export const MAX_CONFLICT_REVISES = 2;
 
 function submittersFromJob(job) {
   const ids = [job.requestedBy, job.onBehalfOf?.id ?? job.onBehalfOf, job.requestedFor, job.source?.submittedBy];
@@ -45,7 +55,7 @@ function approvalRecord(actor, { scope, channel, headSha }) {
   };
 }
 
-export function createService(ctx, { merger, confirmations, lock }) {
+export function createService(ctx, { merger, confirmations, lock, identities, allowed }) {
   const { store, bus, git, config, log } = ctx;
   const gov = config.governance;
   const rules = policy.validateRules(gov.rules || []);
@@ -70,6 +80,18 @@ export function createService(ctx, { merger, confirmations, lock }) {
       log.error('governance audit append failed', { action, target, error: err.message });
       throw err;
     }
+  }
+
+  /** Identity-aware policy options: who the approvers and submitters are, as people. */
+  async function policyOptions(p, actor = null) {
+    const approvals = p.approvals || [];
+    const hints = new Map(approvals.filter((a) => a.email).map((a) => [a.actorId, a.email]));
+    if (actor?.email) hints.set(actor.id, actor.email);
+    const subs = policy.submittersOf(p);
+    const keyring = await identities.keyring([...approvals.map((a) => a.actorId), ...subs, actor?.id], hints);
+    const submitterKeys = new Set(subs.flatMap((id) => [...(keyring.get(id)?.keys || [`id:${id}`])]));
+    const actorKeys = actor ? keyring.get(actor.id)?.keys : null;
+    return { ...options, keyring, submitterKeys, actorKeys, allowed };
   }
 
   async function load(id) {
@@ -109,8 +131,6 @@ export function createService(ctx, { merger, confirmations, lock }) {
   async function upsert(job, info = {}) {
     const branch = info.branch || job.branch;
     if (!branch) throw new Error('createFromJob needs the job\'s branch');
-    const headSha = info.headSha || (await git.revParse(branch));
-    const baseSha = info.baseSha || (await git.mergeBase(config.service.git.main, headSha));
     const existing = await store.proposals.getByBranch(branch);
     const live = existing && policy.LIVE.includes(existing.status) ? existing : null;
     if (!live && existing && job.proposalId && job.proposalId === existing.id) {
@@ -119,8 +139,12 @@ export function createService(ctx, { merger, confirmations, lock }) {
       log.warn('ignoring a late job for a closed proposal', { proposal: existing.id, status: existing.status, job: job.id });
       return existing;
     }
+    const headSha = info.headSha || (await git.revParse(branch));
+    const baseSha = info.baseSha || (await git.mergeBase(config.service.git.main, headSha));
 
     const { changes, otherFiles } = await buildChanges({ git, baseSha, headSha, wikiDir, canonicalPages: config.v1.canonicalPages });
+    const files = await listChanges(git, baseSha, headSha);
+    const outside = outsideFiles(files, allowed);
     await attachDemand(changes, ctx.demand, log);
     if (live) {
       for (const c of changes) {
@@ -162,7 +186,7 @@ export function createService(ctx, { merger, confirmations, lock }) {
       worktree: info.worktree || job.worktree || live?.worktree || '',
       title: titleFor(source), source,
       audit: normalizeAudit(info.audit ?? job.audit),
-      changes, otherFiles,
+      changes, otherFiles, files, outside,
       decisions: decisions.map((d) => d.id),
       notes: runReport.notes || '',
       reportPages: runReport.pages || [],
@@ -176,6 +200,7 @@ export function createService(ctx, { merger, confirmations, lock }) {
       proposal = await store.proposals.update(live.id, {
         ...fields, status: 'open', mergeError: null,
         revision: (live.revision || 1) + (live.headSha === headSha ? 0 : 1),
+        revisedBecause: live.headSha === headSha ? live.revisedBecause || '' : ['conflict', 'audit'].includes(job.reason) || live.status === 'conflicted' ? 'conflict' : job.kind || 'revise',
       });
       await record('proposal.update', { id: job.requestedBy || svc.id }, proposal.id, 'cli', { headSha, jobId: fields.jobId });
       bus.emit('proposal.updated', { proposal });
@@ -189,6 +214,10 @@ export function createService(ctx, { merger, confirmations, lock }) {
       await supersedeOlder(proposal);
       bus.emit('proposal.created', { proposal });
     }
+    if (outside.length) {
+      log.warn('proposal changes files outside the knowledge base — it can never be approved', { proposal: proposal.id, files: outside.map((o) => o.path) });
+      await record('proposal.blocked_paths', svc, proposal.id, 'cli', { headSha, files: outside });
+    }
     for (const decision of created) bus.emit('decision.created', { decision, proposal });
     return proposal;
   }
@@ -201,7 +230,23 @@ export function createService(ctx, { merger, confirmations, lock }) {
       if (old.id === p.id || old.branch === p.branch || old.source?.id !== p.source.id) continue;
       const updated = await store.proposals.update(old.id, { status: 'superseded', supersededBy: p.id, updatedAt: nowIso() });
       await record('proposal.supersede', svc, old.id, 'cli', { by: p.id });
+      await cleanupClosed(old);
       bus.emit('proposal.updated', { proposal: updated });
+    }
+  }
+
+  /**
+   * A turned-down or superseded proposal leaves nothing behind: its worktree is
+   * removed and, unless `governance.keep_closed_branches`, its branch too.
+   * The proposal record (with every approval and the audit log) stays.
+   */
+  async function cleanupClosed(p) {
+    try {
+      const wt = await git.worktreeFor(p.branch);
+      if (wt) await git.tryRun(['worktree', 'remove', '--force', wt.path]);
+      if (!gov.keep_closed_branches) await git.tryRun(['branch', '-D', p.branch]);
+    } catch (err) {
+      log.warn('could not clean up a closed proposal', { proposal: p.id, error: err.message });
     }
   }
 
@@ -213,7 +258,7 @@ export function createService(ctx, { merger, confirmations, lock }) {
 
   async function evaluateProposal(p) {
     const decisions = await store.decisions.listByProposal(p.id);
-    return { decisions, evaluation: policy.evaluate({ proposal: p, decisions, options }) };
+    return { decisions, evaluation: policy.evaluate({ proposal: p, decisions, options: await policyOptions(p) }) };
   }
 
   async function doMerge(p, actor, evaluation, channel) {
@@ -242,22 +287,43 @@ export function createService(ctx, { merger, confirmations, lock }) {
 
     let status = 'approved';
     let job = null;
-    if (result.reason === 'conflict' || result.reason === 'audit') {
+    if (result.reason === 'paths') {
+      status = p.status;
+      await record('policy.violation', actor, p.id, channel, { reason: result.message, files: result.files, headSha: p.headSha });
+    } else if (result.reason === 'conflict' || result.reason === 'audit') {
       status = 'conflicted';
-      const why = result.reason === 'conflict'
-        ? `These files clash with changes merged into main since this branch was made: ${result.files.join(', ')}.`
-        : `Merged with the current main, the audit fails:\n${(result.audit?.findings || []).filter((f) => f.severity === 'error').slice(0, 20).map((f) => `- ${f.id} ${f.slug || ''}: ${f.message}`).join('\n')}`;
-      job = await enqueue({
-        kind: 'revise', source: p.source, trigger: 'feedback', requestedBy: svc.id, proposalId: p.id, reason: result.reason,
-        instructions: `${why}\n\nBring this branch up to date with main and redo the affected changes so it merges cleanly and passes the audit. Keep the reviewed content unless it conflicts.`,
-      });
     } else if (result.reason === 'stale') {
       status = p.status;
     }
-    const message = job || !['conflict', 'audit'].includes(result.reason)
-      ? result.message
-      : `${result.message} (The request to the agent could not be queued — ask an administrator.)`;
-    const updated = await store.proposals.update(p.id, { status, mergeError: { reason: result.reason, message, at: nowIso(), ...(result.files ? { files: result.files } : {}) }, updatedAt: nowIso() });
+
+    // Conflict-driven revisions: at most one waiting per reviewed version (so
+    // re-approving does not pile up jobs), and at most MAX_CONFLICT_REVISES per
+    // proposal — after that a person has to look.
+    let message = result.message;
+    let conflictRevise = p.conflictRevise || { count: 0, headSha: '' };
+    if (status === 'conflicted') {
+      const pending = conflictRevise.headSha === p.headSha;
+      if (pending) {
+        message = `${result.message} The agent is already redoing it.`;
+      } else if (conflictRevise.count >= MAX_CONFLICT_REVISES) {
+        message = `This keeps clashing with other changes (${conflictRevise.count} automatic redos so far), so it needs a person: ask for specific changes, or turn it down and add the source again.`;
+      } else {
+        const why = result.reason === 'conflict'
+          ? `These files clash with changes merged into main since this branch was made: ${result.files.join(', ')}.`
+          : `Merged with the current main, the audit fails:\n${(result.audit?.findings || []).filter((f) => f.severity === 'error').slice(0, 20).map((f) => `- ${f.id} ${f.slug || ''}: ${f.message}`).join('\n')}`;
+        job = await enqueue({
+          kind: 'revise', source: p.source, trigger: 'feedback', requestedBy: svc.id, proposalId: p.id, reason: result.reason,
+          instructions: `${why}\n\nBring this branch up to date with main and redo the affected changes so it merges cleanly and passes the audit. Keep the reviewed content unless it conflicts.`,
+        });
+        if (job) {
+          conflictRevise = { count: conflictRevise.count + 1, headSha: p.headSha, at: nowIso(), jobId: job.id || null };
+          message = `The knowledge base changed while this waited, so it is being redone on top of the current version. ${result.message}`;
+        } else {
+          message = `${result.message} (The request to the agent could not be queued — ask an administrator.)`;
+        }
+      }
+    }
+    const updated = await store.proposals.update(p.id, { status, conflictRevise, mergeError: { reason: result.reason, message, at: nowIso(), ...(result.files ? { files: result.files } : {}) }, updatedAt: nowIso() });
     await record('proposal.merge_failed', actor, p.id, channel, { reason: result.reason, headSha: p.headSha, jobId: job?.id || null });
     bus.emit('proposal.updated', { proposal: updated });
     return updated;
@@ -271,11 +337,12 @@ export function createService(ctx, { merger, confirmations, lock }) {
 
   // ── actions ────────────────────────────────────────────────────────────────
 
-  async function approve(prpId, actor, { scope = 'all', channel = 'web' } = {}) {
+  async function approve(prpId, actor, { scope = 'all', channel = 'web', headSha } = {}) {
     assertCanApprove(actor);
+    assertMayAct(actor, channel);
     return lock(async () => {
       let p = await load(prpId);
-      policy.assertMayApprove(p, actor, { ...options, requireSso, scope, channel });
+      policy.assertMayApprove(p, actor, { ...(await policyOptions(p, actor)), requireSso, scope, channel, headSha, requireHead: true });
       const rec = approvalRecord(actor, { scope, channel, headSha: p.headSha });
       const approvals = [...(p.approvals || []).filter((a) => !(a.actorId === rec.actorId && a.scope === scope && a.headSha === p.headSha)), rec];
       const changes = scope === 'all' ? p.changes : p.changes.map((c) => (c.slug === scope ? { ...c, pageStatus: 'accepted' } : c));
@@ -288,6 +355,7 @@ export function createService(ctx, { merger, confirmations, lock }) {
 
   async function retryMerge(prpId, actor, { channel = 'web' } = {}) {
     assertCanApprove(actor);
+    assertMayAct(actor, channel);
     return lock(async () => {
       const p = await load(prpId);
       if (!policy.APPROVABLE.includes(p.status)) throw new HttpError(409, `This proposal is ${policy.STATUS_WORDS[p.status] || p.status}.`);
@@ -298,6 +366,7 @@ export function createService(ctx, { merger, confirmations, lock }) {
 
   async function reject(prpId, actor, { reason = '', channel = 'web' } = {}) {
     assertCanApprove(actor);
+    assertMayAct(actor, channel);
     return lock(async () => {
       const p = await load(prpId);
       assertLive(p);
@@ -306,6 +375,7 @@ export function createService(ctx, { merger, confirmations, lock }) {
         rejection: { by: actor.id, display: actor.display, at: nowIso(), reason: String(reason || '').slice(0, 5000) },
       });
       await record('proposal.reject', actor, p.id, channel, { reason: String(reason || '').slice(0, 500), headSha: p.headSha });
+      await cleanupClosed(p);
       bus.emit('proposal.rejected', { proposal: updated, actor });
       return updated;
     });
@@ -313,6 +383,7 @@ export function createService(ctx, { merger, confirmations, lock }) {
 
   async function rejectPage(prpId, slug, actor, { channel = 'web', reason = '' } = {}) {
     assertCanApprove(actor);
+    assertMayAct(actor, channel);
     return lock(async () => {
       const p = await load(prpId);
       assertLive(p);
@@ -336,6 +407,7 @@ export function createService(ctx, { merger, confirmations, lock }) {
 
   async function requestChanges(prpId, actor, { feedback = '', channel = 'web' } = {}) {
     assertCanApprove(actor);
+    assertMayAct(actor, channel);
     const text = String(feedback || '').trim().slice(0, 5000);
     if (!text) throw new HttpError(400, 'Say what should change, so the agent knows what to do.');
     return lock(async () => {
@@ -349,6 +421,7 @@ export function createService(ctx, { merger, confirmations, lock }) {
       const updated = await store.proposals.update(p.id, {
         status: 'changes_requested', updatedAt: nowIso(),
         feedback: [...(p.feedback || []), { by: actor.id, display: actor.display, at: nowIso(), text, headSha: p.headSha, jobId: job.id || null }],
+        conflictRevise: { count: 0, headSha: '' },
       });
       await record('proposal.request_changes', actor, p.id, channel, { headSha: p.headSha, jobId: job.id || null });
       bus.emit('proposal.updated', { proposal: updated });
@@ -376,8 +449,9 @@ export function createService(ctx, { merger, confirmations, lock }) {
     return { sha, worktree: wt, audit };
   }
 
-  async function resolveDecision(decId, actor, { optionId, note = '', channel = 'web' } = {}) {
+  async function resolveDecision(decId, actor, { optionId, note = '', channel = 'web', headSha } = {}) {
     assertCanApprove(actor);
+    assertMayAct(actor, channel);
     return lock(async () => {
       const d = await store.decisions.get(decId);
       if (!d) throw new NotFoundError('decision', decId);
@@ -390,6 +464,7 @@ export function createService(ctx, { merger, confirmations, lock }) {
       if (!option) throw new HttpError(400, 'Pick one of the offered answers.');
       let p = await load(d.proposalId);
       assertLive(p);
+      policy.assertSameHead(p, headSha);   // the answer is about the version the person was shown
       const cleanNote = String(note || '').trim().slice(0, 2000);
       const detail = { optionId, headSha: p.headSha };
 
@@ -455,18 +530,26 @@ export function createService(ctx, { merger, confirmations, lock }) {
     return lock(async () => {
       const p = await load(prpId);
       if (p.status === 'merged') return p;
-      let allowed = true;
-      try { assertCanApprove(actor); } catch { allowed = false; }
-      const approvals = allowed ? [...(p.approvals || []), approvalRecord(actor, { scope: 'all', channel, headSha: headSha || p.headSha })] : p.approvals || [];
+      let permitted = true;
+      try { assertCanApprove(actor); assertMayAct(actor, channel); } catch { permitted = false; }
+      // The PR's head must be the reviewed version, or the merge is not an approval of it.
+      const sameHead = Boolean(headSha) && headSha === p.headSha;
+      const counts = permitted && sameHead;
+      const approvals = counts ? [...(p.approvals || []), approvalRecord(actor, { scope: 'all', channel, headSha })] : p.approvals || [];
       const draft = { ...p, approvals };
       const { evaluation } = await evaluateProposal(draft);
-      const met = allowed && headSha === p.headSha && evaluation.blockers.filter((b) => b.code !== 'status').length === 0 && evaluation.missing.length === 0;
+      const met = counts && evaluation.blockers.filter((b) => b.code !== 'status').length === 0 && evaluation.missing.length === 0;
       const updated = await store.proposals.update(p.id, {
         status: 'merged', approvals, updatedAt: nowIso(), mergeError: null,
-        merge: { sha, at: nowIso(), by: actor.id, approvers: allowed ? [actor.id] : [], method: channel, external: true, headSha, policyMet: met, ...(met ? {} : { policyGap: evaluation.explanation }) },
+        merge: { sha, at: nowIso(), by: actor.id, approvers: counts ? [actor.id] : [], method: channel, external: true, headSha, policyMet: met, ...(met ? {} : { policyGap: evaluation.explanation }) },
       });
       await record('proposal.merge', actor, p.id, channel, { sha, headSha, external: true, policyMet: met });
-      if (!met) await record('policy.violation', actor, p.id, channel, { reason: allowed ? evaluation.explanation : `${actor.display} is not a reviewer`, sha });
+      if (!met) {
+        const reason = !permitted ? `${actor.display} is not a reviewer`
+          : !sameHead ? `GitHub merged version ${String(headSha).slice(0, 7) || 'unknown'}, but the reviewed version is ${String(p.headSha).slice(0, 7)}`
+            : evaluation.explanation;
+        await record('policy.violation', actor, p.id, channel, { reason, sha });
+      }
       bus.emit('proposal.merged', { proposal: updated, actor });
       return updated;
     });
@@ -491,6 +574,18 @@ export function createService(ctx, { merger, confirmations, lock }) {
     async evaluate(prpId) {
       const p = await load(prpId);
       return { proposal: p, ...(await evaluateProposal(p)) };
+    },
+    /** Can `actor` approve this proposal right now? For showing or hiding buttons — the actions re-check. */
+    async mayApprove(p, actor) {
+      let canReview = true;
+      try { assertCanApprove(actor); assertMayAct(actor, 'web'); } catch { canReview = false; }
+      try {
+        assertMayAct(actor, 'web');
+        policy.assertMayApprove(p, actor, { ...(await policyOptions(p, actor)), requireSso, scope: 'all', channel: 'web' });
+        return { ok: true, canReview, why: '' };
+      } catch (err) {
+        return { ok: false, canReview, why: err.message };
+      }
     },
     rules,
     options: { ...options, requireSso },

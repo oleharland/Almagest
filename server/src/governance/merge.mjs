@@ -6,15 +6,19 @@
  * last step:
  *
  *   1. `git merge-tree --write-tree main head`     the merge, computed in memory
- *   2. bookkeeping conflicts (log.md, index.md, manifest, challenges ledger)
- *      are resolved only when both sides purely appended; the derived index
- *      (brain/.index/) is regenerated. Any other conflict → `conflicted`.
+ *   2. bookkeeping conflicts are resolved mechanically (bookkeeping.mjs): the
+ *      manifest by a structured merge of `sources[]` by id; log.md, index.md
+ *      and the challenges ledger when both sides only added rows (template
+ *      placeholder rows either side replaced are dropped first); the derived
+ *      index (brain/.index/) is regenerated. Any other conflict → `conflicted`.
  *   3. `brain/log.md` gets the approval row (temporary GIT_INDEX_FILE)
  *   4. `commit-tree` with parents (main, head): author = the approving human,
  *      committer = svc:governance
  *   5. re-audit the merge result in a throwaway detached worktree with the
  *      SERVICE'S OWN tools/audit.mjs — exit ≠ 0 → main does not move
- *   6. move main by compare-and-swap: `merge --ff-only` inside the worktree
+ *   6. check, once more, that the branch diff AND the merge result touch only
+ *      the knowledge base's writable files (paths.mjs) — nothing else moves main
+ *   7. move main by compare-and-swap: `merge --ff-only` inside the worktree
  *      that has main checked out, else `update-ref main <new> <old>`
  *
  * Merges are serialised by the caller's mutex; the CAS covers everyone else.
@@ -27,6 +31,8 @@ import { fileURLToPath } from 'node:url';
 
 import { serviceActor } from '../core/auth.mjs';
 import { gitIdentity } from '../core/git.mjs';
+import { mergeManifest, stripRemovedPlaceholders } from './bookkeeping.mjs';
+import { describeOutside, listChanges, outsideFiles } from './paths.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 /** The audit that gates merges is this checkout's — never one inside a worktree an agent wrote to. */
@@ -133,7 +139,8 @@ export function onlyInsertions(diff3) {
  * @param {object} [deps.log]
  * @param {string} [deps.auditScript]
  */
-export function createMerger({ git, config, log, auditScript = AUDIT_SCRIPT }) {
+export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SCRIPT }) {
+  if (typeof allowed !== 'function') throw new Error('createMerger needs the writable-path matcher (paths.mjs)');
   const main = config.service.git.main;
   const brainDir = config.v1.brainDir;
   const logPath = `${brainDir}/log.md`;
@@ -150,8 +157,10 @@ export function createMerger({ git, config, log, auditScript = AUDIT_SCRIPT }) {
   }
 
   async function unionResolve(file, base, ours, theirs) {
-    const [b, o, t] = await Promise.all([git.show(base, file), git.show(ours, file), git.show(theirs, file)]);
-    if (o === null || t === null) return null;   // modify/delete — a person has to decide
+    const [b0, o0, t0] = await Promise.all([git.show(base, file), git.show(ours, file), git.show(theirs, file)]);
+    if (o0 === null || t0 === null) return null;   // modify/delete — a person has to decide
+    if (file === config.v1.manifestPath) return mergeManifest(b0, o0, t0);
+    const [b, o, t] = stripRemovedPlaceholders(b0, o0, t0);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-union-'));
     try {
       const [fo, fb, ft] = ['ours', 'base', 'theirs'].map((n) => path.join(dir, n));
@@ -303,6 +312,16 @@ export function createMerger({ git, config, log, auditScript = AUDIT_SCRIPT }) {
           ok: false, reason: 'audit', audit,
           message: `Combined with the current knowledge base, this fails the automatic checks (${audit.errors || 'unknown'} problem${audit.errors === 1 ? '' : 's'}). The agent has been asked to fix it.`,
         };
+      }
+
+      // Last gate before main moves: what the reviewer approved, and what main would become.
+      const outside = outsideFiles([
+        ...(await listChanges(git, base, head)),
+        ...(await listChanges(git, mainSha, commit)),
+      ], allowed);
+      if (outside.length) {
+        log?.error('merge refused: files outside the knowledge base', { proposal: proposal.id, files: outside.map((o) => o.path) });
+        return { ok: false, reason: 'paths', files: outside, message: describeOutside(outside) };
       }
 
       const moved = await moveMain(mainSha, commit, `almagest: merge ${proposal.id}`);

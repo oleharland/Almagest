@@ -13,7 +13,7 @@
  *       - { email: ada@acme.com, id: usr_ada, display: Ada, roles: [owner], teams: [] }
  *     to: [team@acme.com]                  # plain notifications, link only
  *     events: [proposal.created, decision.created]
- *     link_ttl_hours: 72
+ *     link_ttl_hours: 24
  *     digest_every_hours: 24               # optional; or run `almagest inbox-digest` from cron
  *
  * Personal links are signed (HMAC) and single-use: opening one shows
@@ -23,8 +23,8 @@
  */
 import { execFile } from 'node:child_process';
 
-import { humanActor } from '../../core/auth.mjs';
 import { html } from '../html.mjs';
+import { validateMappings } from '../identity.mjs';
 import { redirect } from '../sessions.mjs';
 import { sign, verify } from '../signing.mjs';
 import { DECISION_WORDS, describe } from '../summary.mjs';
@@ -65,14 +65,15 @@ export function rfc822({ from, to, subject, text, html: body }) {
   ].join('\r\n');
 }
 
-export function create(ctx, cfg, { governance, confirmations, sessions, secret }) {
+export function create(ctx, cfg, { governance, confirmations, sessions, secret, identities, people }) {
   const { config, log, store } = ctx;
   const base = String(config.service.http.base_url).replace(/\/+$/, '');
   const requireSso = Boolean(config.governance.require_sso_for_approval);
   const events = cfg.events || ['proposal.created', 'decision.created'];
   const recipients = (cfg.recipients || []).filter((r) => r?.email);
   const plain = (cfg.to || []).filter((e) => !recipients.some((r) => r.email === e));
-  const ttlMs = Number(cfg.link_ttl_hours || 72) * 3600 * 1000;
+  const ttlMs = Number(cfg.link_ttl_hours || 24) * 3600 * 1000;
+  validateMappings('governance.channels[email].recipients', recipients.map((r, i) => [i, r]), { mode: people.mode, multi: people.multi, tokenIds: people.tokens().map((t) => t.actor.id) });
   const from = cfg.from || 'Almagest <almagest@localhost>';
   const sent = [];   // last messages, for `almagest doctor`-style inspection and tests
 
@@ -184,8 +185,10 @@ export function create(ctx, cfg, { governance, confirmations, sessions, secret }
       try { rec = await confirmations.consume(v.c); } catch (err) { return gone(err.state || 'unknown'); }
       if (!rec.recipient) return gone('unknown');
       if (requireSso) { redirect(res, `/inbox/login?next=${encodeURIComponent(rec.target || '/inbox')}`); return undefined; }
-      const actor = humanActor({ ...rec.recipient });
-      await sessions.issue(res, actor, 'email-link');
+      // The recipient is resolved to the canonical person by email, exactly like Slack and GitHub mappings.
+      const who = await identities.resolveMapped(rec.recipient, { mode: people.mode, tokens: people.tokens() });
+      if (who.refused) return respond((nonce) => views.messagePage({ title: 'Sign in first', text: who.refused, nonce, link: { href: '/inbox/login', label: 'Sign in' } }), 403);
+      await sessions.issue(res, who.actor, 'email-link');
       redirect(res, rec.target || '/inbox');
       return undefined;
     });

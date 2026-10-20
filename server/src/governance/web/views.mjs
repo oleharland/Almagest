@@ -16,6 +16,17 @@ import { layout, timeAgo } from './layout.mjs';
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** The same finding reported twice reads as two problems. Keep one, with a count. */
+export function dedupeFindings(findings) {
+  const out = new Map();
+  for (const f of findings) {
+    const k = `${f.id}|${f.slug || ''}|${f.message}`;
+    if (out.has(k)) out.get(k).count = (out.get(k).count || 1) + 1;
+    else out.set(k, { ...f, count: f.count && f.count > 1 ? f.count : 1 });
+  }
+  return [...out.values()];
+}
+
 export const MESSAGES = {
   approved: 'Thanks — your approval is recorded.',
   merged: 'Done — this is now part of the knowledge base.',
@@ -35,6 +46,11 @@ function flashBox(flash) {
 
 function csrfField(csrf) {
   return html`<input type="hidden" name="csrf" value="${csrf}">`;
+}
+
+/** The version the person is looking at. The service refuses the action if it has moved on. */
+function headField(p) {
+  return html`<input type="hidden" name="headSha" value="${p.headSha}">`;
 }
 
 // ── queue ────────────────────────────────────────────────────────────────────
@@ -150,14 +166,16 @@ function pageCard(p, change, { canAct, csrf, required, why = null }) {
           ${rejected ? html`<span class="chip chip--bad">Taken out</span>` : ''}
         </div>
       </div>
-      ${canAct.ok && !rejected ? html`<div class="row">
-        ${accepted ? '' : html`<form method="post" action="/inbox/p/${encodeURIComponent(p.id)}/page/${encodeURIComponent(change.slug)}/accept">${csrfField(csrf)}<button class="btn btn--small" type="submit">Accept page</button></form>`}
+      ${canAct.canReview && !rejected ? html`<div class="row">
+        ${accepted || !canAct.ok ? '' : html`<form method="post" action="/inbox/p/${encodeURIComponent(p.id)}/page/${encodeURIComponent(change.slug)}/accept">${csrfField(csrf)}${headField(p)}<button class="btn btn--small" type="submit">Accept page</button></form>`}
         <form method="post" action="/inbox/p/${encodeURIComponent(p.id)}/page/${encodeURIComponent(change.slug)}/reject" data-confirm="Take this page out of the proposal?">${csrfField(csrf)}<button class="btn btn--small btn--danger" type="submit">Take this page out</button></form>
       </div>` : ''}
     </div>
     <div class="body">
       ${change.hot ? hotWhy(why) : ''}
-      ${change.claims.length === 0 && !(change.fields || []).length
+      ${change.needsManualLook ? html`<p class="missing">This new page has no facts the inbox could pair with a source, so nothing below has been checked for you. Read the whole page before you approve.</p>
+        <pre class="preview">${change.preview || ''}</pre>` : ''}
+      ${change.needsManualLook ? '' : change.claims.length === 0 && !(change.fields || []).length
         ? html`<p class="muted">${change.action === 'delete' ? 'The whole page would be removed.' : 'No facts changed — only formatting or wording without a source.'}</p>`
         : change.claims.map(claimCard)}
       ${(change.fields || []).length ? html`<details><summary>${plural(change.fields.length, 'detail')} changed</summary>
@@ -166,8 +184,26 @@ function pageCard(p, change, { canAct, csrf, required, why = null }) {
   </section>`;
 }
 
+/** "alpha-pdf, p.3" → "Alpha System Overview, page 3", using the titles the proposal's pages give their sources. */
+function sourceTitles(p) {
+  const titles = new Map();
+  if (p.source?.id && p.source.title) titles.set(p.source.id, p.source.title);
+  // What the pages call a source wins: that is the name the reviewer sees on every fact.
+  for (const ch of p.changes || []) {
+    for (const cl of ch.claims || []) for (const c of [cl.citation, ...(cl.citations || [])]) if (c?.id && c.title) titles.set(c.id, c.title);
+  }
+  return titles;
+}
+
+function sourceWords(text, titles) {
+  const m = String(text || '').match(/^\s*([a-z0-9]+(?:-[a-z0-9]+)*)\s*,\s*(.+)$/);
+  if (!m) return titles.get(String(text || '').trim()) || text;
+  return `${titles.get(m[1]) || m[1]}, ${locatorWords(m[2].trim())}`;
+}
+
 function decisionCard(p, d, { canAct, csrf }) {
   const c = d.context || {};
+  const titles = sourceTitles(p);
   if (d.status !== 'open') {
     return html`<div class="decision resolved"><h3>${DECISION_WORDS[d.kind] || d.kind}</h3>
       <p class="muted">${d.question}</p>
@@ -177,11 +213,11 @@ function decisionCard(p, d, { canAct, csrf }) {
     <h3>${DECISION_WORDS[d.kind] || d.kind}</h3>
     <p>${d.question}</p>
     ${c.claimA || c.claimB ? html`<div class="vs">
-      ${c.claimA ? html`<div><div class="faint">The knowledge base says</div>${c.claimA}${c.sourceA ? html`<div class="cite">Source: ${c.sourceA}</div>` : ''}</div>` : ''}
-      ${c.claimB ? html`<div><div class="faint">The new material says</div>${c.claimB}${c.sourceB ? html`<div class="cite">Source: ${c.sourceB}</div>` : ''}</div>` : ''}
+      ${c.claimA ? html`<div><div class="faint">The knowledge base says</div>${c.claimA}${c.sourceA ? html`<div class="cite">Source: ${sourceWords(c.sourceA, titles)}</div>` : ''}</div>` : ''}
+      ${c.claimB ? html`<div><div class="faint">The new material says</div>${c.claimB}${c.sourceB ? html`<div class="cite">Source: ${sourceWords(c.sourceB, titles)}</div>` : ''}</div>` : ''}
     </div>` : ''}
-    ${canAct.ok ? html`<form method="post" action="/inbox/d/${encodeURIComponent(d.id)}/resolve">
-      ${csrfField(csrf)}
+    ${canAct.canReview ? html`<form method="post" action="/inbox/d/${encodeURIComponent(d.id)}/resolve">
+      ${csrfField(csrf)}${headField(p)}
       <label class="faint" for="note-${d.id}">Note for the agent (optional)</label>
       <input type="text" id="note-${d.id}" name="note" maxlength="2000">
       <div class="options">${d.options.map((o) => html`<button class="btn" type="submit" name="optionId" value="${o.id}">${o.label}</button>`)}</div>
@@ -201,7 +237,7 @@ function needsBox(evaluation, p) {
   return html`<div class="needs"><h2>Before this can be added</h2><ul>${items.map((x) => html`<li>${x.message}</li>`)}</ul></div>`;
 }
 
-export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, nonce, canAct, flash = null, now = Date.now(), why = {} }) {
+export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, nonce, canAct, flash = null, now = Date.now(), why = {}, chat = null }) {
   const info = describe(p, decisions);
   const open = decisions.filter((d) => d.status === 'open');
   const done = decisions.filter((d) => d.status !== 'open');
@@ -209,6 +245,9 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
   const live = ['open', 'approved', 'conflicted', 'changes_requested'].includes(p.status);
   const mine = (p.approvals || []).filter((a) => a.actorId === actor.id && a.headSha === p.headSha && a.scope === 'all').length > 0;
   const stale = (p.approvals || []).some((a) => a.actorId === actor.id && a.headSha !== p.headSha);
+  // Approvals for an earlier version: shown by name, so everyone sees whose no longer count.
+  const lapsed = [...new Set((p.approvals || []).filter((a) => a.headSha !== p.headSha && !(p.approvals || []).some((b) => b.actorId === a.actorId && b.headSha === p.headSha)).map((a) => a.display || a.actorId))];
+  const findings = dedupeFindings(p.audit?.findings || []);
   const approveBlocked = open.length ? 'Answer the questions above first — answering them changes the proposal.' : '';
   const id = encodeURIComponent(p.id);
 
@@ -218,10 +257,13 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
     <h1>${info.title}</h1>
     <p class="lede">${info.line}. Sent ${timeAgo(p.createdAt, now)}${p.revision > 1 ? ` · revised ${plural(p.revision - 1, 'time')}` : ''}.</p>
     <p class="status"><strong>${STATUS_HEADLINE[p.status] || p.status}.</strong> ${audit.text}
-      ${audit.ok ? '' : html`${(p.audit?.findings || []).length ? html`<details><summary>What the checks found</summary><ul>${p.audit.findings.slice(0, 50).map((f) => html`<li>${f.slug ? html`<strong>${f.slug}</strong>: ` : ''}${f.message}</li>`)}</ul></details>` : ''}`}
+      ${findings.length ? html`<details><summary>${audit.ok ? 'See the notes' : 'What the checks found'}</summary><ul>${findings.slice(0, 50).map((f) => html`<li>${f.slug ? html`<strong>${f.slug}</strong>: ` : ''}${f.message}${f.count > 1 ? ` (×${f.count})` : ''}</li>`)}</ul></details>` : ''}
     </p>
     ${p.mergeError ? html`<div class="flash flash--err" role="alert">${p.mergeError.message}</div>` : ''}
-    ${stale && live ? html`<div class="flash flash--ok">This proposal changed after you last approved it. Please look again — your earlier approval no longer counts.</div>` : ''}
+    ${chat ? html`<div class="flash flash--ok" role="status">A chat assistant asked${chat.onBehalfOf ? ` on behalf of ${chat.onBehalfOf.display}` : ''} for this to be ${chat.action === 'reject' ? 'turned down' : 'approved'}. It can't do that itself — read it below and decide.${chat.headSha && chat.headSha !== p.headSha ? ' The proposal changed after the chat asked; this is the current version.' : ''}</div>` : ''}
+    ${lapsed.length && live && p.status !== 'conflicted' ? html`<div class="flash flash--ok" role="status">${p.revisedBecause === 'conflict'
+      ? 'The knowledge base changed while this waited, so it was redone on top of the current version.'
+      : 'This proposal changed since it was approved.'} ${lapsed.length === 1 ? `${lapsed[0]}'s approval was for the earlier version and no longer counts` : `Approvals from ${lapsed.join(', ')} were for the earlier version and no longer count`}${stale ? ' — please look again.' : '.'}</div>` : ''}
     ${needsBox(evaluation, p)}
     ${p.notes ? html`<details><summary>The agent's notes</summary><p>${p.notes}</p></details>` : ''}
 
@@ -233,7 +275,7 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
 
     ${done.length ? html`<h2>Answered questions</h2>${done.map((d) => decisionCard(p, d, { canAct, csrf }))}` : ''}
 
-    ${live && canAct.ok ? html`<section class="actions" id="request-changes">
+    ${live && canAct.canReview ? html`<section class="actions" id="request-changes">
       <h2>Something not right?</h2>
       <form method="post" action="/inbox/p/${id}/request-changes">
         ${csrfField(csrf)}
@@ -242,7 +284,7 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
         <p class="row"><button class="btn" type="submit">Ask for changes</button></p>
       </form>
       <form method="post" action="/inbox/p/${id}/reject" data-confirm="Turn this down? Nothing from it will be added.">
-        ${csrfField(csrf)}
+        ${csrfField(csrf)}${chat?.action === 'reject' ? html`<input type="hidden" name="confirm" value="${chat.code}">` : ''}
         <label for="reason" class="faint">Or turn the whole thing down (optional reason)</label>
         <input type="text" id="reason" name="reason" maxlength="2000">
         <p class="row"><button class="btn btn--danger" type="submit">Turn down</button></p>
@@ -263,7 +305,7 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
   const footer = live ? html`<div class="actionbar"><div class="wrap">
     <div class="msg">${canAct.ok ? (approveBlocked || (mine ? 'You approved this version.' : evaluation.ready ? 'Ready to add.' : 'Approving adds it once everything above is in place.')) : canAct.why}</div>
     ${canAct.ok && p.status === 'approved' ? html`<form method="post" action="/inbox/p/${id}/retry">${csrfField(csrf)}<button class="btn" type="submit">Try again</button></form>` : ''}
-    ${canAct.ok && !mine ? html`<form method="post" action="/inbox/p/${id}/approve">${csrfField(csrf)}<input type="hidden" name="scope" value="all"><button class="btn btn--primary" type="submit"${approveBlocked ? raw(' disabled') : ''}>Approve all</button></form>` : ''}
+    ${canAct.ok && !mine ? html`<form method="post" action="/inbox/p/${id}/approve">${csrfField(csrf)}${headField(p)}${chat?.action === 'approve' ? html`<input type="hidden" name="confirm" value="${chat.code}">` : ''}<input type="hidden" name="scope" value="all"><button class="btn btn--primary" type="submit"${approveBlocked ? raw(' disabled') : ''}>Approve all</button></form>` : ''}
   </div></div>` : null;
 
   return layout({ title: info.title, actor, nonce, csrf, current: 'inbox', body, footer });
@@ -286,7 +328,7 @@ export function gapsPage({ items, error, actor, csrf, nonce, now = Date.now() })
     <p class="lede">What people asked for and didn't find. Each one is a hint about which source to add next.</p>
     ${error ? html`<div class="empty">${error}</div>` : items.length === 0 ? html`<div class="empty">No unanswered questions recorded.</div>` : html`
     <table class="list"><thead><tr><th>Topic</th><th>Asked</th><th>Last asked</th></tr></thead><tbody>
-    ${items.map((g) => html`<tr><td><strong>${g.cluster}</strong>${(g.queries || []).length ? html`<div class="faint">${g.queries.slice(0, 3).map((q) => `“${q}”`).join(' · ')}</div>` : ''}${g.suggestion ? html`<div class="cite">Suggestion: ${typeof g.suggestion === 'string' ? g.suggestion : g.suggestion.text || g.suggestion.label || ''}</div>` : ''}</td><td>${plural(g.count || 0, 'time')}${g.distinctSessions ? html`<div class="faint">by ${plural(g.distinctSessions, 'person', 'people')}</div>` : ''}</td><td>${timeAgo(g.lastSeen, now)}</td></tr>`)}
+    ${items.map((g) => html`<tr><td><strong>${g.representative || (g.tokens || []).join(' ') || 'An unanswered question'}</strong>${(g.queries || []).length ? html`<div class="faint">${g.queries.slice(0, 3).map((q) => (typeof q === 'string' ? `“${q}”` : `“${q.text}”${q.count > 1 ? ` ×${q.count}` : ''}`)).join(' · ')}</div>` : ''}${g.suggestion ? html`<div class="cite">Suggestion: ${typeof g.suggestion === 'string' ? g.suggestion : g.suggestion.text || g.suggestion.label || ''}</div>` : ''}</td><td>${plural(g.count || 0, 'time')}${g.distinctSessions ? html`<div class="faint">by ${plural(g.distinctSessions, 'person', 'people')}</div>` : ''}</td><td>${timeAgo(g.lastSeen, now)}</td></tr>`)}
     </tbody></table>`}`;
   return layout({ title: 'Unanswered', actor, nonce, csrf, current: 'gaps', body });
 }
@@ -317,31 +359,6 @@ export function activityPage({ entries, titles, actor, csrf, nonce, now = Date.n
         ${e.action === 'policy.violation' ? html`<div class="cite missing">${e.detail?.reason || ''}</div>` : ''}</td>
       <td class="faint">${e.channel}</td><td class="faint">${timeAgo(e.ts, now)}</td></tr>`)}</tbody></table>`}`;
   return layout({ title: 'Activity', actor, nonce, csrf, current: 'activity', body });
-}
-
-const CONFIRM_WORDS = { approve: 'Approve', review: 'Review', reject: 'Turn down', request_changes: 'Ask for changes to' };
-
-export function confirmPage({ rec, proposal, decisions, actor, csrf, nonce, code, canAct, error = '' }) {
-  const info = proposal ? describe(proposal, decisions) : null;
-  const changed = proposal && rec.headSha && rec.headSha !== proposal.headSha;
-  const body = html`<div class="login card">
-    <h1>${CONFIRM_WORDS[rec.action] || 'Review'} this proposal?</h1>
-    ${error ? html`<div class="flash flash--err" role="alert">${error}</div>` : ''}
-    ${rec.onBehalfOf ? html`<p class="lede">A chat assistant asked on behalf of ${rec.onBehalfOf.display}. It can't approve anything itself — only you can, here.</p>` : ''}
-    ${info ? html`<p><strong>${info.title}</strong><br>${info.line}.</p>` : ''}
-    ${changed ? html`<div class="flash flash--ok">The proposal changed after the chat asked. You'll be approving the version shown in the inbox now.</div>` : ''}
-    <p class="faint">Code <span class="code">${code}</span></p>
-    ${canAct.ok ? html`<form method="post" action="/inbox/confirm/${encodeURIComponent(code)}">
-      ${csrfField(csrf)}
-      ${rec.action === 'reject' ? html`<label class="faint" for="reason">Reason (optional)</label><input type="text" id="reason" name="reason" maxlength="2000">` : ''}
-      <p class="row">
-        ${rec.action === 'approve' ? html`<button class="btn btn--primary" type="submit" name="do" value="approve">Approve</button>` : ''}
-        ${rec.action === 'reject' ? html`<button class="btn btn--danger" type="submit" name="do" value="reject">Turn down</button>` : ''}
-        <button class="btn" type="submit" name="do" value="review">Open the full review</button>
-      </p>
-    </form>` : html`<p class="faint">${canAct.why}</p><p><a class="btn" href="/inbox/p/${encodeURIComponent(proposal?.id || '')}">Open the full review</a></p>`}
-  </div>`;
-  return layout({ title: 'Confirm', actor, nonce, csrf, body });
 }
 
 export function messagePage({ title, text, actor = null, csrf = '', nonce, link = null }) {

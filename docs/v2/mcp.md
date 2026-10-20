@@ -59,6 +59,14 @@ Stdio: the human is the owner of `ALMAGEST_TOKEN` when it is set (an unknown
 token refuses to start), otherwise a local `usr_local` with role
 `mcp.stdio_role` (default `owner`).
 
+**No token approves anything.** `ALMAGEST_TOKEN`, an `ALMAGEST_TOKENS` entry,
+an OIDC access token and the built-in OAuth tokens let a client read the
+brain, submit sources and *ask* for an approval. The approval itself happens
+only in the person's signed-in browser (or a verified Slack / GitHub path):
+the service refuses every review action that arrives with a bearer token,
+whoever owns it. See [governance.md](governance.md) → *What cannot be
+configured away*.
+
 ## Configuration
 
 All optional. Defaults shown.
@@ -196,7 +204,8 @@ the URL, exactly as for claude.ai below.
    `https://brain.example.com/mcp`.
 3. Click **Connect**. claude.ai discovers the OAuth server, registers itself,
    and opens the consent page. Paste your Almagest token (from
-   `ALMAGEST_TOKENS`) and approve.
+   `ALMAGEST_TOKENS`) and allow the connection. This only connects the chat —
+   it can then ask for approvals, never give them.
 4. Under `oidc`, the same flow lands on your IdP's login instead. If your IdP
    does not allow dynamic client registration, create a client for claude.ai
    (redirect URI `https://claude.ai/api/mcp/auth_callback`) and enter its id

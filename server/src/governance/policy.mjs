@@ -21,10 +21,17 @@
  *   - an audit exit other than 0 blocks the merge
  *   - a proposal that modifies a canonical page never merges
  *   - `owner_team` means an approver from the page's own `owner` team
+ *   - people are counted by who they are (personKey: email when known, else
+ *     id), not by how many ids they appear under
+ *   - an approval names the version (headSha) the reviewer looked at
+ *   - a proposal that changes anything outside the knowledge base's writable
+ *     files (paths.mjs) can never be approved
  */
 import { assertCanApprove, ForbiddenError, hasRole } from '../core/auth.mjs';
 import { HttpError } from '../core/http.mjs';
 import { APPROVER_ROLES, DECISION_KINDS, ROLES } from '../core/schemas.mjs';
+import { keysFor } from './identity.mjs';
+import { describeOutside, outsideFiles } from './paths.mjs';
 
 export const PAGE_CONDITIONS = ['hot', 'tier', 'action', 'page', 'owner'];
 export const PROPOSAL_CONDITIONS = ['decision', 'label', 'connector', 'source_kind'];
@@ -220,13 +227,42 @@ export function submittersOf(proposal) {
   return [...new Set([proposal.submittedBy, ...(proposal.submitters || [])].filter(Boolean))];
 }
 
+/** Every key the submitter is known by (ids, and emails from the identity registry). */
+export function submitterKeysOf(proposal, submitterKeys) {
+  if (submitterKeys) return submitterKeys;
+  return new Set(submittersOf(proposal).map((id) => `id:${id}`));
+}
+
+/** Files outside the writable set: recomputed when a matcher is given, else as recorded. */
+export function outsideOf(proposal, allowed) {
+  if (allowed) return Array.isArray(proposal.files) ? outsideFiles(proposal.files, allowed) : [{ path: '(unknown)', reason: 'the changed files have not been checked' }];
+  return proposal.outside || [];
+}
+
+const intersects = (a, b) => [...a].some((k) => b.has(k));
+
+/** Nothing left to add: every page was taken out and no challenge row is being recorded. */
+export function isEmpty(proposal) {
+  const active = (proposal.changes || []).filter((c) => c.pageStatus !== 'rejected');
+  if (active.length) return false;
+  return !(proposal.otherFiles || []).some((f) => /(^|\/)canonical-challenges\.md$/.test(f.path));
+}
+export const EMPTY_MESSAGE = 'Nothing is left to add — every page was taken out. Turn it down to close it.';
+
 /**
  * Throws when `actor` may not approve `proposal` right now. The checks that
  * hold whatever the config says come first.
+ *
+ * `headSha` is the version the reviewer was shown. It must be the current
+ * one: approving "whatever the branch is now" is not reviewing it.
  */
-export function assertMayApprove(proposal, actor, { separationOfDuties = false, requireSso = false, scope = 'all', channel = 'web' } = {}) {
+export function assertMayApprove(proposal, actor, {
+  separationOfDuties = false, requireSso = false, scope = 'all', channel = 'web',
+  headSha, requireHead = false, actorKeys = null, submitterKeys = null, allowed = null,
+} = {}) {
   assertCanApprove(actor);   // human + approver role — core, unconditional
-  if (separationOfDuties && submittersOf(proposal).includes(actor.id)) {
+  const mine = actorKeys || keysFor(actor.id, actor.email);
+  if (separationOfDuties && intersects(mine, submitterKeysOf(proposal, submitterKeys))) {
     throw new ForbiddenError('You sent this in, so someone else has to approve it — separation of duties is on.');
   }
   if (requireSso && actor.idp !== 'oidc' && channel !== 'github-pr') {
@@ -235,8 +271,22 @@ export function assertMayApprove(proposal, actor, { separationOfDuties = false, 
   if (!APPROVABLE.includes(proposal.status)) {
     throw new HttpError(409, `This proposal can't be approved — it is ${STATUS_WORDS[proposal.status] || proposal.status}.`);
   }
+  const outside = outsideOf(proposal, allowed);
+  if (outside.length) throw new HttpError(409, describeOutside(outside));
+  if (isEmpty(proposal)) throw new HttpError(409, EMPTY_MESSAGE);
   if (scope !== 'all' && !(proposal.changes || []).some((c) => c.slug === scope && c.pageStatus !== 'rejected')) {
     throw new HttpError(400, `There is no page "${scope}" left in this proposal to approve.`);
+  }
+  if (requireHead || headSha !== undefined) assertSameHead(proposal, headSha);
+}
+
+/** The version a person acted on must be the current one. */
+export function assertSameHead(proposal, headSha) {
+  if (!headSha) throw new HttpError(400, 'Say which version you reviewed — the request carried no headSha.');
+  if (headSha !== proposal.headSha) {
+    const err = new HttpError(409, 'This proposal changed since you opened it — review the new version.');
+    err.code = 'stale';
+    throw err;
   }
 }
 
@@ -252,11 +302,11 @@ export const STATUS_WORDS = {
 
 // ── evaluation ───────────────────────────────────────────────────────────────
 
-function isCountable(a, headSha, submitters, separationOfDuties) {
+function isCountable(a, headSha, submitterKeys, separationOfDuties, keysOfApproval) {
   if (a.headSha !== headSha) return false;                         // pinned to the diff they saw
   if (a.kind !== 'human') return false;                            // belt and braces: never an agent
   if (!(a.roles || []).some((r) => APPROVER_ROLES.includes(r))) return false;
-  if (separationOfDuties && submitters.includes(a.actorId)) return false;
+  if (separationOfDuties && intersects(keysOfApproval(a), submitterKeys)) return false;
   return true;
 }
 
@@ -290,7 +340,7 @@ function roleWords(roles) {
  */
 function gaps(req, who, { forPage = null } = {}) {
   const out = [];
-  const people = [...new Map(who.map((a) => [a.actorId, a])).values()];
+  const people = [...new Map(who.map((a) => [a.personKey || a.actorId, a])).values()];
   const target = forPage ? ` for the page ${quote(forPage.title)}` : '';
   const explicitHint = forPage && req.explicit ? ' (accept that page itself — approving the whole proposal does not cover it)' : '';
 
@@ -337,10 +387,15 @@ function gaps(req, who, { forPage = null } = {}) {
  *             approvers: Array, explanation: string }}
  */
 export function evaluate({ proposal, decisions = [], options = {} }) {
-  const { separationOfDuties = false } = options;
+  const { separationOfDuties = false, keyring = null, submitterKeys = null, allowed = null } = options;
   const required = proposal.required || computeRequirements({ changes: proposal.changes });
-  const submitters = submittersOf(proposal);
-  const counted = (proposal.approvals || []).filter((a) => isCountable(a, proposal.headSha, submitters, separationOfDuties));
+  const subKeys = submitterKeysOf(proposal, submitterKeys);
+  // One person is one approver, whichever ids and channels they used.
+  const keysOfApproval = (a) => keyring?.get(a.actorId)?.keys || keysFor(a.actorId, a.email);
+  const personOf = (a) => keyring?.get(a.actorId)?.personKey || (a.email ? `email:${String(a.email).toLowerCase()}` : `id:${a.actorId}`);
+  const counted = (proposal.approvals || [])
+    .filter((a) => isCountable(a, proposal.headSha, subKeys, separationOfDuties, keysOfApproval))
+    .map((a) => ({ ...a, personKey: personOf(a) }));
   const active = (proposal.changes || []).filter((c) => c.pageStatus !== 'rejected');
 
   const blockers = [];
@@ -376,6 +431,9 @@ export function evaluate({ proposal, decisions = [], options = {} }) {
       });
     }
   }
+  const outside = outsideOf(proposal, allowed);
+  if (outside.length) blockers.push({ code: 'paths', message: describeOutside(outside), files: outside });
+  if (isEmpty(proposal) && !(proposal.changes || []).some((c) => c.pageStatus === 'rejected')) blockers.push({ code: 'empty', message: EMPTY_MESSAGE });
   for (const c of proposal.changes || []) {
     if (c.pageStatus === 'rejected') {
       blockers.push({ code: 'page-removal', slug: c.slug, message: `The page ${quote(c.title || c.slug)} was taken out by a reviewer — waiting for the agent to remove it.` });
@@ -387,8 +445,8 @@ export function evaluate({ proposal, decisions = [], options = {} }) {
   // page still in it one by one.
   const people = new Map();
   for (const a of counted) {
-    if (!people.has(a.actorId)) people.set(a.actorId, { ...a, scopes: new Set() });
-    people.get(a.actorId).scopes.add(a.scope);
+    if (!people.has(a.personKey)) people.set(a.personKey, { ...a, scopes: new Set() });
+    people.get(a.personKey).scopes.add(a.scope);
   }
   const wholeApprovers = [...people.values()].filter((p) =>
     p.scopes.has('all') || (active.length > 0 && active.every((c) => p.scopes.has(c.slug))));
@@ -407,7 +465,7 @@ export function evaluate({ proposal, decisions = [], options = {} }) {
     const change = active.find((c) => c.slug === slug);
     if (!change) continue;
     const who = counted.filter((a) => a.scope === slug || (!req.explicit && a.scope === 'all'));
-    const extra = req.explicit ? [] : wholeApprovers.filter((p) => !who.some((w) => w.actorId === p.actorId));
+    const extra = req.explicit ? [] : wholeApprovers.filter((p) => !who.some((w) => w.personKey === p.personKey));
     for (const message of gaps(req, [...who, ...extra], { forPage: { title: change.title || slug, owner: change.owner || req.owner } })) {
       missing.push({ code: 'page', slug, message });
     }

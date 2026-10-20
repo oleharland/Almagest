@@ -19,6 +19,7 @@ import { humanActor, parseTokens } from '../core/auth.mjs';
 import { html, safeNext } from './html.mjs';
 import { createOidc, pkcePair } from './oidc.mjs';
 import { hmac, randomToken, safeEqual, sign, verify } from './signing.mjs';
+import { vouch } from './trust.mjs';
 import { layout, newNonce, securityHeaders } from './web/layout.mjs';
 
 export const SESSION_COOKIE = 'almagest_session';
@@ -58,7 +59,7 @@ export function redirect(res, location, status = 303) {
   res.end();
 }
 
-export function createSessions(ctx, { secret, ttlHours = 12, now = () => Date.now() }) {
+export function createSessions(ctx, { secret, identities = null, ttlHours = 12, now = () => Date.now() }) {
   const { config, store, log } = ctx;
   const mode = config.service.auth.provider;
   const secure = String(config.service.http.base_url).startsWith('https:');
@@ -88,7 +89,8 @@ export function createSessions(ctx, { secret, ttlHours = 12, now = () => Date.no
         if (!hit) return null;
         actor = hit.actor;
       }
-      return { ...actor, kind: 'human', idp: rec.idp, session: { sid: s.sid } };
+      // Vouched: this actor came from a browser session, the one path allowed to act (trust.mjs).
+      return vouch({ ...actor, kind: 'human', idp: rec.idp, session: { sid: s.sid } }, 'session');
     },
   };
 
@@ -97,6 +99,7 @@ export function createSessions(ctx, { secret, ttlHours = 12, now = () => Date.no
     const expiresAt = new Date(now() + ttlMs).toISOString();
     const snapshot = { id: actor.id, kind: 'human', display: actor.display, email: actor.email || '', roles: [...(actor.roles || [])], teams: [...(actor.teams || [])] };
     await store.kv.set(NS, sid, { actor: snapshot, idp, createdAt: new Date(now()).toISOString(), expiresAt, revoked: false });
+    await identities?.remember({ ...snapshot, idp });
     addCookie(res, cookieHeader(SESSION_COOKIE, sign(secret, 'session', { sid, exp: now() + ttlMs }), { maxAge: ttlMs / 1000, secure }));
     log?.info('signed in', { actor: actor.id, idp });
     return sid;
