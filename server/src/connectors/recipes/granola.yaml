@@ -1,0 +1,32 @@
+# Recipe: granola — Granola meeting notes (notes, AI summary, attendees).
+#
+# verified: partial — tool names and input arguments (list_meetings:
+# time_range, custom_start, folder_id; get_meetings: meeting_ids) checked
+# against the hosted Granola MCP's tools/list in 2026-10. list_meetings
+# answers in XML-ish text rather than JSON, so items are cut out with
+# `items_regex` and their attributes read with the `attr` filter; the exact
+# attribute names (`id`, `title`, `updated_at`) are not verified.
+#
+# Verbatim transcripts are a separate tool (get_meeting_transcript, not
+# available on every plan). To snapshot transcripts instead of notes, override
+# `fetch` in the connector — docs/v2/connectors.md → Granola transcripts.
+#
+# select:
+#   folder_id: "…"     only meetings in this folder (paid plans)
+name: granola
+description: Granola meeting notes, one snapshot per meeting.
+list:
+  tool: list_meetings
+  args:
+    time_range: custom
+    custom_start: "{{since | date | default:2000-01-01}}"
+    folder_id: "{{select.folder_id}}"
+  items_regex: "<meeting\\b(?<attrs>[^>]*)>"
+  ref: "{{raw.attrs | attr:id}}"
+  title: "{{raw.attrs | attr:title}}"
+  version: "{{raw.attrs | attr:updated_at}}"
+fetch:
+  tool: get_meetings
+  args:
+    meeting_ids: ["{{item.ref}}"]
+  render: markdown

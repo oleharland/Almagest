@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createAuth } from './core/auth.mjs';
+import './core/auth-oidc.mjs';   // registers the `oidc` provider before createAuth runs
 import { createBus } from './core/bus.mjs';
 import { loadServiceConfig } from './core/config.mjs';
 import { createGit } from './core/git.mjs';
@@ -72,6 +73,7 @@ export async function createApp(options = {}) {
     async stop() {
       await ctx.ingest.stop?.();
       await ctx.telemetry.stop?.();
+      await ctx.connectors.stop?.();
       if (server) await new Promise((r) => server.close(r));
       await ctx.bus.drain();
       await ctx.store.close();

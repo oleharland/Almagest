@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Almagest v2 service layer — background ingest, connectors, governance, MCP server, telemetry. See docs/v2/spec.md.",
+  "description": "Almagest v2 service layer \u2014 background ingest, connectors, governance, MCP server, telemetry. See docs/v2/spec.md.",
   "bin": {
     "almagest": "bin/almagest.mjs"
   },
@@ -17,7 +17,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
     "gray-matter": "^4.0.3",
-    "yaml": "^2.9.1"
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
   },
   "optionalDependencies": {
     "pg": "^8.23.1"

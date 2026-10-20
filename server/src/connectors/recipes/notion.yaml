@@ -1,0 +1,30 @@
+# Recipe: notion — Notion pages matching a search, via Notion's hosted MCP
+# server (https://mcp.notion.com/mcp, OAuth — run `almagest connectors login`).
+#
+# verified: no — written against the published tool names `notion-search` and
+# `notion-fetch` and their documented arguments; result shapes not checked.
+# `notion-fetch` returns the page as Notion-flavoured markdown, which renders
+# with section markers on its headings.
+#
+# select:
+#   query: "Roadmap"     search text (required by the search tool)
+name: notion
+description: Notion pages from a search, as markdown.
+list:
+  tool: notion-search
+  args:
+    query: "{{select.query}}"
+  items: "results[*] | pages[*] | $[*]"
+  ref: id
+  version: "timestamp | last_edited_time | lastEditedTime"
+  title: "title | name"
+  next_cursor: "next_cursor | nextCursor"
+  where:
+    - path: type
+      not: database
+fetch:
+  tool: notion-fetch
+  args:
+    id: "{{item.ref}}"
+  text: "text | content | markdown | $"
+  render: markdown

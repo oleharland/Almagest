@@ -1,0 +1,60 @@
+# Recipe: github — files in a GitHub repository, via GitHub's official MCP
+# server (github/github-mcp-server; hosted at https://api.githubcopilot.com/mcp/,
+# the `github` entry Almagest ships in .mcp.json).
+#
+# This is also what v1 `sources.remote` entries with `provider: github` run
+# through: `select` is filled from the remote entry (repo, paths, branch).
+#
+# verified: no — written against the server's published tool names
+# (list_commits, get_repository_tree, get_file_contents) and their documented
+# arguments; not run against the live server. The tree tool is newer than the
+# other two; if your server version lacks it, override `list:` in config.
+# The mapping logic (resolve → tree → glob filter → fetch) is covered by the
+# connector tests against a fake server with the same tool names.
+#
+# select:
+#   repo:   owner/name             (required)
+#   paths:  ["docs/**/*.md"]       globs within the repo; empty = every file
+#   branch: main                   default: the repository's default branch
+#
+# version is the blob SHA of each file (unchanged blob → no fetch). commit is
+# the commit SHA the file was read at — the field v1 recorded — and lands in
+# the manifest entry's `commit`.
+name: github
+description: Files in a GitHub repository at the head of a branch.
+resolve:
+  - tool: list_commits
+    args:
+      owner: "{{select.repo | before:/}}"
+      repo: "{{select.repo | after:/}}"
+      sha: "{{select.branch}}"
+      perPage: 1
+    set:
+      commit: "[0].sha | commits[0].sha | items[0].sha"
+list:
+  tool: get_repository_tree
+  args:
+    owner: "{{select.repo | before:/}}"
+    repo: "{{select.repo | after:/}}"
+    tree_sha: "{{vars.commit}}"
+    recursive: true
+  items: "tree[*] | $[*]"
+  ref: path
+  version: sha
+  title: "{{select.repo}}/{{raw.path}}"
+  commit: "{{vars.commit}}"
+  mime: "{{raw.path | mime}}"
+  where:
+    - path: type
+      in: [blob, file]
+    - field: ref
+      glob: "{{select.paths}}"
+fetch:
+  tool: get_file_contents
+  args:
+    owner: "{{select.repo | before:/}}"
+    repo: "{{select.repo | after:/}}"
+    path: "{{item.ref}}"
+    ref: "{{item.commit}}"
+  text: "content | text | $"
+  render: auto

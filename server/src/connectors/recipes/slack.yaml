@@ -1,0 +1,40 @@
+# Recipe: slack — recent history of chosen Slack channels, one snapshot per
+# channel, one `=== row n ===` per message.
+#
+# verified: no — written against the reference Slack MCP server's tool names
+# (slack_list_channels, slack_get_channel_history) and Slack Web API result
+# shapes (`channels[*]`, `response_metadata.next_cursor`, `messages[*]`).
+# Slack's own hosted MCP server names its tools differently; override `list`
+# and `fetch` in config for it.
+#
+# Rows are in the order the server returns them (newest first for the Web
+# API), so a new message renumbers the rows below it — the snapshot changes,
+# the sha changes, and CITE-005 names the pages whose `row n` citations need
+# re-checking. That is the mechanism working, not a bug.
+#
+# select:
+#   channels: ["eng-decisions"]   channel names to snapshot (required in practice)
+#   limit: 200                    messages per channel
+name: slack
+description: Slack channel history as rows.
+list:
+  tool: slack_list_channels
+  args:
+    limit: 200
+    cursor: "{{cursor}}"
+  items: "channels[*]"
+  ref: id
+  title: "#{{raw.name}}"
+  next_cursor: "response_metadata.next_cursor"
+  where:
+    - path: name
+      in: "{{select.channels}}"
+fetch:
+  tool: slack_get_channel_history
+  args:
+    channel_id: "{{item.ref}}"
+    limit: "{{select.limit | default:200}}"
+  render: rows
+  render_options:
+    rows: "messages[*]"
+    columns: [ts, user, text, thread_ts]

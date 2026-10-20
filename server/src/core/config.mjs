@@ -149,12 +149,17 @@ export function loadServiceConfig(repoRoot, options = {}) {
     deepMerge(
       BASE,
       PROFILE_DEFAULTS[profile],
-      { service: raw.service, ingest: raw.ingest, governance: raw.governance, telemetry: raw.telemetry },
+      { service: raw.service, ingest: raw.ingest, governance: raw.governance, telemetry: raw.telemetry, mcp: raw.mcp },
       overrides,
     ),
     env,
   );
   merged.service.profile = profile;
+  // Container platforms hand the listen address over in the environment (PORT
+  // on Fly, Railway, Cloud Run); it wins over the committed config.
+  if (env.ALMAGEST_HTTP_HOST) merged.service.http.host = env.ALMAGEST_HTTP_HOST;
+  if (env.ALMAGEST_PORT || env.PORT) merged.service.http.port = Number(env.ALMAGEST_PORT || env.PORT);
+  if (env.ALMAGEST_BASE_URL) merged.service.http.base_url = env.ALMAGEST_BASE_URL;
   if (!merged.service.http.base_url) {
     merged.service.http.base_url = `http://${merged.service.http.host}:${merged.service.http.port}`;
   }
@@ -176,6 +181,7 @@ export function loadServiceConfig(repoRoot, options = {}) {
     ingest: merged.ingest,
     governance: merged.governance,
     telemetry: merged.telemetry,
+    mcp: merged.mcp || {},           // defaults live in server/src/mcp/config.mjs
     sources: { localPath: String(sources.local?.path || 'brain/raw'), connectors },
     agent: raw.agent || {},
     paths: {

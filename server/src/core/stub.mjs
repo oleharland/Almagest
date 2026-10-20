@@ -5,13 +5,13 @@
  */
 const SURFACE = {
   ingest: ['enqueue', 'get', 'list', 'start', 'stop'],
-  connectors: ['list', 'sync', 'snapshotPath'],
+  connectors: ['list', 'sync', 'syncDetailed', 'snapshotPath', 'stagedPath', 'materialize', 'stop'],
   governance: [
     'listProposals', 'getProposal', 'createFromJob', 'approve', 'reject', 'rejectPage',
     'requestChanges', 'resolveDecision', 'createConfirmation',
   ],
   mcp: ['serveStdio', 'handleHttp'],
-  telemetry: ['record', 'gaps', 'reverifyQueue'],
+  telemetry: ['record', 'gaps', 'reverifyQueue', 'explain'],
 };
 
 const LIFECYCLE = new Set(['start', 'stop']);

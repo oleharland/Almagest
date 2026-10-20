@@ -35,6 +35,7 @@ node tools/audit.mjs                 # full audit, human report to stdout
 node tools/audit.mjs --json          # machine-readable findings
 node tools/audit.mjs index           # regenerate brain/.index/
 node tools/audit.mjs --check-index   # verify brain/.index/ is current (CI)
+node tools/audit.mjs --demand .almagest/demand.tsv   # also check hot pages (v2 service, opt-in)
 ```
 
 Requires Node 22. No dependencies beyond what `site/` already installs (`gray-matter`, `marked`).
@@ -112,6 +113,18 @@ These five are the drift detector for the three records that must agree: the wik
 
 `PROV-004` and `PROV-005` are the two directions of one drift and are deliberately not the same severity. An `index.md` row naming a page that does not exist **asserts something false** — a reader is sent to a page that isn't there. A page with no row asserts nothing; it is bookkeeping that has not caught up. Failing a build on the second would punish tidiness rather than truth, so it is a warning.
 
+#### Connector sources (`kind: connector`)
+
+A source fetched over MCP by the v2 service ([v2/connectors.md](v2/connectors.md)) is cited through its committed snapshot, `brain/raw/extracted/<connector-id>/<slug>.txt` — the same way a binary is cited through its sidecar, and found in the manifest the same way, by `extracted` path. Three things are specific to it:
+
+| Check | Connector behaviour |
+|---|---|
+| `CITE-005` | Besides the usual page-vs-manifest comparison, the committed snapshot is **re-hashed** and compared with `extracted_sha256`. The service fingerprinted those bytes when it captured them; a snapshot edited afterwards would leave page and manifest in agreement while every citation into it points at text the source never said. It is the only place the audit hashes a file, and it does so only for connector snapshots |
+| `PROV-001` | Unchanged for `snapshot: commit` — a missing snapshot is an error. For an entry with `snapshot: ephemeral` (the connector was configured not to commit snapshots) it is a **warning**, for the same reason as `extracted: none`: the citation is honestly unverifiable, not broken |
+| `PROV-003` | Also fires when the connector entry lacks `connector`, `ref` or `extracted` — without them nobody can re-sync the source |
+
+`tools/lib/__fixtures__/connector-clean/` and `connector-dirty/` prove each of these in `npm run selftest`.
+
 ### Canonical and staleness
 
 | ID | Detects | Severity |
@@ -120,6 +133,35 @@ These five are the drift detector for the three records that must agree: the wik
 | `STALE-001` | `last_verified` past threshold | warning |
 
 `CANON-001` is informational by design. An open challenge means evidence contradicts a canonical page and a human has not yet ruled — that is a queue, not a failure. It stays visible in every audit run until the row's status changes.
+
+### Demand — are the pages people rely on fit to be relied on? (opt-in: `--demand`)
+
+| ID | Detects | Severity |
+|---|---|---|
+| `DEMAND-001` | A **hot** page whose `last_verified` is older than `telemetry.stale_after_days_hot` (default 30), never verified, or not an ISO date | warning |
+| `DEMAND-002` | A **hot** page with `confidence: low` or `confidence: unknown` | warning |
+
+These two run **only** when you pass `--demand <file>`. Without the flag the audit's output and exit code are byte-for-byte what they were before the checks existed — the selftest proves it by running the dirty fixture both ways and comparing the non-demand findings.
+
+**What "hot" means here.** The audit does not compute demand; it has no request log. The v2 service (`server/`, WS5) records every request, scores each page — a decayed, weighted count of reads, `ask`/`search` hits and feedback — and exports the result to `.almagest/demand.tsv`. A page is hot when it is in the top `telemetry.demand.hot_percentile` of the wiki **and** clears `telemetry.demand.min_score`. The audit reads the `hot` column of that file and trusts it. The formula, with a worked example, is in `docs/v2/telemetry.md`.
+
+**Why they exist.** `STALE-001` treats every curated page alike: 90 days. But a page fifty people read this week and a page nobody has opened since it was written are not the same risk. A wrong answer on a hot page is repeated to every one of those readers. `DEMAND-001` holds the pages people actually rely on to a shorter re-verification cycle; `DEMAND-002` flags the ones that are popular but rest on weak evidence.
+
+**What fires.** For every page whose slug the file marks `hot` (slugs the wiki no longer has are ignored):
+
+- `DEMAND-001` — `last_verified` missing, not `YYYY-MM-DD`, or more than `stale_after_days_hot` days before today. The message carries the score, the rank and how far past the threshold the page is: `hot page (score 21.5, rank 1) last verified 2020-01-01 — 2201 days, 2171 past the 30-day hot threshold`.
+- `DEMAND-002` — `confidence` is `low` or `unknown`.
+
+A page can raise both. A page that is not hot raises neither, whatever its age or confidence — `STALE-001` still covers it on the ordinary tier threshold.
+
+**How to fix.**
+
+- `DEMAND-001`: re-verify the page against its cited sources and update `last_verified` — on an `ingest/` branch, like any other wiki edit. `almagest reverify` (or `GET /api/reverify`, or `/inbox/reverify`) lists the due pages, most urgent first; with `telemetry.auto_reverify: true` the service enqueues the re-verification jobs itself.
+- `DEMAND-002`: corroborate the page with a stronger source and raise `confidence`, or route it to its owner. Do not raise `confidence` without new evidence to make the warning go away — that is the one fix that makes things worse.
+
+**The file.** Tab-separated, header row exactly `slug\tscore\trank\thot`, one row per page with demand, `hot` is `true` or `false`. Aggregates only — no query text, no actors, no events — so it is safe to hand to CI; it lives under `.almagest/`, which is gitignored, because it is per-instance operational state and not knowledge. A relative `--demand` path resolves against `--repo`, the same as `--config` and `--manifest`. A missing file, a wrong header or a malformed row is a tool error — **exit 2** with the file and line — never a silent "nothing is hot".
+
+**Severity.** Like every ID, `DEMAND-001` and `DEMAND-002` take their severity from `audit.severity`. Unlike the other checks, an ID the config does not list defaults to **warning**, not error, so a v1 `brain.config.yaml` that predates them keeps passing. Listing `DEMAND-001` under `errors` makes a stale hot page fail the build — a reasonable choice for an enterprise brain whose hot pages answer customers.
 
 ## Template pages are partly exempt — read this
 
@@ -158,7 +200,12 @@ audit:
     warnings: [LINK-002, CANON-001, STALE-001]
   challenges_path: brain/canonical-challenges.md
   index_dir: brain/.index
+
+telemetry:
+  stale_after_days_hot: 30   # DEMAND-001 threshold — read only when --demand is passed
 ```
+
+`DEMAND-001` / `DEMAND-002` may be listed under `severity.errors` or `severity.warnings` like any other ID; left out, they are warnings.
 
 Moving an ID between `errors` and `warnings` changes what fails a build. Do it deliberately — demoting a `CITE-*` check to a warning means the wiki can assert things it cannot back up and still go green.
 
@@ -231,7 +278,7 @@ Everything the agent does in response to a finding is a proposal. The audit repo
 👉 What would you like to address?
 ```
 
-**Emoji key:** 🔎 audit · 📋 schema · 🔗 broken link · 📎 citation · 🧾 provenance · 🕸️ stale · 👻 orphan · 🛡️ canonical challenge · ❌ error · ⚠️ warning · ⚡ action items · 👉 awaiting input.
+**Emoji key:** 🔎 audit · 📋 schema · 🔗 broken link · 📎 citation · 🧾 provenance · 🕸️ stale · 👻 orphan · 🛡️ canonical challenge · 🔥 demand (`--demand` only) · ❌ error · ⚠️ warning · ⚡ action items · 👉 awaiting input.
 
 ## `--json`
 

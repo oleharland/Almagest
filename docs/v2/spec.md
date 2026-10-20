@@ -138,11 +138,16 @@ holds that token, not the person.
   id: '<manifest id>',                   // stable, see docs/manifest.md
   connector?: '<connector id>',           // kind: connector
   ref?: '<provider item id>',             // kind: connector
-  path?: 'brain/raw/foo.pdf',             // kind: local / remote
+  path?: 'brain/raw/foo.pdf',             // kind: local / remote; kind: connector → the snapshot path
   version?: '<provider revision / etag / updatedAt>',
   sha256?: '<hex>',                       // of the bytes the agent will read
   title?: 'Human label' }
 ```
+
+A `kind: connector` ref also carries `server`, `change` (`new` | `changed` |
+`reappeared`), `snapshot` (`commit` | `ephemeral`), `label`, `tier`, and
+optionally `commit` and `supersedes` (a v1 `kind: remote` manifest id) — see
+`docs/v2/connectors.md` → The SourceRef.
 
 ### Job (WS1 owns the lifecycle)
 
@@ -153,6 +158,7 @@ holds that token, not the person.
   trigger: 'watch' | 'schedule' | 'manual' | 'mcp' | 'hook' | 'decision' | 'feedback' | 'demand',
   requestedBy: Actor.id,
   proposalId?: 'prp_…',                   // revise / drop-page work on an existing proposal's branch
+  slug?: '<page slug>',                   // reverify: the page to re-check (WS5 enqueues with trigger 'demand')
   instructions?: 'free text for the agent (decision resolution, reviewer feedback)',
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked' | 'cancelled',
   attempts: 0, maxAttempts: 2,
@@ -232,11 +238,21 @@ proposal's branch with the chosen option's `effect` as `instructions`. A
 { id: 'evt_…', ts, channel: 'mcp' | 'web' | 'site' | 'cli',
   tool: 'search' | 'get_page' | 'ask' | …,
   actorId?: '<hashed unless telemetry.store_actor: plain>',
-  client?: 'claude.ai' | 'claude-code' | …, sessionId?,
+  client?: 'claude.ai' | 'claude-code' | …,
+  sessionId?: '<hashed unless telemetry.store_actor: plain>',
   query?: '<per telemetry.store_queries: plain | hashed | none>', queryHash?,
-  results: [{ slug, rank, score }], pagesRead: [slug],
-  answered: true | false | null, latencyMs }
+  queryTokens?: ['<normalised token>'],   // gap clustering; hashed when telemetry.store_tokens: hashed
+  queryHashed?: true, tokensHashed?: true,
+  results: [{ slug, rank, score }],       // top 10 by rank
+  pagesRead: [slug],
+  answered: true | false | null, latencyMs,
+  helpful?: true | false }                // tool: 'feedback' — the explicit demand signal
 ```
+
+Callers pass a partial (`{ channel, tool, actor | actorId, sessionId, query,
+results, pagesRead, answered, latencyMs, helpful? }`); `ctx.telemetry.record`
+fills `id` and `ts` and applies the privacy settings before anything is stored.
+Full field semantics: `docs/v2/telemetry.md`.
 
 ### AuditEntry (governance audit log — append-only)
 
@@ -291,8 +307,12 @@ ctx.ingest      .enqueue({ kind, source, trigger, requestedBy, proposalId?, inst
                 .get(id) .list(filter) .start() .stop()
 
 ctx.connectors  .list() → [{ id, mcp, recipe, schedule, lastSync }]
-                .sync(id, { since? }) → [SourceRef]          // fetch + snapshot + fingerprint
+                .sync(id, { since?, full?, dryRun? }) → [SourceRef]   // fetch + snapshot + fingerprint
+                .syncDetailed(id, opts) → { refs, unchanged, missing, errors, … }
                 .snapshotPath(sourceRef) → 'brain/raw/extracted/<connector>/<file>.txt'
+                .stagedPath(sourceRef) → '<abs>/.almagest/connector-snapshots/<connector>/<file>.txt'
+                .materialize(sourceRef, worktreeDir) → snapshotPath   // copy staged → worktree; throws if sha256 moved
+                .stop()                                               // close pooled MCP connections
 
 ctx.governance  .listProposals(filter) .getProposal(id)
                 .createFromJob(job, { worktree, branch, baseSha, headSha, audit, runReport }) → Proposal
@@ -303,16 +323,22 @@ ctx.governance  .listProposals(filter) .getProposal(id)
                 .resolveDecision(decId, actor, { optionId, note, channel })
                 .createConfirmation(prpId, onBehalfOf, action) → { url, code, expiresAt }   // chat channel
 
-ctx.demand      .get(slugs) → Map<slug, { score, rank, hot }>   // WS5 implements, WS3 consumes
+ctx.demand      .get(slugs) → Map<slug, { score, rank, hot }>   // WS5 implements, WS3 consumes; unknown → zeros
                 .hot() → [slug]
+                .top(n) → [{ slug, score, rank, hot, distinctSessions }]
+                .recompute() → { computedAt, population, hot, entries, changed }
 ctx.telemetry   .record(evtPartial) → void                       // never throws, never blocks the caller
-                .gaps({ limit }) → [{ cluster, queries, count, lastSeen }]
+                .gaps({ limit, since }) → [{ cluster, representative, tokens, queries, count,
+                                             distinctSessions, firstSeen, lastSeen, suggestion }]
+                .explain(slug) → { score, rank, hot, byTool, topContributors, trend, formula, … }
+                .recompute() .prune() .flush() .stats() .start() .stop()
 
 ctx.mcp         .serveStdio() .handleHttp(req, res)
+                .createServer({ human }) .search(query) .sweep() .close()   // in-process server, index, housekeeping
 
 ctx.snapshot    .load() → { sha, dir, pages, byId, known }   // core — main's pages, never the checkout's
                 .refresh({ fetch? }) → sha
-ctx.telemetry   .reverifyQueue() → [{ slug, title, score, lastVerified, overdueDays }]   // hot pages due a re-check
+ctx.telemetry   .reverifyQueue() → [{ slug, title, score, lastVerified, overdueDays, reason }]   // hot pages due a re-check
 ```
 
 **Proposals are upserted by branch.** `createFromJob` on a branch that already
@@ -385,16 +411,27 @@ governance:
     - when: { decision: canonical_conflict }
       require: { roles: [owner] }
 
+mcp:                               # WS4 — every key and its default: docs/v2/mcp.md
+  allow_url_fetch: false           # submit_source { url }, SSRF-guarded when on
+  builtin_oauth: true              # token mode: OAuth 2.1 front door for claude.ai
+  git_webhook_secret_env: ALMAGEST_GIT_WEBHOOK_SECRET
+
 telemetry:
   enabled: true
   store_queries: plain             # plain | hashed | none
   store_actor: hashed              # plain | hashed | none
+  store_tokens: plain              # plain | hashed — the normalised token set used to cluster gaps
   retention_days: 90
+  recompute_seconds: 300
   demand:
     half_life_days: 14
     hot_percentile: 90             # top 10% by score are hot …
     min_score: 3                   # … and must clear this floor
+    dedupe_minutes: 10             # one session × one page counts once per window
+    # weights: { get_page: 1.0, resource: 1.0, ask: 0.6, search: 0.3, feedback_helpful: 2, feedback_unhelpful: -1 }
   stale_after_days_hot: 30         # hot pages re-verify sooner (DEMAND-001)
+  auto_reverify: false             # true: enqueue `reverify` jobs for due hot pages, once per page per window
+  gaps: { similarity: 0.5, window_days: 30, min_count: 1 }
 ```
 
 ## Background ingest (WS1)
@@ -450,10 +487,12 @@ The service is an MCP **client**. For each connector it:
 2. **Lists** items changed since the stored cursor, via the recipe.
 3. **Fetches** each item and renders it to text with locator markers
    (`=== section: … ===`, `=== t hh:mm:ss ===` for transcripts, `=== row n ===`).
-4. Writes the snapshot to `brain/raw/extracted/<connector-id>/<slug>.txt` (in the
-   job's worktree, not on `main`) and fingerprints it — sha256 of the snapshot
-   bytes is the change detector. Provider `version` is an optimisation that lets
-   step 2 skip fetching; it is never trusted on its own.
+4. Stages the snapshot under `.almagest/connector-snapshots/<connector-id>/` and
+   fingerprints it — sha256 of every snapshot byte (header included; the header
+   holds nothing volatile) is the change detector. The runner copies it to
+   `brain/raw/extracted/<connector-id>/<slug>.txt` in the job's worktree with
+   `materialize()`, never on `main`. Provider `version` is an optimisation that
+   lets step 3 skip fetching; it is never trusted on its own.
 5. Returns a `SourceRef { kind: 'connector', … }` per new or changed item.
 
 Recipes (`server/src/connectors/recipes/<name>.yaml`) are declarative: which tool
@@ -465,9 +504,11 @@ works with zero config), `github`, `gitlab`, `google-drive`, `granola`, `linear`
 and drafts a recipe for a human to review.
 
 Manifest: a new `kind: connector` entry type — `connector`, `server`, `ref`,
-`version`, `sha256` (of the snapshot), `extracted` (the snapshot path),
-`extracted_sha256`. The audit's PROV and CITE-005 checks accept it (WS2 owns those
-changes in `tools/lib/checks.mjs` and `docs/manifest.md`).
+`version`, `sha256` (of the snapshot), `path` and `extracted` (both the snapshot
+path), `extracted_sha256` (same digest), optional `commit`, `snapshot`, `label`.
+The audit's PROV and CITE-005 checks accept it, and CITE-005 additionally
+re-hashes committed snapshots (WS2 owns those changes in `tools/lib/checks.mjs`
+and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
 
 ## Governance (WS3)
 
@@ -518,7 +559,8 @@ Tools (all read-only except where noted, all recorded via `ctx.telemetry.record`
 Resources: `almagest://page/{slug}`, `almagest://index`. Prompts: `answer-from-brain`.
 
 Transports: stdio (`almagest mcp`) for a local clone; Streamable HTTP at `/mcp`
-for remote use with no clone. HTTP auth: bearer token (solo) or OIDC JWT
+for remote use with no clone. `submit_source` enqueues with
+`requestedBy: 'agent:mcp:<client>'` and an additional `onBehalfOf: <human id>`. HTTP auth: bearer token (solo) or OIDC JWT
 validation (team/enterprise) with `/.well-known/oauth-protected-resource`
 metadata so MCP clients discover the IdP. With `service.git.remote` set, the
 service keeps its own clone under `.almagest/repo` and refreshes on an interval
@@ -543,6 +585,14 @@ and on `POST /hooks/git`.
   audit behaves exactly as v1.
 - Retention: `store.events.prune` daily per `retention_days`. Raw events never
   enter git.
+- **Explainability** — `ctx.telemetry.explain(slug)` returns the events and
+  weights behind a score (top contributors, counts per tool, deduped events, the
+  trend against the previous half-life window). Every demand effect — a stricter
+  approval, a re-verify entry, a DEMAND-* warning — is traceable to events.
+- HTTP (auth `any`): `GET /api/demand?top=N`, `GET /api/demand/:slug` (explain),
+  `GET /api/gaps`, `GET /api/reverify`. CLI: `almagest demand [--top N]`,
+  `almagest gaps`, `almagest reverify`. Long form, formula worked through,
+  privacy guidance: `docs/v2/telemetry.md`.
 
 ## Testing
 

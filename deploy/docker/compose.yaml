@@ -1,0 +1,23 @@
+# Enterprise-shaped local stack: the service plus Postgres.
+#   ALMAGEST_GIT_URL=… ALMAGEST_SECRET_KEY=… docker compose -f deploy/docker/compose.yaml up
+# Set `service.profile: enterprise` (or team) in the brain's brain.config.yaml;
+# DATABASE_URL below is what the enterprise profile's store.url expands.
+services:
+  almagest:
+    build: { context: ../.., dockerfile: deploy/docker/Dockerfile }
+    ports: ["4747:4747"]
+    environment:
+      ALMAGEST_GIT_URL: ${ALMAGEST_GIT_URL:?}
+      ALMAGEST_SECRET_KEY: ${ALMAGEST_SECRET_KEY:?}
+      ALMAGEST_TOKENS: ${ALMAGEST_TOKENS:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DATABASE_URL: postgres://almagest:almagest@db:5432/almagest
+    volumes: ["almagest-data:/data"]
+    depends_on: [db]
+  db:
+    image: postgres:17
+    environment: { POSTGRES_USER: almagest, POSTGRES_PASSWORD: almagest, POSTGRES_DB: almagest }
+    volumes: ["almagest-db:/var/lib/postgresql/data"]
+volumes:
+  almagest-data:
+  almagest-db:
