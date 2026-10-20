@@ -115,7 +115,7 @@ Almagest optimises for one thing — **trust in what the notes say** — and pay
 
 | | Obsidian + plugins | Logseq / Roam | NotebookLM | RAG over a vault (Khoj, Onyx) | Agent memory (mem0, Letta) | **Almagest** |
 |---|---|---|---|---|---|---|
-| Capture speed | **excellent** | **excellent** | good | n/a — reads what you have | **automatic** | **poor** by hand — ingest is a deliberate, reviewed operation. With the service, connectors pull new material on a schedule; it is still reviewed |
+| Capture speed | **excellent** | **excellent** | good | n/a — reads what you have | **automatic** | **good** with the service — connectors pull on their own, any chat submits a source in one message, a dropped file starts ingesting with no session open. It counts only once reviewed. By hand: poor, ingest is a deliberate session |
 | Mobile capture | **yes** | **yes** | **yes** | varies | **yes** — the service too: one process or container | **partial** — no capture app; with the service, any chat can submit a source, and review and approval work from a phone |
 | Scale | 100k+ notes | 100k+ notes | ~50 sources per notebook | **millions of chunks** | unbounded | thousands of pages; a flat wiki with keyword search — grep for the agent, ranked search over MCP — not a vector store |
 | Answers with citations | plugin-dependent | no | **yes**, to the uploaded source | **yes**, to the chunk | rarely | **yes**, to source + locator, and the citation is checked — from any MCP chat with the service |
