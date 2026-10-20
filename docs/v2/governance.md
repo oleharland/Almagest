@@ -31,6 +31,11 @@ to read a diff.
 If the passage can't be found, the card says so ("We couldn't find that spot
 in the source — check it by hand"). Treat that as a reason to look closer.
 
+Below the pages, **Other files** lists everything else the proposal adds or
+changes — the index, the manifest, the log, sidecars under `brain/raw/` — with
+its size and what it says: the first 40 lines of a new file, the added lines
+of a changed one. Approving the proposal approves these too.
+
 ### What you can do
 
 | Button | What happens |
@@ -232,12 +237,23 @@ These are code, not config. No rule, profile or flag changes them.
 11. **Only knowledge-base files.** The branch diff — checked when the proposal
     is built, again by the policy engine, and once more inside the merge on
     both the branch diff and the merge result right before main moves — may
-    only touch: `brain/wiki/<slug>.md` (no subfolders), `brain/raw/extracted/**`,
-    `brain/raw/processed/**` (text only), `brain/index.md`, the manifest,
-    `brain/log.md`, the challenges ledger and `brain/.index/*.tsv`. Dotfiles,
-    symlinks, executable files and everything else (tools/, server/, agent/,
-    brain.config.yaml, CLAUDE.md, .github/, .gitattributes …) block the
-    proposal for good, with an entry in the activity log.
+    only touch: `brain/wiki/<slug>.md` (no subfolders),
+    `brain/raw/extracted/**/*.txt` (sidecars and connector snapshots, nothing
+    else), `brain/raw/processed/**` (text only), `brain/index.md`, the
+    manifest, `brain/log.md`, the challenges ledger and `brain/.index/*.tsv`.
+    Dotfiles, symlinks, executable files and everything else (tools/, server/,
+    agent/, brain.config.yaml, .github/, .gitattributes …) block the proposal
+    for good, with an entry in the activity log. So does, **anywhere** in the
+    tree and in any letter case, a file an agent harness loads as
+    instructions — `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `AGENT.md`,
+    `GEMINI.md`, `SKILL.md`, `copilot-instructions.md`, `.cursorrules`,
+    `.windsurfrules`, `.clinerules`, any `*.mdc` — or anything under a
+    `.claude/`, `.codex/`, `.gemini/`, `.cursor/` or `.github/` directory: a
+    poisoned source must not leave instructions in `raw/` for the next
+    interactive session to obey. A wiki page can't take one of those names
+    either (`claude.md` is `CLAUDE.md` on a case-insensitive disk); give it a
+    longer slug. The runner's path guard uses the same matcher
+    (`governance/paths.mjs`), so such a run fails before it is committed.
 12. **A proposal with nothing left in it** (every page taken out) can't be
     approved; turn it down to close it.
 
@@ -417,7 +433,9 @@ approver at the time); `required.pages` (per-page requirements) and
 `canonical`, `fields` (frontmatter changes) and claims carry `excerptStatus`
 (`found` · `not-found` · `source-missing` · `unknown-source` · `no-citation`);
 `needsManualLook` + `preview` (a new page with no facts the inbox could pair
-with a source); plus `submitters`, `otherFiles`, `files` (every changed path
+with a source); plus `submitters`, `otherFiles` (each with `bytes`, `lines`,
+`binary`, and a `preview` of up to 40 lines — `previewOf: start` for a new
+file, `added` for the lines a change adds), `files` (every changed path
 with mode and binary flag), `outside` (paths outside the writable set),
 `revision`, `revisedBecause`, `conflictRevise`, `mergeError`, `feedback`,
 `rejection`, `supersededBy`.

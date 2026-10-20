@@ -9,30 +9,54 @@
  *
  * Writable:
  *   <brain>/wiki/<slug>.md          (each wiki dir from wiki-core WIKI_DIRS; no subdirectories)
- *   <brain>/raw/extracted/**        source sidecars and connector snapshots
+ *   <brain>/raw/extracted/**.txt    source sidecars and connector snapshots (`<name>.<ext>.txt`,
+ *                                   `<connector>/<slug>.txt`) — nothing but .txt
  *   <brain>/raw/processed/**        text only — never a binary
  *   <brain>/index.md, the manifest, <brain>/log.md, the challenges ledger
  *   <index_dir>/<name>.tsv          the derived index
  *
  * Never: a dotfile or dot-directory anywhere (.gitattributes, .github/ …), a
  * symlink, an executable bit, a submodule — and every path outside the list
- * (tools/, server/, agent/, brain.config.yaml, CLAUDE.md …).
+ * (tools/, server/, agent/, brain.config.yaml, CLAUDE.md …). Nor, anywhere,
+ * a file an agent harness loads as instructions (agentInstructionPath): a
+ * poisoned source must not be able to leave a CLAUDE.md in processed/ for the
+ * next interactive session to obey. The runner's path guard uses this same
+ * matcher, so the agent cannot write one in the first place.
  */
 import { WIKI_DIRS } from '../../../tools/lib/wiki-core.mjs';
 
 const strip = (p) => String(p || '').replace(/^\.?\/+/, '').replace(/\/+$/, '');
 
+/**
+ * Basenames agent harnesses read as instructions, lower-cased — compared
+ * case-insensitively, because on a case-insensitive file system `claude.md`
+ * is the CLAUDE.md a harness looks for. Plus Cursor's `*.mdc` rules and the
+ * config directories harnesses read whole.
+ */
+const AGENT_FILES = new Set(['claude.md', 'claude.local.md', 'agents.md', 'agent.md', 'gemini.md', 'skill.md',
+  '.cursorrules', '.windsurfrules', '.clinerules', 'copilot-instructions.md']);
+const AGENT_DIRS = new Set(['.claude', '.codex', '.gemini', '.cursor', '.github', '.clinerules', '.windsurf']);
+
+/** True when `file` (repo-relative) is, or sits inside, something an agent harness would load as instructions. */
+export function agentInstructionPath(file) {
+  const segments = String(file || '').toLowerCase().split('/');
+  const base = segments[segments.length - 1];
+  return AGENT_FILES.has(base) || base.endsWith('.mdc') || segments.slice(0, -1).some((s) => AGENT_DIRS.has(s));
+}
+
 export function writableMatcher({ brainDir = 'brain', manifestPath, challengesPath, indexDir, wikiDirs = WIKI_DIRS }) {
   const brain = strip(brainDir);
   const wikis = [...new Set([`${brain}/wiki`, ...wikiDirs.map((w) => strip(w.dir))])];
   const exact = new Set([`${brain}/index.md`, strip(manifestPath || `${brain}/manifest.yaml`), `${brain}/log.md`, strip(challengesPath || `${brain}/canonical-challenges.md`)]);
-  const trees = [`${brain}/raw/extracted/`, `${brain}/raw/processed/`];
+  const extracted = `${brain}/raw/extracted/`;
+  const processed = `${brain}/raw/processed/`;
   const index = strip(indexDir || `${brain}/.index`);
 
   return function allowed(file) {
     const p = String(file || '');
     const segments = p.split('/');
     if (!p || segments.some((s) => s === '' || s === '..')) return false;
+    if (agentInstructionPath(p)) return false;
     if (exact.has(p)) return true;
     if (p.startsWith(`${index}/`)) {
       const rest = p.slice(index.length + 1);
@@ -46,7 +70,8 @@ export function writableMatcher({ brainDir = 'brain', manifestPath, challengesPa
         return !rest.includes('/') && rest.endsWith('.md');
       }
     }
-    return trees.some((t) => p.startsWith(t));
+    if (p.startsWith(extracted)) return p.endsWith('.txt');
+    return p.startsWith(processed);
   };
 }
 
