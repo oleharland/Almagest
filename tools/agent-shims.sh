@@ -155,7 +155,7 @@ EOF
     cat <<'EOF'
 ## Harness contract
 
-`agent/contract.md` states what a harness must provide to run Almagest at all. Requirement 5 is a reviewer who merges: the agent commits to an `ingest/<source-slug>-<sha7>` branch and `main` moves only when a human merges a reviewed diff. Unattended ingest onto a branch is supported; an unattended merge to `main` is forbidden and there is no flag for it. Requirement 7 is Node 22+ for `tools/audit.mjs`, whose exit code gates the commit.
+`agent/contract.md` states what a harness must provide to run Almagest at all. Requirement 5 is a reviewer who merges: the agent commits to an `ingest/<source-slug>-<sha7>` branch and `main` moves only when a human merges a reviewed diff. Unattended ingest onto a branch is supported; an unattended merge to `main` is forbidden and there is no flag for it. Requirement 7 is Node 22+ for `tools/audit.mjs`, whose exit code gates the commit; the optional v2 service needs 22.13+.
 EOF
 }
 
