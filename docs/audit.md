@@ -112,6 +112,18 @@ These five are the drift detector for the three records that must agree: the wik
 
 `PROV-004` and `PROV-005` are the two directions of one drift and are deliberately not the same severity. An `index.md` row naming a page that does not exist **asserts something false** — a reader is sent to a page that isn't there. A page with no row asserts nothing; it is bookkeeping that has not caught up. Failing a build on the second would punish tidiness rather than truth, so it is a warning.
 
+#### Connector sources (`kind: connector`)
+
+A source fetched over MCP by the v2 service ([v2/connectors.md](v2/connectors.md)) is cited through its committed snapshot, `brain/raw/extracted/<connector-id>/<slug>.txt` — the same way a binary is cited through its sidecar, and found in the manifest the same way, by `extracted` path. Three things are specific to it:
+
+| Check | Connector behaviour |
+|---|---|
+| `CITE-005` | Besides the usual page-vs-manifest comparison, the committed snapshot is **re-hashed** and compared with `extracted_sha256`. The service fingerprinted those bytes when it captured them; a snapshot edited afterwards would leave page and manifest in agreement while every citation into it points at text the source never said. It is the only place the audit hashes a file, and it does so only for connector snapshots |
+| `PROV-001` | Unchanged for `snapshot: commit` — a missing snapshot is an error. For an entry with `snapshot: ephemeral` (the connector was configured not to commit snapshots) it is a **warning**, for the same reason as `extracted: none`: the citation is honestly unverifiable, not broken |
+| `PROV-003` | Also fires when the connector entry lacks `connector`, `ref` or `extracted` — without them nobody can re-sync the source |
+
+`tools/lib/__fixtures__/connector-clean/` and `connector-dirty/` prove each of these in `npm run selftest`.
+
 ### Canonical and staleness
 
 | ID | Detects | Severity |

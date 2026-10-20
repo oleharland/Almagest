@@ -145,6 +145,47 @@ console.log('\ndirty fixture — every check ID fires at its documented severity
   );
 }
 
+// ── connector sources (kind: connector) ──────────────────────────────────────
+//
+// Two more fixture brains, kept apart from clean/ and dirty/ so the v1
+// control stays exactly what it was. Their snapshots are real output of the
+// service's snapshot builder (server/src/connectors/snapshot-file.mjs).
+
+console.log('\nconnector fixtures — snapshots cite like sidecars, and drift is caught');
+{
+  const CONNECTOR_CLEAN = path.join(HERE, '__fixtures__', 'connector-clean');
+  const CONNECTOR_DIRTY = path.join(HERE, '__fixtures__', 'connector-dirty');
+
+  const clean = auditJson(CONNECTOR_CLEAN);
+  check('connector-clean exits 0', clean.code === 0, `got ${clean.code}`);
+  check('connector-clean has no findings', clean.json.findings.length === 0, JSON.stringify(clean.json.findings.map((f) => `${f.id}:${f.slug}`)));
+  check('connector-clean scans 2 pages', clean.json.pages === 2, `got ${clean.json.pages}`);
+
+  const dirty = auditJson(CONNECTOR_DIRTY);
+  const has = (id, severity, slug, text) =>
+    dirty.json.findings.some((f) => f.id === id && f.severity === severity && f.slug === slug && f.message.includes(text));
+  check('connector-dirty exits 1', dirty.code === 1, `got ${dirty.code}`);
+  check('CITE-005 catches a snapshot edited after the service fingerprinted it',
+    has('CITE-005', 'error', 'release-policy', 'but the service fingerprinted it as'));
+  check('CITE-005 catches a page citing an older snapshot digest',
+    has('CITE-005', 'error', 'release-cadence', 'disagrees with manifest 7c7be2da'));
+  check('PROV-003 catches a connector entry with no `ref`',
+    has('PROV-003', 'error', 'connector-drift', 'is missing `ref`'));
+  check('PROV-003 catches a snapshot no manifest entry records',
+    has('PROV-003', 'error', 'connector-drift', '`notion-orphan` is absent'));
+  check('PROV-001 is a warning for an ephemeral snapshot',
+    has('PROV-001', 'warning', 'connector-drift', 'ephemeral connector snapshot'));
+  check('PROV-001 is an error for a committed snapshot that is missing',
+    has('PROV-001', 'error', 'connector-drift', 'eng-42-deadbeef.txt'));
+  check('nothing else fires on connector-dirty', dirty.json.findings.length === 6,
+    JSON.stringify(dirty.json.findings.map((f) => `${f.id}:${f.slug}`)));
+
+  const snapshot = fs.readFileSync(path.join(CONNECTOR_CLEAN, 'brain/raw/extracted/team-calls/not-abc123def456gh-6eeedaeb.txt'), 'utf-8');
+  const cited = findCitations(fs.readFileSync(path.join(CONNECTOR_CLEAN, 'brain/wiki/release-cadence.md'), 'utf-8'));
+  check('a transcript snapshot carries the marker its citation names',
+    cited.some((c) => c.ok && c.locator === 't 00:00:00') && snapshot.includes('=== t 00:00:00 ==='));
+}
+
 // ── template-page exemption ──────────────────────────────────────────────────
 
 console.log('\ntemplate pages — exempt from provenance, and said so out loud');

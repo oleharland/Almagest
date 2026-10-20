@@ -5,7 +5,7 @@
  */
 const SURFACE = {
   ingest: ['enqueue', 'get', 'list', 'start', 'stop'],
-  connectors: ['list', 'sync', 'snapshotPath'],
+  connectors: ['list', 'sync', 'syncDetailed', 'snapshotPath', 'stagedPath', 'materialize', 'stop'],
   governance: [
     'listProposals', 'getProposal', 'createFromJob', 'approve', 'reject', 'rejectPage',
     'requestChanges', 'resolveDecision', 'createConfirmation',

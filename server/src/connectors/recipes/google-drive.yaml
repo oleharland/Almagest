@@ -1,0 +1,36 @@
+# Recipe: google-drive — Docs, Slides, Sheets and PDFs in Google Drive, read
+# as text by the Drive MCP server.
+#
+# verified: partial — tool names and input arguments (search_files: query,
+# pageSize, pageToken, excludeContentSnippets; read_file_content: fileId)
+# checked against the hosted Google Drive MCP's tools/list in 2026-10. The
+# shape of the results (`files[*]`, `nextPageToken`, `content`) is not
+# verified; the alternatives below cover the likely spellings. Run
+# `almagest connectors test <id>` once and adjust `list.items` if needed.
+#
+# select:
+#   query: "parentId = '1AbC…'"   Drive search query (see the tool's syntax); default "owner = 'me'"
+#
+# Incremental: `modifiedTime > since` is appended, so later syncs list only
+# what changed. `version` is modifiedTime, so an unchanged file is not re-read.
+name: google-drive
+description: Files matching a Drive search, as text.
+list:
+  tool: search_files
+  args:
+    query: "({{select.query | default:owner = 'me'}}) and modifiedTime > '{{since | default:1970-01-01T00:00:00Z}}'"
+    pageSize: 100
+    pageToken: "{{cursor}}"
+    excludeContentSnippets: true
+  items: "files[*] | results[*] | items[*] | $[*]"
+  ref: "id | fileId"
+  version: "modifiedTime | modified_time | updatedAt"
+  title: "title | name"
+  mime: "mimeType | mime_type"
+  next_cursor: "nextPageToken | next_page_token"
+fetch:
+  tool: read_file_content
+  args:
+    fileId: "{{item.ref}}"
+  text: "content | text | $"
+  render: markdown

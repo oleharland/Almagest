@@ -72,6 +72,7 @@ export async function createApp(options = {}) {
     async stop() {
       await ctx.ingest.stop?.();
       await ctx.telemetry.stop?.();
+      await ctx.connectors.stop?.();
       if (server) await new Promise((r) => server.close(r));
       await ctx.bus.drain();
       await ctx.store.close();

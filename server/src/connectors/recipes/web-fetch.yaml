@@ -1,0 +1,28 @@
+# Recipe: web-fetch — a fixed list of web pages, via the reference `fetch`
+# MCP server (mcp-server-fetch: `uvx mcp-server-fetch`), which converts HTML
+# to markdown.
+#
+# verified: no — written against the reference server's single tool `fetch`
+# (url, max_length, raw); result shape is plain text content.
+#
+# There is no lister: the items are the URLs in config (`list.static`). Pages
+# have no version either, so every sync re-fetches and the sha256 of the
+# rendered snapshot alone decides whether anything changed — which is exactly
+# the rule (fingerprint, don't guess).
+#
+# select:
+#   urls: ["https://example.com/pricing"]
+#   max_length: 100000
+name: web-fetch
+description: Fixed URLs, fetched and converted to markdown.
+list:
+  static: "{{select.urls}}"
+  ref: "$"
+  title: "$"
+fetch:
+  tool: fetch
+  args:
+    url: "{{item.ref}}"
+    max_length: "{{select.max_length | default:100000}}"
+  text: "$"
+  render: markdown

@@ -138,11 +138,16 @@ holds that token, not the person.
   id: '<manifest id>',                   // stable, see docs/manifest.md
   connector?: '<connector id>',           // kind: connector
   ref?: '<provider item id>',             // kind: connector
-  path?: 'brain/raw/foo.pdf',             // kind: local / remote
+  path?: 'brain/raw/foo.pdf',             // kind: local / remote; kind: connector → the snapshot path
   version?: '<provider revision / etag / updatedAt>',
   sha256?: '<hex>',                       // of the bytes the agent will read
   title?: 'Human label' }
 ```
+
+A `kind: connector` ref also carries `server`, `change` (`new` | `changed` |
+`reappeared`), `snapshot` (`commit` | `ephemeral`), `label`, `tier`, and
+optionally `commit` and `supersedes` (a v1 `kind: remote` manifest id) — see
+`docs/v2/connectors.md` → The SourceRef.
 
 ### Job (WS1 owns the lifecycle)
 
@@ -291,8 +296,12 @@ ctx.ingest      .enqueue({ kind, source, trigger, requestedBy, proposalId?, inst
                 .get(id) .list(filter) .start() .stop()
 
 ctx.connectors  .list() → [{ id, mcp, recipe, schedule, lastSync }]
-                .sync(id, { since? }) → [SourceRef]          // fetch + snapshot + fingerprint
+                .sync(id, { since?, full?, dryRun? }) → [SourceRef]   // fetch + snapshot + fingerprint
+                .syncDetailed(id, opts) → { refs, unchanged, missing, errors, … }
                 .snapshotPath(sourceRef) → 'brain/raw/extracted/<connector>/<file>.txt'
+                .stagedPath(sourceRef) → '<abs>/.almagest/connector-snapshots/<connector>/<file>.txt'
+                .materialize(sourceRef, worktreeDir) → snapshotPath   // copy staged → worktree; throws if sha256 moved
+                .stop()                                               // close pooled MCP connections
 
 ctx.governance  .listProposals(filter) .getProposal(id)
                 .createFromJob(job, { worktree, branch, baseSha, headSha, audit, runReport }) → Proposal
@@ -450,10 +459,12 @@ The service is an MCP **client**. For each connector it:
 2. **Lists** items changed since the stored cursor, via the recipe.
 3. **Fetches** each item and renders it to text with locator markers
    (`=== section: … ===`, `=== t hh:mm:ss ===` for transcripts, `=== row n ===`).
-4. Writes the snapshot to `brain/raw/extracted/<connector-id>/<slug>.txt` (in the
-   job's worktree, not on `main`) and fingerprints it — sha256 of the snapshot
-   bytes is the change detector. Provider `version` is an optimisation that lets
-   step 2 skip fetching; it is never trusted on its own.
+4. Stages the snapshot under `.almagest/connector-snapshots/<connector-id>/` and
+   fingerprints it — sha256 of every snapshot byte (header included; the header
+   holds nothing volatile) is the change detector. The runner copies it to
+   `brain/raw/extracted/<connector-id>/<slug>.txt` in the job's worktree with
+   `materialize()`, never on `main`. Provider `version` is an optimisation that
+   lets step 3 skip fetching; it is never trusted on its own.
 5. Returns a `SourceRef { kind: 'connector', … }` per new or changed item.
 
 Recipes (`server/src/connectors/recipes/<name>.yaml`) are declarative: which tool
@@ -465,9 +476,11 @@ works with zero config), `github`, `gitlab`, `google-drive`, `granola`, `linear`
 and drafts a recipe for a human to review.
 
 Manifest: a new `kind: connector` entry type — `connector`, `server`, `ref`,
-`version`, `sha256` (of the snapshot), `extracted` (the snapshot path),
-`extracted_sha256`. The audit's PROV and CITE-005 checks accept it (WS2 owns those
-changes in `tools/lib/checks.mjs` and `docs/manifest.md`).
+`version`, `sha256` (of the snapshot), `path` and `extracted` (both the snapshot
+path), `extracted_sha256` (same digest), optional `commit`, `snapshot`, `label`.
+The audit's PROV and CITE-005 checks accept it, and CITE-005 additionally
+re-hashes committed snapshots (WS2 owns those changes in `tools/lib/checks.mjs`
+and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
 
 ## Governance (WS3)
 

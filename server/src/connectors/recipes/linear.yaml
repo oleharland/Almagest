@@ -1,0 +1,41 @@
+# Recipe: linear — Linear issues, one snapshot per issue.
+#
+# verified: partial — tool names and input arguments (list_issues: team,
+# project, label, updatedAt, orderBy, limit, cursor; get_issue: id) checked
+# against Linear's hosted MCP (mcp.linear.app) tools/list in 2026-10. The
+# result shape (`issues[*]`, `hasNextPage`, `cursor`) is not verified; the
+# alternatives below cover the likely spellings.
+#
+# Linear documents use the same pattern with list_documents / get_document —
+# override `list.tool` / `fetch.tool` in config (docs/v2/connectors.md).
+#
+# select (all optional, combined):
+#   team: "Engineering"     team name or id
+#   project: "Q3 Launch"    project name, id or slug
+#   label: "spec"           label name or id
+name: linear
+description: Linear issues, incrementally by updatedAt.
+list:
+  tool: list_issues
+  args:
+    team: "{{select.team}}"
+    project: "{{select.project}}"
+    label: "{{select.label}}"
+    updatedAt: "{{since}}"
+    orderBy: updatedAt
+    limit: 100
+    cursor: "{{cursor}}"
+  items: "issues[*] | nodes[*] | results[*] | $[*]"
+  ref: id
+  version: "updatedAt | updated_at"
+  title: "title"
+  has_more: "hasNextPage | pageInfo.hasNextPage"
+  next_cursor: "cursor | nextCursor | pageInfo.endCursor"
+fetch:
+  tool: get_issue
+  args:
+    id: "{{item.ref}}"
+  render: json-to-markdown
+  render_options:
+    title: "identifier | title"
+    body: [description]
