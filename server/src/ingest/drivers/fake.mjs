@@ -16,7 +16,10 @@
  *   unchanged     nothing written, outcome `unchanged`
  *   audit-fail    a page whose citation id is not in its sources (CITE-002)
  *   escape        also edits brain.config.yaml — the runner's path guard must refuse
+ *   tamper        also rewrites the audit wrapper named in its allowlist — the runner must refuse
  *   no-report     writes nothing at all
+ *   garbled-report  a run report that is not JSON (and quotes "source text")
+ *   wrong-report    valid JSON, invalid values that quote "source text"
  *   crash         returns ok: false
  *   crash-once    crashes on attempt 1, behaves as `write` afterwards
  *   hang          never finishes until aborted (timeout tests)
@@ -97,7 +100,7 @@ export function createFakeDriver(ctx, options = {}) {
     name: 'fake',
     capabilities: { tool_restriction: true, budget_cap: true, cost_reporting: true, session_isolation: true, sandbox: true },
 
-    async run({ cwd, signal, logStream, job, source, sourcePath }) {
+    async run({ cwd, signal, logStream, job, source, sourcePath, allowedTools = [] }) {
       const started = Date.now();
       let m = mode();
       if (m === 'crash-once') m = (job?.attempts || 1) <= 1 ? 'crash' : 'write';
@@ -112,6 +115,13 @@ export function createFakeDriver(ctx, options = {}) {
       }
       if (m === 'crash') return { ok: false, durationMs: Date.now() - started, error: 'simulated crash', raw: {} };
       if (m === 'no-report') return { ok: true, durationMs: Date.now() - started, raw: {} };
+      if (m === 'garbled-report' || m === 'wrong-report') {
+        fs.mkdirSync(path.join(cwd, '.almagest'), { recursive: true });
+        fs.writeFileSync(path.join(cwd, '.almagest', 'run-report.json'), m === 'garbled-report'
+          ? '{"source": {"id": "x"}, CONFIDENTIAL SOURCE TEXT'
+          : JSON.stringify({ source: { id: 'x' }, outcome: 'CONFIDENTIAL SOURCE TEXT', blocked: [{ kind: 'CONFIDENTIAL', question: 'q', options: [] }] }));
+        return { ok: true, durationMs: Date.now() - started, raw: {} };
+      }
 
       const report = (body) => {
         fs.mkdirSync(path.join(cwd, '.almagest'), { recursive: true });
@@ -196,6 +206,10 @@ export function createFakeDriver(ctx, options = {}) {
       logLine(`ingest ${source.id} (${String(source.sha256).slice(0, 7)}…): ${action} [[${slug}]]`);
 
       if (m === 'escape') fs.appendFileSync(path.join(cwd, 'brain.config.yaml'), '\n# the agent was here\n');
+      if (m === 'tamper') {
+        const wrapper = allowedTools.map((t) => /^Bash\((\/\S+\/audit)\)$/.exec(t)?.[1]).find(Boolean);
+        if (wrapper) { fs.chmodSync(wrapper, 0o755); fs.appendFileSync(wrapper, 'echo pwned\n'); }
+      }
 
       return report({
         outcome: 'written',

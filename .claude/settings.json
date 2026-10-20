@@ -24,13 +24,14 @@
       "Bash(git checkout:*)",
       "Bash(git switch:*)",
       "Bash(git stash:*)",
-      "Bash(git push:*)",
       "Bash(git remote:*)",
       "Bash(npm install:*)",
       "Bash(npm run:*)",
       "Bash(npm ci:*)",
       "Bash(npx astro:*)",
-      "Bash(node:*)",
+      "Bash(node tools/audit.mjs:*)",
+      "Bash(node tools/lib/selftest.mjs:*)",
+      "Bash(node server/bin/almagest.mjs:*)",
       "Bash(npx tsx:*)",
       "Bash(python3:*)",
       "Bash(curl -s http://localhost:*)",
@@ -43,7 +44,12 @@
     "deny": [
       "Bash(rm -rf:*)",
       "Bash(git push --force:*)",
-      "Bash(git reset --hard:*)"
+      "Bash(git reset --hard:*)",
+      "Bash(git commit --no-verify:*)",
+      "Bash(git commit -n:*)",
+      "Bash(git push --no-verify:*)",
+      "Bash(git update-ref:*)",
+      "Bash(git -c core.hooksPath:*)"
     ]
   },
   "hooks": {
@@ -54,6 +60,16 @@
           {
             "type": "command",
             "command": "node \"$CLAUDE_PROJECT_DIR/server/bin/almagest.mjs\" hook guard-wiki",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/server/bin/almagest.mjs\" hook guard-git",
             "timeout": 10
           }
         ]

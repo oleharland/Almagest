@@ -110,7 +110,7 @@ export function buildPrompt({ job, source, placed, branch, proposal, auditComman
     '',
     `${allowedTools.map((t) => `\`${t}\``).join(', ')}. Run each shell command on its own — pipes and \`&&\` chains into other programs are denied. Anything else is denied without a prompt.`,
     '',
-    `Self-check before you finish: \`${auditCommand}\`. The runner runs the same audit again after you; exit 1 there fails the whole job.`,
+    `Self-check before you finish: run \`${auditCommand}\` (and \`${auditCommand} index\` to regenerate brain/.index/), exactly as written — it takes no other arguments and already points at this worktree. Do not run tools/audit.mjs directly; that is denied. The runner runs the audit again after you; exit 1 there fails the whole job.`,
     'The runner also moves the original from the drop folder to `processed/` after you finish — record the `processed/` path in manifest.yaml and index.md as the rules say, but you need not move the file yourself.',
     '',
     '## Finish',

@@ -4,7 +4,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
 
-import { AUDIT_SCRIPT } from '../../src/ingest/audit.mjs';
 import { allowedTools, createClaudeCodeDriver } from '../../src/ingest/drivers/claude-code.mjs';
 import { createShellDriver } from '../../src/ingest/drivers/shell.mjs';
 import { buildPrompt, SYSTEM_PROMPT } from '../../src/ingest/prompt.mjs';
@@ -50,7 +49,7 @@ describe('claude-code driver', () => {
     try {
       const ctx = ctxFor({ extra_tools: ['Bash(pdftotext:*)'] });
       const drv = createClaudeCodeDriver(ctx, { cli });
-      const res = await drv.run({ cwd: dir, prompt: 'PROMPT', systemPrompt: 'SYS', allowedTools: allowedTools(ctx.config), model: 'opus', budgetUsd: 5, signal: new AbortController().signal });
+      const res = await drv.run({ cwd: dir, prompt: 'PROMPT', systemPrompt: 'SYS', allowedTools: allowedTools(ctx.config, { auditWrapper: '/state/runner/job_1/audit' }), model: 'opus', budgetUsd: 5, signal: new AbortController().signal });
       assert.equal(res.ok, true);
       assert.equal(res.costUsd, 0.12);
 
@@ -69,7 +68,10 @@ describe('claude-code driver', () => {
 
       const allow = after('--allowedTools').split(',');
       assert.ok(allow.includes('Bash(shasum:*)'));
-      assert.ok(allow.includes(`Bash(node ${AUDIT_SCRIPT}:*)`));
+      assert.ok(allow.includes('Bash(/state/runner/job_1/audit)'));
+      assert.ok(allow.includes('Bash(/state/runner/job_1/audit index)'));
+      assert.ok(!allow.some((a) => /audit\.mjs/.test(a)), 'the raw audit script, which takes --repo/--index-dir, is not allowlisted');
+      assert.ok(!allow.some((a) => /audit.*:\*/.test(a)), 'the wrapper takes no arguments');
       assert.ok(allow.includes('Bash(pdftotext:*)'), 'ingest.extra_tools');
       assert.ok(!allow.some((a) => /git|curl|WebFetch|mcp__/i.test(a)), 'no git, no network, no MCP');
       assert.match(after('--disallowedTools'), /Bash\(git:\*\)/);

@@ -12,8 +12,9 @@
  *                          the built-in set, nothing else — no WebFetch,
  *                          WebSearch, Task, notebooks, browser
  *   --allowedTools …       what runs without asking: the file tools, and Bash
- *                          ONLY for `shasum` / `sha256sum` / `wc` and the
- *                          service's own audit script, plus `ingest.extra_tools`
+ *                          ONLY for `shasum` / `sha256sum` / `wc` and the two
+ *                          exact audit-wrapper commands (audit.mjs →
+ *                          writeAuditWrapper), plus `ingest.extra_tools`
  *   --permission-mode dontAsk
  *   --permission-prompts none
  *                          anything not allowlisted is denied, not queued for
@@ -37,7 +38,6 @@
  */
 import { execFile } from 'node:child_process';
 
-import { AUDIT_SCRIPT } from '../audit.mjs';
 import { agentEnv, lastJsonObject, runProcess } from './proc.mjs';
 
 /** Flags whose absence means the sandbox does not hold. */
@@ -48,12 +48,16 @@ const OPTIONAL = ['--permission-prompts', '--safe-mode', '--disable-slash-comman
 export const BUILTIN_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'];
 const DENIED = ['WebFetch', 'WebSearch', 'Bash(git:*)', 'Bash(curl:*)', 'Bash(wget:*)', 'Bash(ssh:*)', 'Bash(scp:*)', 'Bash(nc:*)'];
 
-/** The allowlist, shared with the prompt so the agent is told exactly what it has. */
-export function allowedTools(config) {
+/**
+ * The allowlist, shared with the prompt so the agent is told exactly what it
+ * has. The audit is reachable only as the two EXACT wrapper commands — no
+ * `:*`, so no arguments, no `$(…)`, nothing appended.
+ */
+export function allowedTools(config, { auditWrapper } = {}) {
   return [
     'Read', 'Write', 'Edit', 'Glob', 'Grep',
     'Bash(shasum:*)', 'Bash(sha256sum:*)', 'Bash(wc:*)',
-    `Bash(node ${AUDIT_SCRIPT}:*)`,
+    ...(auditWrapper ? [`Bash(${auditWrapper})`, `Bash(${auditWrapper} index)`] : []),
     ...(config.ingest.extra_tools || []).map(String),
   ];
 }
@@ -109,7 +113,9 @@ export function createClaudeCodeDriver(ctx, options = {}) {
         ok: Boolean(ok),
         costUsd: typeof envelope?.total_cost_usd === 'number' ? envelope.total_cost_usd : undefined,
         durationMs: res.durationMs,
-        error: ok ? undefined : (res.aborted ? 'aborted' : envelope?.subtype || envelope?.result?.slice?.(0, 500) || `exit ${res.code}${res.signal ? ` (${res.signal})` : ''}`),
+        // The subtype or exit code only: the model's `result` text can quote
+        // source content, and job.error is readable by any API caller.
+        error: ok ? undefined : (res.aborted ? 'aborted' : `${envelope?.subtype ? `${envelope.subtype}, ` : ''}exit ${res.code}${res.signal ? ` (${res.signal})` : ''}`),
         raw: envelope || { stdout: res.stdout.slice(-4000), code: res.code },
       };
     },
