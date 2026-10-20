@@ -149,7 +149,7 @@ export function loadServiceConfig(repoRoot, options = {}) {
     deepMerge(
       BASE,
       PROFILE_DEFAULTS[profile],
-      { service: raw.service, ingest: raw.ingest, governance: raw.governance, telemetry: raw.telemetry },
+      { service: raw.service, ingest: raw.ingest, governance: raw.governance, telemetry: raw.telemetry, mcp: raw.mcp },
       overrides,
     ),
     env,
@@ -181,6 +181,7 @@ export function loadServiceConfig(repoRoot, options = {}) {
     ingest: merged.ingest,
     governance: merged.governance,
     telemetry: merged.telemetry,
+    mcp: merged.mcp || {},           // defaults live in server/src/mcp/config.mjs
     sources: { localPath: String(sources.local?.path || 'brain/raw'), connectors },
     agent: raw.agent || {},
     paths: {

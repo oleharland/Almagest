@@ -325,6 +325,7 @@ ctx.telemetry   .record(evtPartial) → void                       // never thro
                 .recompute() .prune() .flush() .stats() .start() .stop()
 
 ctx.mcp         .serveStdio() .handleHttp(req, res)
+                .createServer({ human }) .search(query) .sweep() .close()   // in-process server, index, housekeeping
 
 ctx.snapshot    .load() → { sha, dir, pages, byId, known }   // core — main's pages, never the checkout's
                 .refresh({ fetch? }) → sha
@@ -400,6 +401,11 @@ governance:
       require: { approvals: 1, per_page: true }
     - when: { decision: canonical_conflict }
       require: { roles: [owner] }
+
+mcp:                               # WS4 — every key and its default: docs/v2/mcp.md
+  allow_url_fetch: false           # submit_source { url }, SSRF-guarded when on
+  builtin_oauth: true              # token mode: OAuth 2.1 front door for claude.ai
+  git_webhook_secret_env: ALMAGEST_GIT_WEBHOOK_SECRET
 
 telemetry:
   enabled: true
@@ -540,7 +546,8 @@ Tools (all read-only except where noted, all recorded via `ctx.telemetry.record`
 Resources: `almagest://page/{slug}`, `almagest://index`. Prompts: `answer-from-brain`.
 
 Transports: stdio (`almagest mcp`) for a local clone; Streamable HTTP at `/mcp`
-for remote use with no clone. HTTP auth: bearer token (solo) or OIDC JWT
+for remote use with no clone. `submit_source` enqueues with
+`requestedBy: 'agent:mcp:<client>'` and an additional `onBehalfOf: <human id>`. HTTP auth: bearer token (solo) or OIDC JWT
 validation (team/enterprise) with `/.well-known/oauth-protected-resource`
 metadata so MCP clients discover the IdP. With `service.git.remote` set, the
 service keeps its own clone under `.almagest/repo` and refreshes on an interval
