@@ -91,7 +91,11 @@ page “Pricing”."*
 ### Profiles
 
 `service.profile` in `brain.config.yaml` picks defaults; every key can be
-overridden.
+overridden, with one exception: `enterprise` requires single sign-on, so
+`service.auth.provider` must be `oidc` and the service refuses to start
+otherwise. Use `team` if you need token sign-in. The approval rules in the
+table are the profile's own rules; your `governance.rules` are added to them
+(see [Approval rules](#approval-rules)).
 
 | | `solo` | `team` | `enterprise` |
 |---|---|---|---|
@@ -144,6 +148,7 @@ Roles: `viewer` (look only), `contributor`, `reviewer`, `owner`, `admin`. Only
 governance:
   separation_of_duties: true        # whoever sent a proposal in can't approve it
   require_sso_for_approval: false   # true: only OIDC-signed-in people approve
+  inherit_profile_rules: true       # default; false drops the profile's rules (see below)
   rules:                            # every matching rule adds; requirements combine by max / union
     - when: { hot: true }
       require: { approvals: 2, per_page: true }
@@ -181,6 +186,20 @@ An empty `when: {}` matches every proposal.
 | `teams: [...]` | at least one approver is in one of these teams |
 | `owner_team: true` | at least one approver of the page is in the page's `owner` team; a page without an owner needs someone with the `owner` role |
 | `distinct_teams: n` | approvers cover n different teams, each by a different person |
+
+**Your rules add to the profile's.** The rules that take effect are the
+profile's rules (the Profiles table above) followed by yours. A rule can only
+raise a requirement, because requirements combine by max and union, so adding
+yours can never weaken the profile. An `enterprise` brain that adds one
+`label: legal` rule keeps the hot-page rule (2 approvals per page, one from the
+owner team) and `canonical_conflict → owner`. Listing a profile rule again is
+harmless.
+
+To replace the profile's rules with only your own, set
+`inherit_profile_rules: false`. The service then logs a warning at startup, and
+`doctor` prints it, naming each rule that was dropped. The built-in minimum in
+[What cannot be configured away](#what-cannot-be-configured-away) still
+applies.
 
 A rule with a page condition and no `per_page`/`owner_team` raises the bar for
 the whole proposal ("touches a curated page → 2 approvals"). Roles named by a

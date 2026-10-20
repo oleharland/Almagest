@@ -17,7 +17,7 @@
  *       roles_claim: realm_access.roles               # dotted path; array or space/comma string
  *       teams_claim: groups
  *       role_map: { brain-owners: owner }             # IdP value → Almagest role (optional)
- *       default_role: viewer                          # when no claim maps to a role
+ *       default_roles: [viewer]                       # when no claim maps to a role
  *       jwks_uri: …                                   # optional; skips discovery
  *       clock_skew_seconds: 60
  *
