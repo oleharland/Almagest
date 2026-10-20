@@ -172,7 +172,9 @@ One code path, three profiles — `service.profile` in `brain.config.yaml`:
 
 ```bash
 npm install
-ALMAGEST_TOKENS="me:owner:$(openssl rand -hex 16)" ALMAGEST_SECRET_KEY=$(openssl rand -hex 32) npm run serve
+export ALMAGEST_SECRET_KEY=$(openssl rand -hex 32)
+export TOKEN=$(openssl rand -hex 16) && echo "your inbox token: $TOKEN"
+ALMAGEST_TOKENS="me:owner:$TOKEN" npm run serve
 # inbox:  http://127.0.0.1:4747/inbox     MCP:  http://127.0.0.1:4747/mcp     or:  node server/bin/almagest.mjs mcp
 ```
 
