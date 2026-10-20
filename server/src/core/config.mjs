@@ -155,6 +155,11 @@ export function loadServiceConfig(repoRoot, options = {}) {
     env,
   );
   merged.service.profile = profile;
+  // Container platforms hand the listen address over in the environment (PORT
+  // on Fly, Railway, Cloud Run); it wins over the committed config.
+  if (env.ALMAGEST_HTTP_HOST) merged.service.http.host = env.ALMAGEST_HTTP_HOST;
+  if (env.ALMAGEST_PORT || env.PORT) merged.service.http.port = Number(env.ALMAGEST_PORT || env.PORT);
+  if (env.ALMAGEST_BASE_URL) merged.service.http.base_url = env.ALMAGEST_BASE_URL;
   if (!merged.service.http.base_url) {
     merged.service.http.base_url = `http://${merged.service.http.host}:${merged.service.http.port}`;
   }
