@@ -65,7 +65,7 @@ server/                       its own package, like site/ — plain ESM .mjs + J
   bin/almagest.mjs            CLI: serve · ingestd · mcp · hook <name> · connectors <cmd> · doctor
   src/
     app.mjs                   composition root: builds ctx, calls each module's create(ctx)
-    core/                     Phase 0 — shared contracts. Change only with a spec change.
+    core/                     shared contracts. Change only with a spec change.
       config.mjs              v2 config sections + profile defaults (wraps tools/lib/config.mjs)
       schemas.mjs             entity shapes, enums, validators, id generation
       store/index.mjs         Store interface + driver selection
@@ -422,11 +422,11 @@ governance:
     - kind: web                    # built in, always on; the one surface that shows full context
     - kind: mcp                    # list/explain proposals from chat; approval via confirmation link
     # - kind: slack   { webhook_env: SLACK_WEBHOOK_URL, signing_secret_env: SLACK_SIGNING_SECRET }
-    # - kind: email   { smtp_url_env: SMTP_URL, from: "almagest@acme.com", to: [...] }
+    # - kind: email   { from: "almagest@acme.com", transport: http, http: { url: https://api.resend.com/emails, token_env: RESEND_API_KEY } }   # or transport: sendmail
     # - kind: github-pr { repo: acme/brain, token_env: GITHUB_TOKEN }
   separation_of_duties: false      # profile default
   require_sso_for_approval: false  # enterprise: email/Slack links still demand an SSO session
-  rules:                           # first match adds requirements; requirements combine by max
+  rules:                           # every matching rule adds requirements; they combine by max / union
     - when: { hot: true }
       require: { approvals: 1, per_page: true }
     - when: { decision: canonical_conflict }
@@ -500,7 +500,8 @@ Hooks (`bin/almagest.mjs hook <name>`, all fast, none needs the server running):
 |---|---|---|
 | `guard-wiki` | PreToolUse `Write\|Edit\|MultiEdit` | exit 2 (block) when the target is under `brain/wiki/` and the current branch is `main` — the mechanical half of non-negotiable 1 |
 | `enqueue` | PostToolUse `Write` | target under `brain/raw/` → POST `/api/jobs`, or spool to `.almagest/spool/` when the server is down |
-| `status` | SessionStart | print open proposals and decisions as context |
+| `status` | SessionStart | print open proposals and decisions as context (needs `ALMAGEST_TOKEN`; never fails the session) |
+| `guard-git` | PreToolUse `Bash` | exit 2 when a shell command would put wiki changes on `main` (commit, merge, cherry-pick, stash, plain file writers) or skip commit hooks (`--no-verify`, `-c core.hooksPath`) |
 
 Plus `tools/hooks/pre-commit` — the harness-agnostic git hook (audit + main guard).
 Plus `deploy/launchd/` and `deploy/systemd/` to keep `almagest serve` running.
@@ -542,15 +543,22 @@ and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
   sides with `wiki-core`, compute claim-level changes and source excerpts, attach
   demand from `ctx.demand`, compute `required` from policy.
 - **Policy engine** — profile defaults + `governance.rules`. Built-in, not
-  configurable: `approvals >= 1` from a human; agents cannot approve; open
-  decisions block merge; audit exit 1 blocks merge; canonical pages are never
-  modified by a proposal.
+  configurable: `approvals >= 1` from a human at the current `headSha`; agents
+  cannot approve; every review action needs a browser session + CSRF (or a
+  signed Slack / GitHub request) — bearer tokens are read-only; one person
+  counts once (identity registry, by email); open decisions block merge; audit
+  exit 1 blocks merge; canonical pages are never modified by a proposal; files
+  outside the knowledge-base paths (`governance/paths.mjs`) block merge. See
+  [security.md](security.md).
 - **Merge** — `git merge-tree --write-tree main <branch>` → `commit-tree` with
   two parents, author = approving actor, committer = `svc:governance` →
   re-audit the merge tree → move `main` by compare-and-swap (`update-ref` with
   the old value), or `merge --ff-only` inside a worktree that has `main` checked
-  out. A conflict marks the proposal `conflicted` and enqueues a `revise` job.
-  `log.md` gets the approval line. `push: true` pushes `main`.
+  out. Bookkeeping files merge structurally (`governance/bookkeeping.mjs`:
+  manifest `sources[]` by id, table rows with placeholder rows dropped); a real
+  conflict enqueues a `revise` job, capped per proposal, after which it is
+  `conflicted` and needs a person. `log.md` gets the approval line. `push: true`
+  pushes `main`.
 - **Channels** (`governance/channels/<kind>.mjs`, interface
   `{ kind, notify(busEvent), routes?(http), canApprove }`):
   - `web` — the review inbox, server-rendered HTML at `/inbox`. Queue ordered by
@@ -559,13 +567,16 @@ and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
     changes. Also `/inbox/reverify` and `/inbox/gaps` (from telemetry) and
     `/inbox/activity` (the audit log).
   - `mcp` — chat can list and explain proposals and ask to approve; the service
-    answers with a confirmation link/code that a human must open in an
-    authenticated web session. The chat never approves.
-  - `slack` — notification with buttons; interactive endpoint verifies the
-    Slack signature and maps the Slack user to an Actor by email.
-  - `email` — digest with signed, single-use, expiring links into the web inbox.
+    answers with a confirmation link that opens the full review page in an
+    authenticated web session (no one-click button). The chat never approves.
+  - `slack` — notification with buttons carrying the headSha; the interactive
+    endpoint verifies the Slack signature and resolves the Slack user to a known
+    person by email. With `require_sso_for_approval`, buttons only link.
+  - `email` — digest with signed, single-use, expiring (24 h) links into the
+    web inbox; `sendmail` or an HTTPS mail API, no SMTP.
   - `github-pr` — the v1 workflow: push the branch, open a PR, treat a merge
-    webhook as the approval of the GitHub user who merged.
+    webhook as the approval of the GitHub user who merged — only when the merged
+    head equals the reviewed `headSha`.
 
 ## Almagest MCP server
 Tools (all read-only except where noted, all recorded via `ctx.telemetry.record`):
@@ -588,8 +599,10 @@ for remote use with no clone. `submit_source` enqueues with
 `requestedBy: 'agent:mcp:<client>'` and an additional `onBehalfOf: <human id>`. HTTP auth: bearer token (solo) or OIDC JWT
 validation (team/enterprise) with `/.well-known/oauth-protected-resource`
 metadata so MCP clients discover the IdP. With `service.git.remote` set, the
-service keeps its own clone under `.almagest/repo` and refreshes on an interval
-and on `POST /hooks/git`.
+service fetches into the repo it runs in and re-pins its `main` snapshot on an
+interval and on `POST /hooks/git` (HMAC-signed). For a deployment with no local
+clone, the container image clones the brain at start (`deploy/docker/`).
+Stdio is the read side only — no ingest runner, watcher or timers.
 
 ## Telemetry and demand
 

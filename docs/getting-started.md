@@ -51,6 +51,11 @@ See [Remote Sources](remote-sources.md) for full details.
 
 Skip this entirely if you only plan to drop files into `brain/raw/`.
 
+With the v2 service (step 8) this generalises: any MCP server — Google Drive,
+Granola, Linear, Notion, Slack, or anything that exposes MCP resources — can be
+an input under `sources.connectors`, and `sources.remote` entries keep working
+through it. See [Connectors](v2/connectors.md).
+
 ## 4. Create your first canonical pages
 
 Canonical pages are the guardrails. Create them before ingesting anything:
