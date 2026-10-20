@@ -11,7 +11,7 @@ const SURFACE = {
     'requestChanges', 'resolveDecision', 'createConfirmation',
   ],
   mcp: ['serveStdio', 'handleHttp'],
-  telemetry: ['record', 'gaps', 'reverifyQueue'],
+  telemetry: ['record', 'gaps', 'reverifyQueue', 'explain'],
 };
 
 const LIFECYCLE = new Set(['start', 'stop']);
