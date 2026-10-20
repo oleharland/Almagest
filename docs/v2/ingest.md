@@ -274,15 +274,49 @@ key names. It keeps what the CLI needs to authenticate to its model provider.
 
 **What is checked after it finishes, by code it could not edit:**
 
-1. The run report exists and validates; its sha256 equals the runner's.
-2. The path guard: only `brain/wiki/`, `brain/raw/`, `brain/.index/`,
-   `index.md`, the manifest, `log.md` and `canonical-challenges.md` changed —
-   not `brain.config.yaml` (which would let it relax the audit), not `tools/`,
-   `agent/`, `CLAUDE.md` or the shims. No canonical page changed.
-3. The audit — the **service's** `tools/audit.mjs` against the worktree, never
+1. The worktree's `.git` file is still byte-for-byte what git wrote (see
+   *Git in the worktree* below). Anything else fails the job, uncommitted.
+2. The run report exists and validates; its sha256 equals the runner's.
+3. The path guard: the files changed — the diff from the branch head the
+   worktree was reset to, to the working tree, plus untracked files — are all
+   in the writable set governance enforces on the branch
+   (`governance/paths.mjs`, one definition for both): `brain/wiki/<slug>.md`,
+   `.txt` sidecars and snapshots under `brain/raw/extracted/`, text under
+   `brain/raw/processed/`, `brain/.index/*.tsv`, `index.md`, the manifest,
+   `log.md` and the challenges ledger. Not `brain.config.yaml` (which would let
+   it relax the audit), not `tools/`, `agent/`, the shims, no dotfile, and no
+   agent instruction file anywhere — `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
+   `SKILL.md`, `*.mdc`, `.claude/` and the rest (governance → *Only
+   knowledge-base files*). The one exception is the original the runner itself
+   placed in the drop folder, while it still holds the runner's bytes. No
+   canonical page changed.
+4. The audit — the **service's** `tools/audit.mjs` against the worktree, never
    the worktree's copy. Exit 1: nothing is committed.
-4. `.almagest/` is removed from the worktree before the commit, whatever
+5. `.almagest/` is removed from the worktree before the commit, whatever
    `.gitignore` says.
+6. After the commit: it is the head of the job's `ingest/…` branch, the
+   worktree is still on that branch, and neither `main` nor the main
+   checkout's branch moved to include it or any commit of this job. (`main`
+   moving because someone merged another proposal meanwhile is logged, not a
+   failure.)
+
+**Git in the worktree.** The agent can write every file in its worktree,
+including `.git`, the one-line pointer to the git dir. Rewritten to
+`gitdir: ../../../.git` (possible when `worktree_dir` is inside the repo),
+`git add -A && git commit` there would commit to the main checkout's branch,
+usually `main`, with no proposal; pointed at a fake git dir, its config could
+name a `core.fsmonitor` program that git runs as the service user. So the
+runner never lets git read that file. When it prepares a worktree it finds the
+worktree's admin dir (`<common-dir>/worktrees/<name>`) from the repo root —
+`git rev-parse --git-common-dir`, `git worktree list --porcelain` and the admin
+dirs' own back-pointers — checks `.git` is a regular file pointing there, and
+records its bytes. Every git command after that, before and after the agent,
+first checks `.git` is unchanged, then runs with `--git-dir=<admin dir>
+--work-tree=<worktree> -c core.fsmonitor=false -c core.hooksPath=/dev/null`
+and without inherited `GIT_*` variables (only remote-transport ones and
+`GIT_CONFIG_GLOBAL` are kept). A changed `.git` fails the job, not retried,
+with what the file now says in the error; the worktree is kept as evidence, and
+the next job on that branch fails the same way until a person looks.
 
 **And then a person reads the diff.** All of the above makes a proposal safe to
 look at, not correct. Approval is human-only, in code, with no flag to change it

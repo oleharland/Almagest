@@ -12,6 +12,12 @@
  * edited. Nothing is committed that has not passed both, and nothing reaches
  * `main` from here at all — the runner's last act is handing governance a
  * branch.
+ *
+ * Git itself is one of those tools. The worktree's `.git` file is the agent's
+ * to rewrite, so the runner never lets git read it: the worktree is opened
+ * once from the repo root (core/git.mjs → openWorktree), and every git command
+ * after that names the admin dir explicitly and first checks `.git` is still
+ * byte-for-byte what git wrote. A changed `.git` fails the job, uncommitted.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,13 +26,14 @@ import YAML from 'yaml';
 
 import { serviceActor } from '../core/auth.mjs';
 import { modelForTier } from '../core/config.mjs';
-import { gitIdentity } from '../core/git.mjs';
+import { gitIdentity, WorktreeTamperedError } from '../core/git.mjs';
 import { ingestBranch, nowIso, slugify, validateRunReport } from '../core/schemas.mjs';
+import { agentInstructionPath, writableMatcher } from '../governance/paths.mjs';
 import { auditSummary, runAudit, wrapperIntact, writeAuditWrapper } from './audit.mjs';
 import { allowedTools as claudeAllowedTools } from './drivers/claude-code.mjs';
 import { appendTableRow, removeTableRowsFor } from './md.mjs';
 import { buildPrompt, RUN_REPORT_PATH } from './prompt.mjs';
-import { isInside, placeSource, realish } from './source.mjs';
+import { isInside, placeSource, realish, sha256File } from './source.mjs';
 
 /** A job failure the queue knows how to treat. `retryable` failures are re-queued up to max_attempts. */
 export class JobError extends Error {
@@ -49,27 +56,38 @@ function modelFor(config, driverName) {
   return modelForTier({ agent: { ...config.agent, harness: driverName } }, config.ingest.model_tier || 'judgment');
 }
 
-/** Files the agent may change, relative to the worktree. Everything else fails the job. */
+/**
+ * Files the agent may change, relative to the worktree: the same matcher
+ * governance enforces on the branch diff (governance/paths.mjs), so there is
+ * one definition of "knowledge-base file" and no agent instruction file
+ * (CLAUDE.md, AGENTS.md, .claude/ …) passes either check.
+ */
 function writablePaths(config) {
   const brain = config.v1.brainDir.replace(/\/+$/, '');
   return {
-    prefixes: [`${brain}/wiki/`, `${brain}/raw/`, `${brain}/.index/`],
-    files: new Set([`${brain}/index.md`, config.v1.manifestPath, `${brain}/log.md`, config.v1.raw?.audit?.challenges_path || `${brain}/canonical-challenges.md`]),
+    allowed: writableMatcher({
+      brainDir: config.v1.brainDir, manifestPath: config.v1.manifestPath,
+      challengesPath: config.v1.challengesPath, indexDir: config.v1.indexDir,
+    }),
     canonical: new Set(config.v1.canonicalPages.map((s) => `${brain}/wiki/${s}.md`)),
   };
 }
 
-/** `git status --porcelain -z` → every path touched, renames counted on both sides. */
-async function touchedPaths(git, cwd) {
-  const out = await git.run(['status', '--porcelain', '-z', '--untracked-files=all'], { cwd });
-  const parts = out.split('\0').filter(Boolean);
-  const paths = [];
-  for (let i = 0; i < parts.length; i++) {
-    const xy = parts[i].slice(0, 2);
-    paths.push(parts[i].slice(3));
-    if (xy.includes('R') || xy.includes('C')) paths.push(parts[++i]);
-  }
-  return paths;
+/**
+ * Every path that differs between `startSha` — the branch head the worktree
+ * was reset to — and the working tree, plus untracked files: what the agent
+ * changed, as the trusted git dir sees it. Renames count on both sides.
+ */
+async function touchedPaths(wt, startSha) {
+  const changed = await wt.run(['diff', '--name-only', '-z', '--no-renames', startSha, '--']);
+  const untracked = await wt.run(['ls-files', '--others', '--exclude-standard', '-z']);
+  return [...new Set([...changed.split('\0'), ...untracked.split('\0')].filter(Boolean))];
+}
+
+/** A `.git` that changed under the runner → a failed job, never a retry; the worktree stays as evidence. */
+function tamperedJob(err, wt) {
+  const content = err.content ? ` It now reads ${JSON.stringify(err.content.slice(0, 200))}.` : '';
+  return new JobError(`the worktree's .git file was tampered with: ${err.message}.${content} Nothing was committed; the worktree is kept at ${wt} for inspection`);
 }
 
 export function createRunner(ctx, { driver, logsDir }) {
@@ -121,15 +139,59 @@ export function createRunner(ctx, { driver, logsDir }) {
   async function prepareWorktree(branch) {
     await git.run(['worktree', 'prune']);
     const existed = await git.branchExists(branch);
-    const wt = await git.worktreeAdd(branch, { base: config.service.git.main });
+    const dir = await git.worktreeAdd(branch, { base: config.service.git.main });
     const root = realish(config.paths.worktrees);
-    if (!isInside(root, realish(wt))) {
-      throw new JobError(`branch ${branch} is checked out at ${wt}, outside ${config.service.git.worktree_dir} — the runner never works in someone else's checkout`);
+    if (!isInside(root, realish(dir))) {
+      throw new JobError(`branch ${branch} is checked out at ${dir}, outside ${config.service.git.worktree_dir} — the runner never works in someone else's checkout`);
     }
-    await git.run(['reset', '--hard', '--quiet', 'HEAD'], { cwd: wt });
-    await git.run(['clean', '-fdq'], { cwd: wt });
-    fs.rmSync(path.join(wt, '.almagest'), { recursive: true, force: true });
-    return { worktree: wt, createdBranch: !existed };
+    // Opened before the reset: a worktree kept from an earlier failed run is
+    // checked too, so a `.git` an earlier agent rewrote can't aim even this
+    // reset at the main checkout.
+    let wt;
+    try { wt = await git.openWorktree(dir); }
+    catch (err) { throw err instanceof WorktreeTamperedError ? tamperedJob(err, dir) : err; }
+    if (!wt) throw new JobError(`${dir} is not a registered worktree of this repository — refusing to run git in it`);
+    if ((await wt.branch()) !== branch) throw new JobError(`the worktree at ${dir} is not on ${branch} — refusing to use it`);
+    await wt.run(['reset', '--hard', '--quiet', 'HEAD']);
+    await wt.run(['clean', '-fdq']);
+    fs.rmSync(path.join(wt.path, '.almagest'), { recursive: true, force: true });
+    return { worktree: wt.path, wt, startSha: await wt.revParse('HEAD'), createdBranch: !existed };
+  }
+
+  /**
+   * The refs a redirected commit would have moved: `main`, and whatever the
+   * main checkout has out. Read from the repo root, before and after a job.
+   */
+  async function watchedRefs() {
+    const checkedOut = await git.currentBranch();
+    const refs = {};
+    for (const name of new Set([config.service.git.main, checkedOut].filter(Boolean))) {
+      refs[name] = await git.revParse(name).catch(() => '');
+    }
+    return refs;
+  }
+
+  /**
+   * After the commit: it is the head of the job's branch, the worktree is
+   * still on that branch, and no watched ref moved to include it or any commit
+   * of this job. `main` may move during a long job — someone merged another
+   * proposal — and that alone is not this job's doing; main moving to carry
+   * this job's work is a commit that skipped review, and fails the job.
+   */
+  async function verifyCommit(wt, branch, sha, before, job) {
+    if ((await wt.branch()) !== branch) throw new JobError(`after the commit the worktree is not on ${branch} — not proposed; inspect ${wt.path}`);
+    if (sha && (await git.revParse(branch)) !== sha) throw new JobError(`commit ${sha.slice(0, 7)} is not the head of ${branch} — not proposed; inspect ${wt.path}`);
+    const after = await watchedRefs();
+    for (const [ref, was] of Object.entries(before)) {
+      const now = after[ref];
+      if (!was || !now || now === was) continue;
+      const contains = sha ? (await git.tryRun(['merge-base', '--is-ancestor', sha, ref])) !== null : false;
+      const messages = (await git.tryRun(['log', '--format=%B', `${was}..${now}`])) || '';
+      if (contains || messages.includes(`Job: ${job.id} `)) {
+        throw new JobError(`${ref} moved from ${was.slice(0, 7)} to ${now.slice(0, 7)} during this job and now carries its work — a commit reached ${ref} without review. Not proposed; inspect ${wt.path} and ${ref}`);
+      }
+      log.warn('a watched ref moved during an ingest job, not by it', { ref, from: was, to: now, job: job.id });
+    }
   }
 
   async function baseShaFor(branch, proposal) {
@@ -176,13 +238,21 @@ export function createRunner(ctx, { driver, logsDir }) {
     return rel;
   }
 
-  /** The path guard: the agent wrote only where an ingest may write, and never to a canonical page. */
-  async function guardPaths(wt) {
+  /**
+   * The path guard: the agent wrote only where an ingest may write, and never
+   * to a canonical page. `placed` is the original the runner itself copied
+   * into the drop folder; it stays there when nothing was written
+   * (blocked-only), and passes only while it still holds the runner's bytes.
+   */
+  async function guardPaths(wt, startSha, placed = null) {
     const allowed = writablePaths(config);
-    const touched = await touchedPaths(git, wt);
-    const outside = touched.filter((p) => !allowed.files.has(p) && !allowed.prefixes.some((pre) => p.startsWith(pre)));
+    const touched = await touchedPaths(wt, startSha);
+    const placedFile = placed ? path.join(wt.path, placed.path) : '';
+    const own = placed && !agentInstructionPath(placed.path) && fs.existsSync(placedFile)
+      && (await sha256File(placedFile)) === placed.sha256 ? placed.path : null;
+    const outside = touched.filter((p) => p !== own && !allowed.allowed(p));
     if (outside.length) {
-      throw new JobError(`agent wrote outside the brain's writable paths: ${outside.slice(0, 10).join(', ')}${outside.length > 10 ? ', …' : ''} — not committed`);
+      throw new JobError(`agent wrote outside the brain's writable paths: ${outside.slice(0, 10).join(', ')}${outside.length > 10 ? ', …' : ''} — not committed (agent instruction files such as CLAUDE.md or AGENTS.md are never writable)`);
     }
     const canonical = touched.filter((p) => allowed.canonical.has(p));
     if (canonical.length) {
@@ -204,7 +274,7 @@ export function createRunner(ctx, { driver, logsDir }) {
     const people = [requester, job.onBehalfOf ? { id: job.onBehalfOf } : null]
       .filter((a) => a && a.id && !String(a.id).startsWith('svc:'));
     const coAuthors = [...new Map(people.map((a) => [a.id, gitIdentity(a)])).values()];
-    return git.commitAll(wt, { message, author: gitIdentity(SVC), coAuthors });
+    return wt.commitAll({ message, author: gitIdentity(SVC), coAuthors });
   }
 
   async function propose(job, details) {
@@ -253,7 +323,8 @@ export function createRunner(ctx, { driver, logsDir }) {
     const t = await target(job);
     return withBranchLock(t.branch, async () => {
       write(`step 1: branch ${t.branch}${t.proposal ? ` (proposal ${t.proposal.id})` : ''}`);
-      const { worktree: wt, createdBranch } = await prepareWorktree(t.branch);
+      const { worktree: wt, wt: repo, startSha, createdBranch } = await prepareWorktree(t.branch);
+      const refsBefore = await watchedRefs();
       const baseSha = await baseShaFor(t.branch, t.proposal);
       const created = job.createdBranch ?? createdBranch;
       job = await patchJob({ branch: t.branch, worktree: wt, baseSha, createdBranch: created });
@@ -292,6 +363,9 @@ export function createRunner(ctx, { driver, logsDir }) {
       } finally {
         fs.rmSync(wrapper.dir, { recursive: true, force: true });
       }
+      // First thing after the agent: is `.git` still what git wrote? Every git
+      // command below checks again; this fails before anything else runs.
+      repo.check();
 
       const report = readReport(wt, t.source, placed);
       fs.mkdirSync(path.join(logsDir, '..', 'reports'), { recursive: true });
@@ -316,12 +390,13 @@ export function createRunner(ctx, { driver, logsDir }) {
         if (moved) write(`moved ${placed.path} → ${moved}`);
       }
 
-      const touched = await guardPaths(wt);
+      const touched = await guardPaths(repo, startSha, placed);
       write(`path guard: ${touched.length} path(s), all writable`);
       const auditResult = await audit(wt, write);
 
-      const headBefore = await git.revParse('HEAD', { cwd: wt });
-      const sha = await commit(wt, job, commitMessage(job, t, report, driver.name));
+      const headBefore = await repo.revParse('HEAD');
+      const sha = await commit(repo, job, commitMessage(job, t, report, driver.name));
+      await verifyCommit(repo, t.branch, sha, refsBefore, job);
       const headSha = sha || headBefore;
       write(sha ? `step 6: committed ${sha.slice(0, 7)} on ${t.branch}` : 'step 6: nothing to commit');
       if (!sha && report.blocked.length === 0) {
@@ -346,7 +421,8 @@ export function createRunner(ctx, { driver, logsDir }) {
     const slugs = [...new Set([job.slug, ...(job.slugs || [])].filter(Boolean))];
     if (slugs.length === 0) throw new JobError('drop-page needs `slug` (or `slugs`) naming the page to drop');
     return withBranchLock(t.branch, async () => {
-      const { worktree: wt } = await prepareWorktree(t.branch);
+      const { worktree: wt, wt: repo, startSha } = await prepareWorktree(t.branch);
+      const refsBefore = await watchedRefs();
       const baseSha = await baseShaFor(t.branch, t.proposal);
       job = await patchJob({ branch: t.branch, worktree: wt, baseSha });
       const brain = config.v1.brainDir;
@@ -374,10 +450,11 @@ export function createRunner(ctx, { driver, logsDir }) {
           `| ${nowIso().slice(0, 10)} | drop-page | ${slugs.join(', ')} dropped from \`${t.branch}\` — rejected by ${actor} |`));
       }
 
-      await guardPaths(wt);
+      await guardPaths(repo, startSha);
       const auditResult = await audit(wt, write);
-      const sha = await commit(wt, job, `drop-page: ${slugs.join(', ')} from ${t.branch}\n\nJob: ${job.id} (trigger ${job.trigger})\nProposal: ${t.proposal.id}\nRestored to ${baseSha.slice(0, 7)} or removed if created on the branch.`);
-      const headSha = sha || (await git.revParse('HEAD', { cwd: wt }));
+      const sha = await commit(repo, job, `drop-page: ${slugs.join(', ')} from ${t.branch}\n\nJob: ${job.id} (trigger ${job.trigger})\nProposal: ${t.proposal.id}\nRestored to ${baseSha.slice(0, 7)} or removed if created on the branch.`);
+      await verifyCommit(repo, t.branch, sha, refsBefore, job);
+      const headSha = sha || (await repo.revParse('HEAD'));
       write(sha ? `committed ${sha.slice(0, 7)}` : 'nothing to commit — page already matched base');
       job = await patchJob({ headSha, audit: auditResult });
       const proposal = await propose(job, { worktree: wt, branch: t.branch, baseSha, headSha, audit: auditResult, runReport: null });
@@ -410,7 +487,12 @@ export function createRunner(ctx, { driver, logsDir }) {
 
   return {
     async run(job, opts) {
-      return job.kind === 'drop-page' ? runDropPage(job, opts) : runAgentJob(job, opts);
+      try { return await (job.kind === 'drop-page' ? runDropPage(job, opts) : runAgentJob(job, opts)); }
+      catch (err) {
+        if (!(err instanceof WorktreeTamperedError)) throw err;
+        log.error('worktree .git tampered with — job failed, nothing committed', { job: job.id, dotGit: err.dotGit, content: String(err.content || '').slice(0, 200) });
+        throw tamperedJob(err, path.dirname(err.dotGit));
+      }
     },
   };
 }
