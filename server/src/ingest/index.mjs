@@ -15,6 +15,7 @@
  * governance (getProposal, createFromJob), snapshot (main's manifest), store,
  * bus, git.
  */
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -122,9 +123,24 @@ export async function create(ctx) {
     onCandidate: (abs) => considerFile(abs, { trigger: 'watch' }),
   });
 
-  async function scan() {
+  /**
+   * Walk the drop folder. On start this finds what was dropped while the
+   * service was down; on an interval it is the safety net under fs.watch,
+   * which (FSEvents on macOS especially) can miss a change made in the first
+   * moments of a watch or under load. A file already decided at the same
+   * size+mtime is not hashed again — the decision cannot have changed.
+   */
+  const seen = new Map();
+  async function scan({ onlyUnseen = false } = {}) {
     const results = [];
-    for (const abs of listCandidates(localRoot)) results.push({ file: abs, ...(await considerFile(abs, { trigger: 'watch' })) });
+    for (const abs of listCandidates(localRoot)) {
+      const st = fs.statSync(abs, { throwIfNoEntry: false });
+      const key = st ? `${st.size}:${st.mtimeMs}` : '';
+      if (onlyUnseen && seen.get(abs) === key) continue;
+      const r = await considerFile(abs, { trigger: 'watch' });
+      if (r.action === 'enqueued' || /unchanged|already/.test(r.reason || '')) seen.set(abs, key);
+      results.push({ file: abs, ...r });
+    }
     return results;
   }
 
@@ -187,7 +203,9 @@ export async function create(ctx) {
   // ── lifecycle ─────────────────────────────────────────────────────────────
 
   let spoolTimer = null;
+  let rescanTimer = null;
   let scanning = null;
+  let rescanning = null;
   let started = false;
 
   return {
@@ -210,6 +228,16 @@ export async function create(ctx) {
       if (config.ingest.watch_raw) {
         watcher.start();
         scanning = scan().catch((err) => log.error('start-up scan failed', { error: err.message }));
+        const rescan = Number(config.ingest.watch_rescan_seconds ?? 60) * 1000;
+        if (rescan > 0) {
+          rescanTimer = setInterval(() => {
+            if (rescanning) return;
+            rescanning = scan({ onlyUnseen: true })
+              .catch((err) => log.error('rescan failed', { error: err.message }))
+              .finally(() => { rescanning = null; });
+          }, rescan);
+          rescanTimer.unref?.();
+        }
       }
       await scheduler.start();
       await drain();
@@ -226,7 +254,9 @@ export async function create(ctx) {
       watcher.stop();
       scheduler.stop();
       clearInterval(spoolTimer);
+      clearInterval(rescanTimer);
       await scanning;
+      await rescanning;
       await queue.stop();
     },
   };

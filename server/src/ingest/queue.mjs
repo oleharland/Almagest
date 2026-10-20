@@ -19,6 +19,8 @@ import { JOB_KINDS, JOB_TRIGGERS, newId, nowIso } from '../core/schemas.mjs';
 import { JobError } from './runner.mjs';
 
 const ACTIVE = ['queued', 'running'];
+const AUTOMATIC = new Set(['watch', 'schedule', 'hook', 'mcp']);
+const CLOSED_PROPOSAL = new Set(['merged', 'rejected', 'superseded']);
 const SHUTDOWN = Symbol('shutdown');
 const CANCEL = Symbol('cancel');
 
@@ -80,9 +82,25 @@ export function createQueue(ctx, { runner, prepareSource, logsDir }) {
       return same.find((j) => j.proposalId === job.proposalId && j.slug === job.slug) || null;
     }
     if (job.kind === 'revise') return null;   // handled by coalescing below
-    return same.find((j) => (j.source?.id ?? null) === (job.source?.id ?? null)
+    const sameSource = (j) => (j.source?.id ?? null) === (job.source?.id ?? null)
       && (j.source?.sha256 ?? null) === (job.source?.sha256 ?? null)
-      && (j.source ? true : j.slug === job.slug)) || null;
+      && (j.source ? true : j.slug === job.slug);
+    const live = same.find(sameSource);
+    if (live || job.kind !== 'ingest' || !job.source || !AUTOMATIC.has(job.trigger)) return live || null;
+
+    // An automatic trigger (a connector schedule re-listing an item, a hook,
+    // a chat resubmitting) must not re-run bytes that already produced a
+    // proposal still under review, or that a run already found unchanged —
+    // a 15-minute schedule would otherwise spawn a job per tick. `manual`
+    // skips this on purpose: `almagest ingest` is how a person forces a re-run.
+    const done = (await store.jobs.list({ kind: 'ingest', status: ['succeeded', 'blocked'], order: 'desc' })).filter(sameSource);
+    for (const j of done) {
+      if (!j.proposalId) return j;
+      let p = null;
+      try { p = await ctx.governance.getProposal(j.proposalId); } catch { p = { status: 'open' }; }
+      if (p && !CLOSED_PROPOSAL.has(p.status)) return j;
+    }
+    return null;
   }
 
   /**

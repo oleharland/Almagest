@@ -54,12 +54,24 @@ describe('watch trigger', () => {
   });
 
   it('fs.watch picks up a dropped file once it is stable', async () => {
-    const t = await setup({ ingest: { watch_raw: true, watch_debounce_ms: 30, watch_stable_ms: 60, concurrency: 1 }, mode: 'unchanged' });
+    const t = await setup({ ingest: { watch_raw: true, watch_debounce_ms: 30, watch_stable_ms: 60, watch_rescan_seconds: 0 }, mode: 'unchanged' });
     await t.app.start({ http: false });
-    const queued = t.ctx.bus.waitFor('job.queued', (p) => p.job.source?.id === 'watched-md', 8000);
+    // FSEvents only reports changes after its stream is live; give it a moment.
+    await new Promise((r) => setTimeout(r, 500));
+    const queued = t.ctx.bus.waitFor('job.queued', (p) => p.job.source?.id === 'watched-md', 15000);
     t.write('brain/raw/watched.md', 'watched\n');
     const { job } = await queued;
     assert.equal(job.trigger, 'watch');
+    await t.stop();
+  });
+
+  it('the periodic rescan catches what fs.watch missed, without re-hashing what it already decided', async () => {
+    const t = await setup();
+    t.write('brain/raw/first.md', 'first\n');
+    assert.deepEqual((await t.ctx.ingest.scan({ onlyUnseen: true })).map((r) => r.action), ['enqueued']);
+    t.write('brain/raw/second.md', 'second\n');
+    const again = await t.ctx.ingest.scan({ onlyUnseen: true });
+    assert.deepEqual(again.map((r) => path.basename(r.file)), ['second.md'], 'first.md is not considered again');
     await t.stop();
   });
 });
@@ -123,28 +135,63 @@ describe('schedule trigger', () => {
     await t.stop();
   });
 
-  it('places a connector snapshot into the worktree and verifies its fingerprint', async () => {
-    const snapshot = '=== section: Overview ===\nThe gateway retries three times.\n';
+  it('places a connector snapshot via connectors.materialize, commits it as the sidecar, and passes the audit', async () => {
     const { sha256 } = await import('../../src/core/schemas.mjs');
+    const staged = new Map();
+    // Stand-in for WS2's materialize: copy the staged bytes to snapshotPath, refuse a stale sha.
     const connectors = {
       async list() { return []; },
       async sync() { return []; },
       snapshotPath: (ref) => `brain/raw/extracted/drive/${ref.ref}.txt`,
+      async materialize(ref, wt) {
+        const bytes = staged.get(ref.ref);
+        if (sha256(bytes) !== ref.sha256) throw new Error(`staged snapshot for ${ref.id} no longer matches — re-sync`);
+        const rel = `brain/raw/extracted/drive/${ref.ref}.txt`;
+        fs.mkdirSync(path.dirname(path.join(wt, rel)), { recursive: true });
+        fs.writeFileSync(path.join(wt, rel), bytes);
+        return rel;
+      },
     };
-    const t = await setup({ connectors, mode: 'unchanged' });
-    // WS2 stages snapshots under .almagest/connectors/<snapshotPath>.
-    t.write('.almagest/connectors/brain/raw/extracted/drive/spec.txt', snapshot);
+    const snapshot = '--- end of header ---\n=== section: Overview ===\nThe gateway retries three times.\n';
+    staged.set('spec', snapshot);
+    const t = await setup({ connectors });
     await t.app.start({ http: false });
-    const ok = await t.ctx.ingest.enqueue({ kind: 'ingest', trigger: 'schedule', source: { kind: 'connector', id: 'drive-spec', connector: 'drive', ref: 'spec', sha256: sha256(snapshot) } });
+    const ref = { kind: 'connector', id: 'drive:spec', connector: 'drive', server: 'google-drive', ref: 'spec', sha256: sha256(snapshot), change: 'new', title: 'Gateway spec' };
+    const ok = await t.ctx.ingest.enqueue({ kind: 'ingest', trigger: 'schedule', source: ref });
     const done = await t.finished(ok);
     assert.equal(done.status, 'succeeded', done.error);
-    const logText = fs.readFileSync(path.join(t.repo, '.almagest', 'logs', `${ok.id}.log`), 'utf-8');
-    assert.match(logText, /placed brain\/raw\/extracted\/drive\/spec\.txt/);
+    assert.equal(t.show(done.branch, 'brain/raw/extracted/drive/spec.txt'), snapshot, 'the snapshot is committed, not moved');
+    assert.match(t.show(done.branch, 'brain/manifest.yaml'), /kind: connector/);
+    assert.equal(t.governance.calls[0].details.audit.exit, 0);
 
-    const bad = await t.ctx.ingest.enqueue({ kind: 'ingest', trigger: 'schedule', source: { kind: 'connector', id: 'drive-spec', connector: 'drive', ref: 'spec', sha256: 'f'.repeat(64) } });
-    const failed = await t.finished(bad);
-    assert.equal(failed.status, 'failed');
-    assert.match(failed.error, /fingerprint mismatch/);
+    // A 15-minute schedule re-lists the item while its proposal is open: no new job.
+    const again = await t.ctx.ingest.enqueue({ kind: 'ingest', trigger: 'schedule', source: { ...ref } });
+    assert.equal(again.id, ok.id);
+    // Once that proposal is closed, the same bytes may be ingested again.
+    t.governance.proposals.get(done.proposalId).status = 'rejected';
+    const after = await t.ctx.ingest.enqueue({ kind: 'ingest', trigger: 'schedule', source: { ...ref } });
+    assert.notEqual(after.id, ok.id);
+    await t.ctx.ingest.cancel(after.id);
+
+    staged.set('spec', `${snapshot}edited after the sync\n`);
+    const stale = await t.finished(await t.ctx.ingest.enqueue({ kind: 'ingest', trigger: 'manual', source: { ...ref, id: 'drive:spec-2' } }));
+    assert.equal(stale.status, 'failed');
+    assert.match(stale.error, /no longer matches/);
+    await t.stop();
+  });
+
+  it('falls back to the staged snapshot when connectors has no materialize, and checks the fingerprint', async () => {
+    const snapshot = '=== section: Overview ===\nThe gateway retries three times.\n';
+    const { sha256 } = await import('../../src/core/schemas.mjs');
+    const connectors = { async list() { return []; }, async sync() { return []; }, snapshotPath: (ref) => `brain/raw/extracted/drive/${ref.ref}.txt` };
+    const t = await setup({ connectors, mode: 'unchanged' });
+    t.write('.almagest/connectors/brain/raw/extracted/drive/spec.txt', snapshot);
+    await t.app.start({ http: false });
+    const done = await t.finished(await t.ctx.ingest.enqueue({ kind: 'ingest', trigger: 'manual', source: { kind: 'connector', id: 'drive-spec', connector: 'drive', ref: 'spec', sha256: sha256(snapshot) } }));
+    assert.equal(done.status, 'succeeded', done.error);
+    const bad = await t.finished(await t.ctx.ingest.enqueue({ kind: 'ingest', trigger: 'manual', source: { kind: 'connector', id: 'drive-spec', connector: 'drive', ref: 'spec', sha256: 'f'.repeat(64) } }));
+    assert.equal(bad.status, 'failed');
+    assert.match(bad.error, /fingerprint mismatch/);
     await t.stop();
   });
 });

@@ -10,7 +10,7 @@ import { git, makeTempRepo, REPO_ROOT, rmrf, SERVICE_ROOT } from '../helpers.mjs
 import { cleanup, setup } from './_setup.mjs';
 
 const tmp = [];
-after(() => { cleanup(); tmp.forEach(rmrf); });
+after(async () => { await cleanup(); tmp.forEach(rmrf); });
 
 const CLI = path.join(SERVICE_ROOT, 'bin', 'almagest.mjs');
 const write = (file) => ({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: path.dirname(file), tool_input: { file_path: file, content: 'x' } });

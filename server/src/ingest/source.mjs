@@ -137,46 +137,78 @@ export function worktreeSourcePath(localPath, source) {
   return `${localPath.replace(/\/+$/, '')}/${name}`;
 }
 
+/** Where the runner leaves the previous version of a re-ingested source for the agent (removed before commit). */
+export const PREVIOUS_DIR = '.almagest/previous';
+
 /**
  * Put the source's bytes into the worktree and return the worktree-relative
  * path the agent should read.
  *
  * local      staged copy (or the repo file, re-hashed) → `<local>/<sanitized name>`
- * connector  the snapshot ctx.connectors produced → `ctx.connectors.snapshotPath(ref)`
+ * connector  `ctx.connectors.materialize(ref, worktree)` → `snapshotPath(ref)`.
+ *            The connector module owns its staging area and refuses a staged
+ *            file whose sha no longer matches; the runner does not copy
+ *            connector bytes itself. (A connectors service without
+ *            `materialize` — a test stub — falls back to the staged paths.)
  *
- * Either way the bytes are hashed again after the copy and must equal
+ * Either way the bytes are hashed again after placement and must equal
  * `source.sha256`. A mismatch fails the job: the agent would otherwise record a
  * fingerprint for content it never saw.
+ *
+ * `previous` is the earlier version the agent compares against on a changed
+ * source, since in runner mode it has no version-control tool: for a connector
+ * snapshot, the committed copy is saved under `.almagest/previous/` before it
+ * is overwritten; for a local text source, the copy already in `processed/`.
  */
 export async function placeSource(ctx, source, worktree) {
   const { repoRoot, config } = ctx;
-  let from;
   let rel;
+  let previous = null;
+  const keepPrevious = (r) => {
+    const cur = path.join(worktree, r);
+    if (!fs.existsSync(cur)) return null;
+    const dest = path.join(worktree, PREVIOUS_DIR, r);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(cur, dest);
+    return `${PREVIOUS_DIR}/${r.split(path.sep).join('/')}`;
+  };
+
   if (source.kind === 'connector') {
-    rel = await ctx.connectors.snapshotPath(source);
-    from = [
-      source.staged,
-      source.stagedPath,
-      path.join(config.paths.state, 'connectors', rel),
-      path.isAbsolute(rel) ? rel : path.join(repoRoot, rel),
-    ].find((p) => p && fs.existsSync(p));
+    rel = String(await ctx.connectors.snapshotPath(source));
     if (path.isAbsolute(rel)) rel = path.relative(repoRoot, rel);
+    previous = keepPrevious(rel);
+    if (typeof ctx.connectors.materialize === 'function') {
+      rel = String(await ctx.connectors.materialize(source, worktree));
+    } else {
+      const from = [source.staged, source.stagedPath, path.join(config.paths.state, 'connectors', rel)]
+        .find((p) => p && fs.existsSync(p));
+      if (!from) throw new Error(`no staged snapshot for ${source.id}`);
+      copyInto(worktree, rel, from, source);
+    }
   } else if (source.kind === 'local') {
     rel = worktreeSourcePath(config.sources.localPath, source);
-    from = [source.staged, path.join(config.paths.state, 'staging', source.sha256 || '-'), path.resolve(repoRoot, source.path || '.')]
+    const from = [source.staged, path.join(config.paths.state, 'staging', source.sha256 || '-'), path.resolve(repoRoot, source.path || '.')]
       .find((p) => p && fs.existsSync(p) && fs.statSync(p).isFile());
+    if (!from) throw new Error(`source bytes for ${source.id} are gone (looked for the staged copy and ${source.path})`);
+    copyInto(worktree, rel, from, source);
+    const processed = path.posix.join(path.posix.dirname(rel), 'processed', path.posix.basename(rel));
+    if (fs.existsSync(path.join(worktree, processed))) previous = processed;
   } else {
     throw new Error(`source kind "${source.kind}" cannot be placed by the runner — remote sources arrive as connector snapshots`);
   }
-  if (!from) throw new Error(`source bytes for ${source.id} are gone (looked for the staged copy and ${source.path || rel})`);
 
   const dest = path.join(worktree, rel);
-  if (!isInside(worktree, path.resolve(dest))) throw new Error(`refusing to place ${source.id} outside the worktree (${rel})`);
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.copyFileSync(from, dest);
+  if (!isInside(worktree, path.resolve(dest)) || !fs.existsSync(dest)) throw new Error(`source ${source.id} was not placed inside the worktree (${rel})`);
   const got = await sha256File(dest);
   if (source.sha256 && got !== source.sha256) {
     throw new Error(`fingerprint mismatch for ${source.id}: queued as ${source.sha256.slice(0, 7)}…, bytes are ${got.slice(0, 7)}…`);
   }
-  return { path: rel.split(path.sep).join('/'), sha256: got, bytes: fs.statSync(dest).size };
+  return { path: rel.split(path.sep).join('/'), sha256: got, bytes: fs.statSync(dest).size, ...(previous ? { previous } : {}) };
+}
+
+function copyInto(worktree, rel, from, source) {
+  const dest = path.join(worktree, rel);
+  if (!isInside(worktree, path.resolve(dest))) throw new Error(`refusing to place ${source.id} outside the worktree (${rel})`);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(from, dest);
 }

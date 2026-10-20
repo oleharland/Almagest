@@ -53,7 +53,7 @@ function upsertManifest(file, entry) {
   fs.writeFileSync(file, doc.toString());
 }
 
-function pageText({ title, type, source, citePath, sha, idForCitation, claim, line }) {
+function pageText({ title, type, source, citeId, citePath, sha, idForCitation, claim, line }) {
   return `---
 title: ${JSON.stringify(title)}
 type: ${type}
@@ -68,7 +68,7 @@ date_created: "${today()}"
 date_modified: "${today()}"
 last_verified: "${today()}"
 sources:
-  - id: ${source.id}
+  - id: ${citeId}
     path: ${citePath}
     sha256: "${sha}"
     title: ${JSON.stringify(source.title || source.id)}
@@ -150,14 +150,17 @@ export function createFakeDriver(ctx, options = {}) {
         return report({ outcome: 'blocked-only', pages: [], blocked: [decision], notes: 'fake: blocked only' });
       }
 
-      // The runner moves the original to processed/ after the run; a text
-      // source is cited there. Binary sources would cite their sidecar.
+      // A local text source is cited where the runner will move it
+      // (processed/); a connector snapshot is its own committed sidecar and is
+      // cited in place (ingest.md → Connector sources).
       const placed = sourcePath || source?.path || '';
+      const connector = source?.kind === 'connector';
       const name = path.basename(placed);
-      const processed = `${brain}/raw/processed/${name}`;
+      const citePath = connector ? placed : `${brain}/raw/processed/${name}`;
+      const citeId = slugify(source.id);   // manifest ids may hold `:` — a citation id may not
       const text = fs.readFileSync(path.join(cwd, placed), 'utf-8');
       const lines = text.split('\n');
-      const lineNo = Math.max(1, lines.findIndex((l) => l.trim()) + 1);
+      const lineNo = Math.max(1, lines.findIndex((l) => l.trim() && !/^(===|---)/.test(l.trim())) + 1);
       const claim = (lines[lineNo - 1] || 'The source is empty.').trim().replace(/\[|\]/g, '');
       const slug = slugify(name.replace(/\.[^.]+$/, ''));
       const title = titleCase(slug);
@@ -167,14 +170,19 @@ export function createFakeDriver(ctx, options = {}) {
 
       fs.mkdirSync(path.dirname(pageFile), { recursive: true });
       fs.writeFileSync(pageFile, pageText({
-        title, type, source, citePath: processed, sha: source.sha256,
-        idForCitation: m === 'audit-fail' ? 'not-a-source' : source.id, claim, line: lineNo,
+        title, type, source, citeId, citePath, sha: source.sha256,
+        idForCitation: m === 'audit-fail' ? 'not-a-source' : citeId, claim, line: lineNo,
       }));
 
-      upsertManifest(path.join(cwd, cfg.manifestPath), {
-        id: source.id, kind: 'local', path: processed, sha256: source.sha256,
-        bytes: Buffer.byteLength(text), first_ingested: today(), last_ingested: today(), pages: [slug], status: 'ingested',
-      });
+      const dates = { bytes: Buffer.byteLength(text), first_ingested: today(), last_ingested: today(), pages: [slug], status: 'ingested' };
+      upsertManifest(path.join(cwd, cfg.manifestPath), connector
+        ? {
+          id: source.id, kind: 'connector', connector: source.connector, server: source.server || source.connector, ref: source.ref,
+          ...(source.version ? { version: source.version } : {}),
+          path: placed, sha256: source.sha256, extracted: placed, extracted_sha256: source.sha256, snapshot: source.snapshot || 'commit', ...dates,
+        }
+        : { id: source.id, kind: 'local', path: citePath, sha256: source.sha256, ...dates });
+      const processed = citePath;
 
       const indexFile = path.join(cwd, brain, 'index.md');
       let index = fs.existsSync(indexFile) ? fs.readFileSync(indexFile, 'utf-8') : '# Index\n';

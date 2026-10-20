@@ -279,7 +279,9 @@ export function createRunner(ctx, { driver, logsDir }) {
         await discard(wt, t.branch, created, baseSha);
         return { status: 'succeeded', note: 'unchanged — nothing to review' };
       }
-      if (report.outcome === 'written' && placed) {
+      // Only a local original moves. A connector snapshot already sits at its
+      // committed sidecar path, which every citation points at.
+      if (report.outcome === 'written' && placed && t.source.kind === 'local') {
         const moved = moveToProcessed(wt, placed);
         if (moved) write(`moved ${placed.path} → ${moved}`);
       }

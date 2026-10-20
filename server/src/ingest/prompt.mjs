@@ -31,17 +31,30 @@ function sourceBlock(source, placed) {
     `- kind: ${source.kind}`,
     `- manifest id: ${source.id}`,
     placed ? `- path in this worktree: ${placed.path}` : source.path ? `- path: ${source.path}` : '',
-    source.connector ? `- connector: ${source.connector}${source.ref ? ` (item ${source.ref})` : ''}` : '',
+    source.connector ? `- connector: ${source.connector}${source.ref ? ` (item ${source.ref})` : ''}${source.server ? `, server ${source.server}` : ''}` : '',
+    // Connector refs say what kind of change this is — the agent classifies
+    // with it rather than guessing (ingest.md → Connector sources, step 6).
+    source.change ? `- change: ${source.change}${CHANGE_HINTS[source.change] ? ` — ${CHANGE_HINTS[source.change]}` : ''}` : '',
+    source.supersedes ? `- supersedes: ${source.supersedes} — a v1 \`kind: remote\` entry: update the pages it lists, set it \`status: superseded\` with \`superseded_by: ${source.id}\`, carry its \`pages\` over` : '',
     source.version ? `- provider version: ${source.version}` : '',
+    source.commit ? `- commit: ${source.commit}` : '',
+    ...['snapshot', 'label', 'tier'].map((k) => (source[k] ? `- ${k}: ${source[k]}` : '')),
     source.title ? `- original name: ${source.title}` : '',
-    `- sha256 (computed by the runner — use exactly this value in manifest.yaml \`sha256\` and in each page's \`sources[].sha256\` for a text source): ${placed?.sha256 || source.sha256 || 'unknown'}`,
+    `- sha256 (computed by the service — use exactly this value in manifest.yaml and in each page's \`sources[].sha256\` where the rules say to cite this file): ${placed?.sha256 || source.sha256 || 'unknown'}`,
     placed?.bytes !== undefined ? `- bytes: ${placed.bytes}` : '',
+    placed?.previous ? `- previous version (for a diff re-ingest — Read it and compare; you have no git): ${placed.previous}` : '',
   ];
   return lines.filter(Boolean).join('\n');
 }
 
+const CHANGE_HINTS = {
+  new: 'full ingest',
+  changed: 'diff re-ingest against the pages the manifest entry lists',
+  reappeared: 'manifest only: set the entry `status: ingested`, no wiki work',
+};
+
 const TASKS = {
-  ingest: 'Ingest the source below following agent/rules/ingest.md (Local ingest workflow, with the Runner mode section overriding the git, approval and stop-and-ask steps).',
+  ingest: 'Ingest the source below following agent/rules/ingest.md (the local workflow, or Connector sources for a connector item), with the Runner mode section overriding the git, approval and stop-and-ask steps.',
   revise: 'Revise the work already on this branch. It holds a previous run\'s pages for the source below. Apply the instructions exactly; leave everything they do not mention as it is.',
   reverify: 'Re-verify the page(s) named below against their cited sources (the committed sidecars): check every citation\'s locator still resolves and still says what the page claims. Update `last_verified` only on pages you actually checked; anything that no longer holds is a contradiction and goes to blocked[]. If you could check nothing, report `unchanged`.',
 };

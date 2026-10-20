@@ -37,7 +37,12 @@ export function fakeGovernance() {
 }
 
 const repos = [];
-export function cleanup() { while (repos.length) rmrf(repos.pop()); }
+const live = new Set();
+/** after(cleanup): stops any app a failed test left running (or the file would hang), then removes the repos. */
+export async function cleanup() {
+  for (const t of live) await t.stop().catch(() => {});
+  while (repos.length) rmrf(repos.pop());
+}
 
 export async function setup({ mode = 'write', ingest = {}, files = {}, governance = fakeGovernance(), connectors, http = false, overrides = {} } = {}) {
   const repo = makeTempRepo({ files });
@@ -75,7 +80,12 @@ export async function setup({ mode = 'write', ingest = {}, files = {}, governanc
     show(ref, file) {
       try { return git(repo, 'show', `${ref}:${file}`); } catch { return null; }
     },
-    async stop() { await app.stop(); },
+    async stop() {
+      if (!live.has(t)) return;
+      live.delete(t);
+      await app.stop();
+    },
   };
+  live.add(t);
   return t;
 }
