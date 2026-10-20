@@ -430,10 +430,13 @@ async function run(argv, env) {
         for (const e of s.errors) print(`  error      ${e.ref}: ${e.error}`);
         if (f.ingest && !s.dryRun && s.refs.length) {
           // Queued, not run: the CLI process exits now, and the running service's
-          // workers pick the jobs up from the shared store. Dedup makes a repeat
-          // `sync --ingest` of the same bytes a no-op.
+          // workers pick the jobs up from the shared store. Enqueued as a
+          // `schedule` trigger on purpose — this is a sync, and only automatic
+          // triggers skip bytes whose proposal is still under review. As
+          // `manual` (a person forcing a re-run) every repeat would pay for
+          // another agent run and move the proposal under its reviewer.
           for (const ref of s.refs) {
-            const job = await env.ctx.ingest.enqueue({ kind: 'ingest', source: ref, trigger: 'manual', requestedBy: 'svc:cli' });
+            const job = await env.ctx.ingest.enqueue({ kind: 'ingest', source: ref, trigger: 'schedule', requestedBy: 'svc:cli' });
             print(`  queued     ${job.id}  ${ref.title}`);
           }
           print('Jobs are picked up by `almagest serve`; follow them with `almagest jobs`.');
