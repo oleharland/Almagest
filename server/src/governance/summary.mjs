@@ -48,8 +48,10 @@ export function changeLine(changes = []) {
   ].filter(Boolean);
   const names = changes.filter((ch) => ch.pageStatus !== 'rejected').map((ch) => ch.title || ch.slug);
   const about = listNames(names);
+  const unread = changes.filter((ch) => ch.needsManualLook && ch.pageStatus !== 'rejected').map((ch) => ch.title || ch.slug);
   if (!facts.length) {
     if (!c.pages) return 'No page changes';
+    if (unread.length) return `${unread.length === 1 ? 'A new page' : `${unread.length} new pages`} with no cited facts (${listNames(unread)}) — needs a careful read`;
     return `Small edits to ${about}`;
   }
   const pagesNote = c.pagesNew ? ` (${plural(c.pagesNew, 'new page')})` : '';

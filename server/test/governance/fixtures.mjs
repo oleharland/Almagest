@@ -8,15 +8,45 @@ import path from 'node:path';
 
 import { humanActor } from '../../src/core/auth.mjs';
 import { newId } from '../../src/core/schemas.mjs';
+import { vouch } from '../../src/governance/trust.mjs';
 import { git, makeApp, makeTempRepo, rmrf } from '../helpers.mjs';
 
 export const repos = [];
 export function repo(opts) { const r = makeTempRepo(opts); repos.push(r); return r; }
 export function cleanup() { repos.splice(0).forEach(rmrf); }
 
-export const ada = humanActor({ id: 'usr_ada', display: 'Ada', email: 'ada@acme.test', roles: ['owner'], teams: ['engineering'] });
-export const bob = humanActor({ id: 'usr_bob', display: 'Bob', email: 'bob@acme.test', roles: ['reviewer'], teams: ['product'] });
-export const vic = humanActor({ id: 'usr_vic', display: 'Vic', roles: ['viewer'] });
+/** A person as a signed-in browser session would present them (trust.mjs). */
+export function sess(actor) {
+  return vouch({ ...actor, session: { sid: `test-${actor.id}` } }, 'session');
+}
+
+export const ada = sess(humanActor({ id: 'usr_ada', display: 'Ada', email: 'ada@acme.test', roles: ['owner'], teams: ['engineering'] }));
+export const bob = sess(humanActor({ id: 'usr_bob', display: 'Bob', email: 'bob@acme.test', roles: ['reviewer'], teams: ['product'] }));
+export const vic = sess(humanActor({ id: 'usr_vic', display: 'Vic', roles: ['viewer'] }));
+
+/**
+ * ctx.governance, with approve / resolveDecision filling in the version the
+ * person "looked at" (the current headSha) when a test does not say. Tests
+ * about pinning call the real service directly.
+ */
+export function G(app) {
+  const gov = app.ctx.governance;
+  return new Proxy(gov, {
+    get(target, prop) {
+      if (prop === 'approve') {
+        return async (id, actor, opts = {}) => target.approve(id, actor, { headSha: (await target.getProposal(id))?.headSha, ...opts });
+      }
+      if (prop === 'resolveDecision') {
+        return async (id, actor, opts = {}) => {
+          const d = await target.getDecision(id);
+          const p = d ? await target.getProposal(d.proposalId) : null;
+          return target.resolveDecision(id, actor, { headSha: p?.headSha, ...opts });
+        };
+      }
+      return target[prop];
+    },
+  });
+}
 
 export function fakeIngest() {
   const jobs = [];

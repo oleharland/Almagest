@@ -268,7 +268,7 @@ Manual smoke tests of this exact flag set (haiku, about $0.006 in all) saw
 directory and a Read of the wrapper itself all denied.
 
 **What it never holds:** the service's secrets. The child environment drops
-`ALMAGEST_*` (approval tokens, the sealing key), `DATABASE_URL`, `PG*`,
+`ALMAGEST_*` (sign-in tokens, the sealing key), `DATABASE_URL`, `PG*`,
 `SLACK_*`, `GITHUB_TOKEN`/`GITLAB_TOKEN`, and every variable a config `*_env`
 key names. It keeps what the CLI needs to authenticate to its model provider.
 

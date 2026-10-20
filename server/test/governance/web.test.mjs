@@ -9,13 +9,24 @@ import { ALPHA_V2, CLEAN_AUDIT, cleanup, client, DELTA, govApp, job, page, propo
 
 const TOKENS = 'ada:owner:ada-secret-1;bob:reviewer:bob-secret-2;vic:viewer:vic-secret-3';
 let saved;
+const live = [];
 before(() => { saved = process.env.ALMAGEST_TOKENS; process.env.ALMAGEST_TOKENS = TOKENS; process.env.ALMAGEST_SECRET_KEY = 'test-secret'; });
-after(() => { process.env.ALMAGEST_TOKENS = saved; cleanup(); });
+after(async () => {
+  for (const a of live) await a.stop().catch(() => {});
+  process.env.ALMAGEST_TOKENS = saved;
+  cleanup();
+});
+const headFrom = (text) => (text.match(/name="headSha" value="([0-9a-f]{40})"/) || [])[1];
 
 async function serve(files, overrides = {}) {
   const r = repo();
   const app = await govApp(r, { overrides: { service: { http: { port: 0 } }, ...overrides } });
   const server = await app.start();
+  live.push({ stop: () => app.stop() });
+  const stop = app.stop.bind(app);
+  let stopped = false;
+  app.stop = async () => { if (!stopped) { stopped = true; await stop(); } };
+  live[live.length - 1].stop = () => app.stop();
   const base = `http://127.0.0.1:${server.address().port}`;
   const b = await proposalBranch(app, 'ingest/q3-board-deck-abcdef1', files || { 'brain/wiki/alpha.md': ALPHA_V2, 'brain/wiki/delta.md': DELTA });
   const p = await app.ctx.governance.createFromJob(job(b.branch), { ...b, audit: CLEAN_AUDIT });
@@ -99,7 +110,16 @@ describe('inbox: sign-in, CSRF, rendering', () => {
     const bearer = await fetch(`${base}/inbox/p/${p.id}/approve`, { method: 'POST', headers: { authorization: 'Bearer ada-secret-1', 'content-type': 'application/x-www-form-urlencoded' }, body: 'scope=all' });
     assert.equal(bearer.status, 403);
 
-    const ok = await c.post(`/inbox/p/${p.id}/approve`, { form: { csrf, scope: 'all' } });
+    // The form names the version shown. Without it, or with an older one, nothing is approved.
+    const headSha = headFrom(pageRes.text);
+    assert.equal(headSha, p.headSha);
+    assert.equal((await c.post(`/inbox/p/${p.id}/approve`, { form: { csrf, scope: 'all' } })).status, 400);
+    const stale = await c.post(`/inbox/p/${p.id}/approve`, { form: { csrf, scope: 'all', headSha: 'f'.repeat(40) } });
+    assert.equal(stale.status, 409);
+    assert.match(stale.text, /changed since you opened it/);
+    assert.equal((await app.ctx.governance.getProposal(p.id)).approvals.length, 0);
+
+    const ok = await c.post(`/inbox/p/${p.id}/approve`, { form: { csrf, scope: 'all', headSha } });
     assert.equal(ok.status, 303);
     assert.equal(ok.location, `/inbox/p/${p.id}?m=merged`);
     const after2 = await c.get(ok.location);
@@ -158,7 +178,7 @@ describe('inbox: sign-in, CSRF, rendering', () => {
 });
 
 describe('JSON API', () => {
-  it('lists for any authenticated actor; actions need a human, and cookie callers need CSRF', async () => {
+  it('bearer tokens can read but never act; a browser session with CSRF and the headSha can', async () => {
     const { app, base, p } = await serve();
     assert.equal((await fetch(`${base}/api/proposals`)).status, 401);
     const list = await (await fetch(`${base}/api/proposals`, { headers: { authorization: 'Bearer bob-secret-2' } })).json();
@@ -166,41 +186,66 @@ describe('JSON API', () => {
     assert.match(list.proposals[0].summary, /Q3 board deck/);
     const one = await (await fetch(`${base}/api/proposals/${p.id}`, { headers: { authorization: 'Bearer bob-secret-2' } })).json();
     assert.equal(one.evaluation.ready, false);
+    assert.equal(one.proposal.worktree, undefined, 'no server filesystem paths in API output');
+    assert.ok(!JSON.stringify(one).includes(app.ctx.repoRoot));
 
-    const { c } = await login(base);
-    const noCsrf = await c.post(`/api/proposals/${p.id}/approve`, { json: {} });
-    assert.equal(noCsrf.status, 403);
+    // A reviewer's own token, as an agent with ALMAGEST_TOKEN in its env would hold it: refused for every action.
+    const bearer = { authorization: 'Bearer bob-secret-2', 'content-type': 'application/json' };
+    for (const [path, body] of [
+      [`/api/proposals/${p.id}/approve`, { headSha: p.headSha }],
+      [`/api/proposals/${p.id}/reject`, {}],
+      [`/api/proposals/${p.id}/request-changes`, { feedback: 'x' }],
+      [`/api/proposals/${p.id}/retry`, {}],
+      [`/api/proposals/${p.id}/pages/delta/reject`, {}],
+      ['/api/decisions/dec_x/resolve', { optionId: 'a' }],
+    ]) {
+      const r = await fetch(`${base}${path}`, { method: 'POST', headers: bearer, body: JSON.stringify(body) });
+      assert.equal(r.status, 403, path);
+    }
     const mcpToken = await fetch(`${base}/api/proposals/${p.id}/approve`, { method: 'POST', headers: { authorization: 'Bearer alm_at_abc', 'content-type': 'application/json' }, body: '{}' });
     assert.ok([401, 403].includes(mcpToken.status));
+    assert.equal((await app.ctx.governance.getProposal(p.id)).approvals.length, 0);
 
-    const viaBearer = await fetch(`${base}/api/proposals/${p.id}/approve`, { method: 'POST', headers: { authorization: 'Bearer bob-secret-2', 'content-type': 'application/json' }, body: '{}' });
-    assert.equal(viaBearer.status, 200);
-    const body = await viaBearer.json();
+    const { c } = await login(base);
+    const page1 = await c.get(`/inbox/p/${p.id}`);
+    const csrf = c.csrfFrom(page1.text);
+    assert.equal((await c.post(`/api/proposals/${p.id}/approve`, { json: { headSha: p.headSha } })).status, 403, 'cookie without CSRF');
+    assert.equal((await c.post(`/api/proposals/${p.id}/approve`, { json: { headSha: 'a'.repeat(40) }, headers: { 'x-almagest-csrf': csrf } })).status, 409);
+    const ok = await c.post(`/api/proposals/${p.id}/approve`, { json: { headSha: p.headSha }, headers: { 'x-almagest-csrf': csrf } });
+    assert.equal(ok.status, 200, ok.text);
+    const body = JSON.parse(ok.text);
     assert.equal(body.status, 'merged');
-    assert.equal(body.approvals[0].channel, 'cli');
+    assert.equal(body.approvals[0].channel, 'web');
+    assert.equal(body.worktree, undefined);
     await app.stop();
   });
 });
 
 describe('chat confirmations', () => {
-  it('a code is confirmed by a signed-in human, works once, and the chat never approves', async () => {
+  it('a chat code only leads to the full review; the person approves the version they see, once', async () => {
     const { app, base, p } = await serve();
     const conf = await app.ctx.governance.createConfirmation(p.id, { id: 'usr_ada', display: 'Ada', kind: 'human' }, 'approve');
     const path = new URL(conf.url).pathname;
     assert.equal((await client(base).get(path)).status, 303, 'signed-out → sign in first');
 
     const { c } = await login(base, 'bob-secret-2');
-    const view = await c.get(path);
-    assert.equal(view.status, 200);
-    assert.match(view.text, /A chat assistant asked on behalf of Ada/);
+    const hop = await c.get(path);
+    assert.equal(hop.status, 303);
+    assert.equal(hop.location, `/inbox/p/${p.id}?confirm=${encodeURIComponent(conf.code)}`);
+    assert.equal((await c.post(path, { form: {} })).status, 404, 'no approve-by-code endpoint');
+    const view = await c.get(hop.location);
+    assert.match(view.text, /A chat assistant asked on behalf of Ada for this to be approved/);
+    assert.match(view.text, /Updated fact/, 'the full review, not just a title');
+    assert.ok(view.text.includes(`name="confirm" value="${conf.code}"`));
     assert.equal((await app.ctx.governance.getProposal(p.id)).approvals.length, 0, 'opening the link does nothing');
-    const done = await c.post(path, { form: { csrf: c.csrfFrom(view.text), do: 'approve' } });
+
+    const done = await c.post(`/inbox/p/${p.id}/approve`, { form: { csrf: c.csrfFrom(view.text), headSha: headFrom(view.text), scope: 'all', confirm: conf.code } });
     assert.equal(done.status, 303);
     const after3 = await app.ctx.governance.getProposal(p.id);
     assert.equal(after3.status, 'merged');
     assert.equal(after3.approvals[0].actorId, 'usr_bob');
     assert.equal(after3.approvals[0].channel, 'mcp');
-    const again = await c.post(path, { form: { csrf: c.csrfFrom(view.text), do: 'approve' } });
+    const again = await c.get(path);
     assert.equal(again.status, 410);
     assert.match(again.text, /already been used/);
     await app.stop();
@@ -222,10 +267,12 @@ describe('chat confirmations', () => {
     const conf = await app.ctx.governance.createConfirmation(p.id, { id: 'usr_ada', display: 'Ada', kind: 'human' }, 'reject');
     const path = new URL(conf.url).pathname;
     const { c } = await login(base);
-    const view = await c.get(path);
-    assert.match(view.text, /Turn down/);
-    await c.post(path, { form: { csrf: c.csrfFrom(view.text), do: 'reject', reason: 'chat said so' } });
+    const view = await c.get((await c.get(path)).location);
+    assert.match(view.text, /for this to be turned down/);
+    await c.post(`/inbox/p/${p.id}/reject`, { form: { csrf: c.csrfFrom(view.text), reason: 'chat said so', confirm: conf.code } });
     assert.equal((await app.ctx.governance.getProposal(p.id)).status, 'rejected');
+    const [entry] = await app.ctx.store.audit.list({ action: 'proposal.reject' });
+    assert.equal(entry.channel, 'mcp');
     await app.stop();
   });
 });

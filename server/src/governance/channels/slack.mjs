@@ -13,13 +13,16 @@
  * POST /channels/slack/actions checks `X-Slack-Signature` (v0 HMAC over
  * `v0:<timestamp>:<body>`), refuses anything older than five minutes or seen
  * before, and refuses Slack users that are not in `users`. "Approve" calls
- * ctx.governance.approve as the mapped person; everything else links to the
+ * ctx.governance.approve as the mapped person — resolved by email to the one
+ * canonical person (identity.mjs), never trusted as an id — and only for the
+ * version (headSha) the message showed. Everything else links to the
  * inbox. With `require_sso_for_approval`, there is no Approve button at all —
  * only a link into the inbox, where sign-in happens.
  */
-import { humanActor } from '../../core/auth.mjs';
 import { HttpError } from '../../core/http.mjs';
+import { validateMappings } from '../identity.mjs';
 import { hmac, safeEqual } from '../signing.mjs';
+import { vouch } from '../trust.mjs';
 import { DECISION_WORDS, describe } from '../summary.mjs';
 import { LIVE } from '../policy.mjs';
 
@@ -58,7 +61,7 @@ export async function readRaw(req, limit = 1024 * 1024) {
   return Buffer.concat(chunks).toString('utf-8');
 }
 
-export function create(ctx, cfg, { governance }) {
+export function create(ctx, cfg, { governance, identities, people }) {
   const { log, config } = ctx;
   const webhook = cfg.webhook_env ? process.env[cfg.webhook_env] || '' : '';
   const signingSecret = process.env[cfg.signing_secret_env || 'SLACK_SIGNING_SECRET'] || '';
@@ -67,6 +70,7 @@ export function create(ctx, cfg, { governance }) {
   const base = String(config.service.http.base_url).replace(/\/+$/, '');
   const requireSso = Boolean(config.governance.require_sso_for_approval);
   const seen = new Map();
+  validateMappings('governance.channels[slack].users', Object.entries(users), { mode: people.mode, multi: people.multi, tokenIds: people.tokens().map((t) => t.actor.id) });
   if (!webhook) log.warn('slack channel: no webhook configured — notifications are off', { webhook_env: cfg.webhook_env || '' });
 
   function message(event, p, decisions, extra = {}) {
@@ -148,14 +152,17 @@ export function create(ctx, cfg, { governance }) {
       if (!p) return reply('That proposal no longer exists.');
       if (value.h !== p.headSha) return reply(`This proposal changed after this message was sent. Please look at it again in the inbox: ${inbox}`);
 
-      let actor;
+      let who;
       try {
-        actor = { ...humanActor({ id: mapped.id, display: mapped.display, email: mapped.email, roles: mapped.roles || ['viewer'], teams: mapped.teams || [] }), idp: 'slack' };
+        who = await identities.resolveMapped(mapped, { mode: people.mode, tokens: people.tokens() });
       } catch (err) {
         return reply(`Your Almagest mapping is misconfigured (${err.message}). Ask an administrator.`);
       }
+      if (who.refused) return reply(`${who.refused} You can also approve in the inbox: ${inbox}`);
+      // Vouched: Slack signed this request and the mapping resolved to one person (trust.mjs).
+      const actor = vouch({ ...who.actor, idp: 'slack' }, 'slack');
       try {
-        const out = await governance.approve(p.id, actor, { scope: 'all', channel: 'slack' });
+        const out = await governance.approve(p.id, actor, { scope: 'all', channel: 'slack', headSha: String(value.h || '') });
         if (out.status === 'merged') return reply('Approved — it is now part of the knowledge base.');
         const { evaluation } = await governance.evaluate(p.id);
         return reply(`Approved. ${evaluation.ready ? '' : evaluation.explanation}`.trim());

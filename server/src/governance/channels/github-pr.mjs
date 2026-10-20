@@ -22,13 +22,15 @@
  * happened — and logged as a policy violation. Mirror the policy in GitHub's
  * branch protection; GitHub is the gate on that path.
  */
-import { humanActor } from '../../core/auth.mjs';
 import { HttpError } from '../../core/http.mjs';
+import { validateMappings } from '../identity.mjs';
 import { hmac, safeEqual } from '../signing.mjs';
+import { vouch } from '../trust.mjs';
 import { describe, sourceName } from '../summary.mjs';
 import { readRaw } from './slack.mjs';
 
 const NS = 'governance.github';
+const DELIVERIES = 'governance.github.delivery';
 
 export function verifyGithub(secret, signature, rawBody) {
   if (!secret) return false;
@@ -53,7 +55,7 @@ export function prBody(p, decisions, base) {
   ].filter((l, i, a) => l !== '' || a[i - 1] !== '').join('\n');
 }
 
-export function create(ctx, cfg, { governance, merger }) {
+export function create(ctx, cfg, { governance, merger, identities, people }) {
   const { config, git, log, store } = ctx;
   const base = String(config.service.http.base_url).replace(/\/+$/, '');
   const api = String(cfg.api_url || 'https://api.github.com').replace(/\/+$/, '');
@@ -62,6 +64,7 @@ export function create(ctx, cfg, { governance, merger }) {
   const remote = cfg.remote || config.service.git.remote;
   const main = config.service.git.main;
   const users = cfg.users || {};
+  validateMappings('governance.channels[github-pr].users', Object.entries(users), { mode: people.mode, multi: people.multi, tokenIds: people.tokens().map((t) => t.actor.id) });
   if (!cfg.repo || !remote) log.warn('github-pr channel: repo or service.git.remote not set — pull requests are off');
 
   async function gh(method, route, body) {
@@ -100,10 +103,18 @@ export function create(ctx, cfg, { governance, merger }) {
     }
   }
 
-  function actorFor(login) {
+  /**
+   * The person behind a GitHub login: mapped through `users`, then resolved
+   * by email to the canonical person (identity.mjs). Anyone else is recorded
+   * as who they were — and cannot approve.
+   */
+  async function actorFor(login) {
     const m = users[login];
-    if (!m) return { id: `github:${login}`, kind: 'human', display: login, email: '', roles: [], teams: [], idp: 'github', unmapped: true };
-    return { ...humanActor({ id: m.id, display: m.display || login, email: m.email, roles: m.roles || ['viewer'], teams: m.teams || [] }), idp: 'github' };
+    const stranger = (why) => ({ id: `github:${login}`, kind: 'human', display: login, email: '', roles: [], teams: [], idp: 'github', unmapped: true, why });
+    if (!m) return stranger('not mapped');
+    const who = await identities.resolveMapped(m, { mode: people.mode, tokens: people.tokens() });
+    if (who.refused) return stranger(who.refused);
+    return vouch({ ...who.actor, idp: 'github' }, 'github-pr');
   }
 
   /** Bring local main up to the remote's, by fast-forward only. */
@@ -125,29 +136,41 @@ export function create(ctx, cfg, { governance, merger }) {
       if (!secret) throw new HttpError(503, 'github webhook secret is not configured');
       if (!verifyGithub(secret, req.headers['x-hub-signature-256'], raw)) throw new HttpError(401, 'bad signature');
       const event = req.headers['x-github-event'];
-      if (event === 'ping') return { ok: true };
-      if (event !== 'pull_request') return { ok: true, ignored: event };
-      let payload;
-      try { payload = JSON.parse(raw); } catch { throw new HttpError(400, 'invalid JSON'); }
-      const pr = payload.pull_request || {};
-      if (payload.action !== 'closed') return { ok: true, ignored: payload.action };
-      const p = await store.proposals.getByBranch(String(pr.head?.ref || ''));
-      if (!p) return { ok: true, ignored: 'no proposal for that branch' };
-
-      if (pr.merged) {
-        const actor = actorFor(String(pr.merged_by?.login || 'unknown'));
-        try { await followRemoteMain(); } catch (err) { log.warn('fetching main after a GitHub merge failed', { error: err.message }); }
-        const out = await governance.recordExternalMerge(p.id, actor, { sha: String(pr.merge_commit_sha || ''), headSha: String(pr.head?.sha || ''), channel: 'github-pr' });
-        return { ok: true, proposal: out.id, status: out.status, policyMet: out.merge?.policyMet };
+      // GitHub redelivers on timeouts and lets people press "Redeliver": act once per delivery.
+      const delivery = String(req.headers['x-github-delivery'] || '');
+      if (delivery) {
+        if (await store.kv.get(DELIVERIES, delivery)) return { ok: true, duplicate: true };
+        await store.kv.set(DELIVERIES, delivery, { at: new Date().toISOString(), event: String(event || '') });
       }
-      const login = String(payload.sender?.login || '');
-      const actor = actorFor(login);
-      if (actor.unmapped) return { ok: true, ignored: 'closed by an unmapped GitHub user' };
       try {
-        const out = await governance.reject(p.id, actor, { reason: 'Pull request closed on GitHub', channel: 'github-pr' });
-        return { ok: true, proposal: out.id, status: out.status };
+        if (event === 'ping') return { ok: true };
+        if (event !== 'pull_request') return { ok: true, ignored: event };
+        let payload;
+        try { payload = JSON.parse(raw); } catch { throw new HttpError(400, 'invalid JSON'); }
+        const pr = payload.pull_request || {};
+        if (payload.action !== 'closed') return { ok: true, ignored: payload.action };
+        const p = await store.proposals.getByBranch(String(pr.head?.ref || ''));
+        if (!p) return { ok: true, ignored: 'no proposal for that branch' };
+
+        if (pr.merged) {
+          const actor = await actorFor(String(pr.merged_by?.login || 'unknown'));
+          try { await followRemoteMain(); } catch (err) { log.warn('fetching main after a GitHub merge failed', { error: err.message }); }
+          const out = await governance.recordExternalMerge(p.id, actor, { sha: String(pr.merge_commit_sha || ''), headSha: String(pr.head?.sha || ''), channel: 'github-pr' });
+          return { ok: true, proposal: out.id, status: out.status, policyMet: out.merge?.policyMet };
+        }
+        const login = String(payload.sender?.login || '');
+        const actor = await actorFor(login);
+        if (actor.unmapped) return { ok: true, ignored: 'closed by an unmapped GitHub user' };
+        try {
+          const out = await governance.reject(p.id, actor, { reason: 'Pull request closed on GitHub', channel: 'github-pr' });
+          return { ok: true, proposal: out.id, status: out.status };
+        } catch (err) {
+          return { ok: true, ignored: err.message };
+        }
       } catch (err) {
-        return { ok: true, ignored: err.message };
+        // Not handled: let GitHub's retry through instead of swallowing it as a duplicate.
+        if (delivery) await store.kv.delete(DELIVERIES, delivery);
+        throw err;
       }
     }, { raw: true });
   }

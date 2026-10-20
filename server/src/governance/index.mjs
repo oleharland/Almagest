@@ -9,9 +9,12 @@
  *   create(ctx) → service object   (registers inbox/API/channel routes, a session auth provider)
  *   commands    → CLI subcommands
  */
+import { parseTokens } from '../core/auth.mjs';
 import { createChannels } from './channels/index.mjs';
 import { createConfirmations } from './confirmations.mjs';
+import { createIdentities } from './identity.mjs';
 import { createMerger, createMutex } from './merge.mjs';
+import { writableMatcher } from './paths.mjs';
 import { createService } from './service.mjs';
 import { createSessions } from './sessions.mjs';
 import { secretKey } from './signing.mjs';
@@ -30,15 +33,31 @@ export async function create(ctx) {
     lock: createMutex(),
   });
 
-  const sessions = createSessions(ctx, { secret, ttlHours: Number(config.service.auth.session_hours || 12) });
+  const identities = createIdentities({ store: ctx.store, log });
+  const sessions = createSessions(ctx, { secret, identities, ttlHours: Number(config.service.auth.session_hours || 12) });
   ctx.auth.use(sessions.provider);
   sessions.routes(ctx.http);
 
-  const merger = createMerger({ git: ctx.git, config, log });
-  const governance = createService(ctx, { merger, confirmations, lock });
-  const channels = createChannels(ctx, { governance, sessions, confirmations, secret, merger });
+  const allowed = writableMatcher({
+    brainDir: config.v1.brainDir, manifestPath: config.v1.manifestPath,
+    challengesPath: config.v1.challengesPath, indexDir: config.v1.indexDir,
+  });
+  const merger = createMerger({ git: ctx.git, config, log, allowed });
+  const governance = createService(ctx, { merger, confirmations, lock, identities, allowed });
+
+  // How channel accounts are tied to people (identity.mjs). "multi" = counting
+  // people matters, so every mapping must resolve to exactly one person.
+  const rules = config.governance.rules || [];
+  const people = {
+    mode: config.service.auth.provider,
+    tokens: () => parseTokens(process.env[config.service.auth.tokens_env || 'ALMAGEST_TOKENS'] || ''),
+    multi: Boolean(config.governance.separation_of_duties)
+      || rules.some((r) => (r.require?.approvals || 0) > 1 || (r.require?.distinct_teams || 0) > 1),
+  };
+  const channels = createChannels(ctx, { governance, sessions, confirmations, secret, merger, identities, people });
   governance.channels = channels.map((c) => ({ kind: c.kind, canApprove: Boolean(c.canApprove) }));
   governance.channel = (kind) => channels.find((c) => c.kind === kind) || null;
+  governance.identities = identities;   // the person registry (identity.mjs) — read-mostly, for doctor and tests
 
   ctx.http.route('GET', '/', async (_req, res) => {
     res.statusCode = 303;

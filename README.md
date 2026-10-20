@@ -166,7 +166,7 @@ Everything above runs with nothing but an agent session and git. `server/` adds 
 
 One code path, three profiles — `service.profile` in `brain.config.yaml`:
 
-- **solo** — your laptop or one small container. SQLite, a pasted token, approve from your phone or from chat.
+- **solo** — your laptop or one small container. SQLite, a pasted token to sign in, approve from your phone (a chat can hand you the link, never approve for you).
 - **team** — SSO sign-in, the person who submitted can't approve their own proposal, hot pages need two approvals.
 - **enterprise** — Postgres, SSO required to approve, owner-team sign-off on hot pages, Slack and GitHub-PR channels, remote MCP behind your IdP.
 
