@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#
+# tools/hooks/pre-commit — the harness-agnostic commit gate.
+#
+# Claude Code gets `almagest hook guard-wiki` before a write ever happens. Every
+# other harness — Codex, Gemini CLI, Cursor, a person in an editor — reaches
+# git eventually, and this is where non-negotiables 1 and 7 are enforced for
+# all of them at once:
+#
+#   1. A commit on `main` that touches brain/wiki/ is refused. Pages reach
+#      main only by a reviewed merge of an ingest branch.
+#   7. A commit that touches the brain is audited, and refused on exit 1.
+#
+# The audit runs against the STAGED tree — `git checkout-index` into a temp
+# dir — not the working tree, so what is checked is exactly what would be
+# committed: an unstaged fix cannot pass a staged mistake.
+#
+# Install once per clone:
+#
+#   git config core.hooksPath tools/hooks
+#
+# `git commit --no-verify` skips it, as it skips every git hook. That is git's
+# own escape hatch, it is visible in the history of whoever uses it, and it is
+# why the service's merge step re-audits independently.
+#
+# Dependencies: bash, git, awk, mktemp, Node 22+ (contract requirement 7).
+
+set -euo pipefail
+export LC_ALL=C
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+# brain_dir and the main branch name, read from brain.config.yaml without a
+# YAML parser: both are plain top-level / one-level scalars.
+BRAIN="$(awk -F: '/^brain_dir:/ { v=$2; gsub(/[ "\047]/, "", v); print v; exit }' brain.config.yaml 2>/dev/null || true)"
+BRAIN="${BRAIN:-brain}"
+MAIN="$(awk '/^service:/ { s=1; next } s && /^[^ #]/ { s=0 } s && /^ +main:/ { v=$2; gsub(/["\047]/, "", v); print v; exit }' brain.config.yaml 2>/dev/null || true)"
+MAIN="${MAIN:-main}"
+
+BRANCH="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+STAGED="$(git diff --cached --name-only --diff-filter=ACDMRT)"
+
+red() { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+
+# ── 1. main guard ─────────────────────────────────────────────────────────
+if [ "$BRANCH" = "$MAIN" ]; then
+    WIKI_CHANGES="$(printf '%s\n' "$STAGED" | awk -v p="$BRAIN/wiki/" 'index($0, p) == 1' || true)"
+    if [ -n "$WIKI_CHANGES" ]; then
+        red "✗ pre-commit: refusing to commit to $MAIN — this commit touches $BRAIN/wiki/:"
+        printf '%s\n' "$WIKI_CHANGES" | sed 's/^/    /' >&2
+        red "  Nothing writes to the wiki on $MAIN (non-negotiable 1). Commit on an ingest branch:"
+        red "    git switch -c ingest/<source-slug>-<sha7>"
+        exit 1
+    fi
+fi
+
+# ── 7. audit ──────────────────────────────────────────────────────────────
+# Only commits that touch the brain or its config are audited; a commit to
+# site/ or server/ cannot change what the audit says.
+TOUCHES_BRAIN="$(printf '%s\n' "$STAGED" | awk -v p="$BRAIN/" 'index($0, p) == 1 || $0 == "brain.config.yaml"' | head -1 || true)"
+[ -n "$TOUCHES_BRAIN" ] || exit 0
+
+if ! command -v node >/dev/null 2>&1; then
+    red "✗ pre-commit: node is not on PATH — the audit cannot run, so the commit cannot be checked."
+    red "  Install Node 22+ (agent/contract.md, requirement 7)."
+    exit 1
+fi
+
+TMP="$(mktemp -d -t almagest-precommit.XXXXXX)"
+trap 'rm -rf "$TMP"' EXIT
+git checkout-index --all --prefix="$TMP/"
+
+set +e
+node "$ROOT/tools/audit.mjs" --repo "$TMP"
+CODE=$?
+set -e
+
+case "$CODE" in
+    0) exit 0 ;;
+    1) red "✗ pre-commit: tools/audit.mjs found errors in the staged brain — commit blocked (non-negotiable 7)."
+       red "  Fix the findings above, stage the fix, and commit again."
+       exit 1 ;;
+    *) red "✗ pre-commit: tools/audit.mjs could not run (exit $CODE) — commit blocked until it can."
+       exit 1 ;;
+esac

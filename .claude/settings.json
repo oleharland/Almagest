@@ -45,5 +45,42 @@
       "Bash(git push --force:*)",
       "Bash(git reset --hard:*)"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/server/bin/almagest.mjs\" hook guard-wiki",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/server/bin/almagest.mjs\" hook enqueue",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/server/bin/almagest.mjs\" hook status",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }
