@@ -1,8 +1,9 @@
 # Almagest v2 — the service layer
 
-Status: **build spec**. This file is the shared contract the v2 workstreams build
-against. If a workstream needs to change a contract defined here, it changes this
-file in the same commit and says so in its summary.
+Status: **implemented** — every module below exists in `server/` and is under
+test. This file stays the contract between the modules: a change to a contract
+defined here changes this file in the same commit. What is and is not yet
+enforced against a hostile agent is in [security.md](security.md).
 
 ## What v2 adds, and what it does not change
 
@@ -12,11 +13,11 @@ adds five things:
 
 | # | Workstream | Module | One line |
 |---|---|---|---|
-| WS1 | Background ingest | `server/src/ingest/` | A queue + runner that ingests on its own, in its own git worktree, gated by the audit |
-| WS2 | Connectors | `server/src/connectors/` | Any MCP server as an input, fingerprinted mechanically |
-| WS3 | Governance | `server/src/governance/` | Proposals, decisions, policy, and pluggable approval channels (web, chat, Slack, email, GitHub PR) |
-| WS4 | Almagest as MCP | `server/src/mcp/` | Read the brain from any chat, local (stdio) or remote (HTTP) |
-| WS5 | Telemetry | `server/src/telemetry/` | Every request tracked; demand drives review strictness, re-verification and gap discovery |
+| 1 | Background ingest | `server/src/ingest/` | A queue + runner that ingests on its own, in its own git worktree, gated by the audit |
+| 2 | Connectors | `server/src/connectors/` | Any MCP server as an input, fingerprinted mechanically |
+| 3 | Governance | `server/src/governance/` | Proposals, decisions, policy, and pluggable approval channels (web, chat, Slack, email, GitHub PR) |
+| 4 | Almagest as MCP | `server/src/mcp/` | Read the brain from any chat, local (stdio) or remote (HTTP) |
+| 5 | Telemetry | `server/src/telemetry/` | Every request tracked; demand drives review strictness, re-verification and gap discovery |
 
 **Git stays the store.** `brain/wiki/` on `main` is still the source of truth;
 the service holds no second copy of the knowledge. The service's own database
@@ -76,11 +77,11 @@ server/                       its own package, like site/ — plain ESM .mjs + J
       http.mjs                tiny router over node:http (no framework)
       log.mjs                 structured logger
       snapshot.mjs            ctx.snapshot — main's pages via a detached worktree, cached per sha
-    ingest/      WS1          create(ctx) → ctx.ingest
-    connectors/  WS2          create(ctx) → ctx.connectors
-    governance/  WS3          create(ctx) → ctx.governance
-    mcp/         WS4          create(ctx) → ctx.mcp
-    telemetry/   WS5          create(ctx) → ctx.telemetry (+ ctx.demand)
+    ingest/                   create(ctx) → ctx.ingest
+    connectors/               create(ctx) → ctx.connectors
+    governance/               create(ctx) → ctx.governance
+    mcp/                      create(ctx) → ctx.mcp
+    telemetry/                create(ctx) → ctx.telemetry (+ ctx.demand)
   test/                       node --test; one folder per module
 deploy/                       Dockerfile, compose, launchd, systemd (integration phase)
 ```
@@ -149,7 +150,7 @@ A `kind: connector` ref also carries `server`, `change` (`new` | `changed` |
 optionally `commit` and `supersedes` (a v1 `kind: remote` manifest id) — see
 `docs/v2/connectors.md` → The SourceRef.
 
-### Job (WS1 owns the lifecycle)
+### Job (ingest owns the lifecycle)
 
 ```js
 { id: 'job_…',
@@ -161,7 +162,7 @@ optionally `commit` and `supersedes` (a v1 `kind: remote` manifest id) — see
   onBehalfOf?: Actor.id,                  // an agent acting for a person (MCP submit_source); also co-authors
   proposalId?: 'prp_…',                   // revise / drop-page work on an existing proposal's branch;
                                           // an ingest job gets it once its proposal exists
-  slug?: '<page slug>',                   // reverify: the page to re-check (WS5 enqueues with trigger 'demand')
+  slug?: '<page slug>',                   // reverify: the page to re-check (telemetry enqueues with trigger 'demand')
                                           // drop-page: the page to drop (required); `slugs?: [...]` for several
   instructions?: 'free text for the agent (decision resolution, reviewer feedback)',
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked' | 'cancelled',
@@ -177,7 +178,7 @@ or no diff and no decisions) succeeds with no proposal, and an empty branch it
 created is deleted.
 
 Dedup: enqueueing a job whose `(kind, source.id, source.sha256)` matches a
-`queued` or `running` job returns the existing job. Refinements (WS1):
+`queued` or `running` job returns the existing job. Refinements (ingest):
 - a source-less `reverify` dedups on `(kind, slug)`;
 - `drop-page` dedups on `(proposalId, slug)`;
 - a `revise` still **queued** for the same proposal absorbs the new
@@ -204,7 +205,7 @@ it; an invalid or missing report fails the job.
   notes?: '…' }
 ```
 
-### Proposal (WS3 owns; WS1 creates)
+### Proposal (governance owns; ingest creates)
 
 ```js
 { id: 'prp_…', jobId, branch, baseSha, headSha,
@@ -231,8 +232,7 @@ added or changed claim is shown next to the source passage its citation resolves
 to. `excerpt` resolution uses the sidecar page markers (`=== page N ===`) and the
 locator grammar from `CLAUDE.md`.
 
-### Decision (WS3)
-
+### Decision
 Every case that blocks in v1 ("stop for an in-session decision") becomes a
 Decision card the runner records instead of stopping.
 
@@ -251,7 +251,7 @@ proposal's branch with the chosen option's `effect` as `instructions`. A
 `canonical_conflict` has exactly one non-dismiss effect: append to
 `brain/canonical-challenges.md`. A proposal with open decisions cannot merge.
 
-### Event (WS5 owns)
+### Event (telemetry owns)
 
 ```js
 { id: 'evt_…', ts, channel: 'mcp' | 'web' | 'site' | 'cli',
@@ -313,7 +313,7 @@ connector.synced                                { connectorId, items }
 demand.updated                                  { hot: [slug] }
 ```
 
-Channels (WS3) subscribe to these to notify; WS5 subscribes to `proposal.merged`
+Channels (governance) subscribe to these to notify; telemetry subscribes to `proposal.merged`
 to invalidate its page cache.
 
 ## Cross-module service objects
@@ -344,7 +344,7 @@ ctx.governance  .listProposals(filter) .getProposal(id)
                 .resolveDecision(decId, actor, { optionId, note, channel })
                 .createConfirmation(prpId, onBehalfOf, action) → { url, code, expiresAt }   // chat channel
 
-ctx.demand      .get(slugs) → Map<slug, { score, rank, hot }>   // WS5 implements, WS3 consumes; unknown → zeros
+ctx.demand      .get(slugs) → Map<slug, { score, rank, hot }>   // telemetry implements, governance consumes; unknown → zeros
                 .hot() → [slug]
                 .top(n) → [{ slug, score, rank, hot, distinctSessions }]
                 .recompute() → { computedAt, population, hot, entries, changed }
@@ -432,7 +432,7 @@ governance:
     - when: { decision: canonical_conflict }
       require: { roles: [owner] }
 
-mcp:                               # WS4 — every key and its default: docs/v2/mcp.md
+mcp:                               # mcp — every key and its default: docs/v2/mcp.md
   allow_url_fetch: false           # submit_source { url }, SSRF-guarded when on
   builtin_oauth: true              # token mode: OAuth 2.1 front door for claude.ai
   git_webhook_secret_env: ALMAGEST_GIT_WEBHOOK_SECRET
@@ -455,8 +455,7 @@ telemetry:
   gaps: { similarity: 0.5, window_days: 30, min_count: 1 }
 ```
 
-## Background ingest (WS1)
-
+## Background ingest
 Triggers → `ctx.ingest.enqueue`:
 
 - **watch** — `fs.watch` on `sources.local.path` (debounced, ignores `processed/`
@@ -506,8 +505,7 @@ Hooks (`bin/almagest.mjs hook <name>`, all fast, none needs the server running):
 Plus `tools/hooks/pre-commit` — the harness-agnostic git hook (audit + main guard).
 Plus `deploy/launchd/` and `deploy/systemd/` to keep `almagest serve` running.
 
-## Connectors (WS2)
-
+## Connectors
 The service is an MCP **client**. For each connector it:
 
 1. Connects to the named MCP server (stdio or Streamable HTTP; headers from
@@ -536,11 +534,10 @@ Manifest: a new `kind: connector` entry type — `connector`, `server`, `ref`,
 `version`, `sha256` (of the snapshot), `path` and `extracted` (both the snapshot
 path), `extracted_sha256` (same digest), optional `commit`, `snapshot`, `label`.
 The audit's PROV and CITE-005 checks accept it, and CITE-005 additionally
-re-hashes committed snapshots (WS2 owns those changes in `tools/lib/checks.mjs`
+re-hashes committed snapshots (connectors owns those changes in `tools/lib/checks.mjs`
 and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
 
-## Governance (WS3)
-
+## Governance
 - **Proposal builder** — diff `baseSha..headSha` over `brain/wiki/`, parse both
   sides with `wiki-core`, compute claim-level changes and source excerpts, attach
   demand from `ctx.demand`, compute `required` from policy.
@@ -559,7 +556,7 @@ and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
   - `web` — the review inbox, server-rendered HTML at `/inbox`. Queue ordered by
     open decisions, then hot pages, then age. Per-proposal page: claim cards with
     source excerpts, per-page accept/reject, decision cards, approve / request
-    changes. Also `/inbox/reverify` and `/inbox/gaps` (from WS5) and
+    changes. Also `/inbox/reverify` and `/inbox/gaps` (from telemetry) and
     `/inbox/activity` (the audit log).
   - `mcp` — chat can list and explain proposals and ask to approve; the service
     answers with a confirmation link/code that a human must open in an
@@ -570,8 +567,7 @@ and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
   - `github-pr` — the v1 workflow: push the branch, open a PR, treat a merge
     webhook as the approval of the GitHub user who merged.
 
-## Almagest MCP server (WS4)
-
+## Almagest MCP server
 Tools (all read-only except where noted, all recorded via `ctx.telemetry.record`):
 
 | Tool | Does |
@@ -595,14 +591,14 @@ metadata so MCP clients discover the IdP. With `service.git.remote` set, the
 service keeps its own clone under `.almagest/repo` and refreshes on an interval
 and on `POST /hooks/git`.
 
-## Telemetry and demand (WS5)
+## Telemetry and demand
 
 - `ctx.telemetry.record` appends Events; failures are logged, never thrown.
 - **Demand score** per slug: Σ weight × 0.5^(age / half_life) over events —
   `get_page` 1.0, `ask` hit 0.6, `search` top-3 hit 0.3, `feedback` +2 / −1.
   Recomputed on an interval, cached in `store.kv`, published as `demand.updated`.
 - **Hot** = top `hot_percentile` and ≥ `min_score`. Hot pages get stricter policy
-  (WS3), a shorter re-verify threshold, and appear in `/inbox/reverify`.
+  (governance), a shorter re-verify threshold, and appear in `/inbox/reverify`.
 - **Gaps** — `search`/`ask` calls with no result above threshold, plus
   `report_gap`, clustered by normalised token overlap → `/inbox/gaps` and
   `ctx.telemetry.gaps()`. A gap can be turned into a `submit_source` or a

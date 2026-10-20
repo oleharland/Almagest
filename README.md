@@ -180,6 +180,8 @@ ALMAGEST_TOKENS="me:owner:$TOKEN" npm run serve
 
 Containers: `deploy/docker/` (the image clones your brain at start). Always-on on a laptop: `deploy/launchd/`, `deploy/systemd/`. The design and every contract between the parts: [docs/v2/spec.md](docs/v2/spec.md).
 
+> **Before you expose it:** read [docs/v2/security.md](docs/v2/security.md). With SSO (team / enterprise) the approval path is closed; in **solo** token mode two known gaps remain open — keep approver tokens out of chat and hook configs, and protect `main` on your git host.
+
 ## Quick start
 
 ```bash
@@ -206,7 +208,7 @@ Full walkthrough in [Getting Started](docs/getting-started.md).
 - [Benchmarks](docs/benchmarks.md) — measuring whether the wiki actually helps
 - [Multi-Brain](docs/multi-brain.md) — running several knowledge domains side by side
 - [Upstream Updates](docs/upstream-updates.md) — pulling framework improvements
-- [v2 service](docs/v2/spec.md) — [ingest](docs/v2/ingest.md) · [connectors](docs/v2/connectors.md) · [governance](docs/v2/governance.md) · [MCP](docs/v2/mcp.md) · [telemetry](docs/v2/telemetry.md)
+- [v2 service](docs/v2/spec.md) — [ingest](docs/v2/ingest.md) · [connectors](docs/v2/connectors.md) · [governance](docs/v2/governance.md) · [MCP](docs/v2/mcp.md) · [telemetry](docs/v2/telemetry.md) · [security](docs/v2/security.md)
 
 ## Structure
 

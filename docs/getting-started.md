@@ -128,6 +128,27 @@ git merge upstream/main
 
 See [Upstream Updates](upstream-updates.md) for details.
 
+## 8. Run the service (optional)
+
+Steps 1–7 are the whole framework with nothing but an agent session and git. The
+v2 service adds background ingest, any MCP server as an input, a review inbox
+for people who don't read diffs, the brain as an MCP server for your chats, and
+request tracking:
+
+```bash
+npm install
+export ALMAGEST_SECRET_KEY=$(openssl rand -hex 32)
+export TOKEN=$(openssl rand -hex 16) && echo "your inbox token: $TOKEN"
+git config core.hooksPath tools/hooks
+node server/bin/almagest.mjs doctor
+ALMAGEST_TOKENS="me:owner:$TOKEN" npm run serve      # inbox: http://127.0.0.1:4747/inbox
+```
+
+Pick a profile (`service.profile: solo | team | enterprise`) in
+`brain.config.yaml`, then read the guide for each part in [docs/v2/](v2/spec.md)
+and [the security status](v2/security.md) before running it anywhere others can
+reach.
+
 ## Where to go next
 
 - [Agent Harnesses](agent-harnesses.md) — what a harness has to be able to do, and how to set up the one you use

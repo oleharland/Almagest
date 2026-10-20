@@ -1,6 +1,6 @@
 # Connectors — any MCP server as a source
 
-Status: **implemented** (WS2, `server/src/connectors/`). Contract: [spec.md → Connectors](spec.md#connectors-ws2).
+Status: **implemented** (`server/src/connectors/`). Contract: [spec.md → Connectors](spec.md#connectors).
 
 A connector points the Almagest service at an MCP server and says which of its
 items to ingest. The service connects as an MCP **client**, lists the items,

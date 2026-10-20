@@ -1,4 +1,4 @@
-# Telemetry and demand (WS5)
+# Telemetry and demand
 
 Every request to the brain is recorded. From those records the service works
 out which pages people actually rely on, and spends review effort there: hot
@@ -12,7 +12,7 @@ token-set clusters. Every number can be recomputed by hand from the events
 those events.
 
 Code: `server/src/telemetry/`. Contract: `docs/v2/spec.md` → *Telemetry and
-demand (WS5)*. Audit side: `tools/lib/checks-demand.mjs`, `docs/audit.md` →
+demand*. Audit side: `tools/lib/checks-demand.mjs`, `docs/audit.md` →
 *Demand*.
 
 ## What is tracked, and why
@@ -201,7 +201,7 @@ approvals, the answer is a list of event ids.
 
 | Mechanism | Where | Effect |
 |---|---|---|
-| Stricter approval | WS3 policy, `governance.rules` with `when: { hot: true }` | Each `ProposalChange` carries `hot` and `demand` from `ctx.demand.get`. Profile defaults: solo 1 approval per page, team 2, enterprise 2 + owner team |
+| Stricter approval | Governance policy, `governance.rules` with `when: { hot: true }` | Each `ProposalChange` carries `hot` and `demand` from `ctx.demand.get`. Profile defaults: solo 1 approval per page, team 2, enterprise 2 + owner team |
 | Re-verify queue | `ctx.telemetry.reverifyQueue()`, `GET /api/reverify`, `/inbox/reverify`, `almagest reverify` | Hot pages whose `last_verified` is older than `stale_after_days_hot` (default 30 — a third of the 90-day tier threshold), never verified, or with `confidence: low \| unknown`. Ordered by **score × max(overdue_days, 1)**; each entry says why |
 | Auto re-verify (opt-in) | `telemetry.auto_reverify: true` | Each recompute enqueues `ctx.ingest.enqueue({ kind: 'reverify', slug, trigger: 'demand', requestedBy: 'svc:telemetry', instructions })` for each due, non-canonical page — at most once per page per `stale_after_days_hot` window (tracked in kv `demand.reverify`). The job still produces a proposal; a human still merges it |
 | Audit warnings | `tools/audit.mjs --demand .almagest/demand.tsv` | `DEMAND-001` hot page past `stale_after_days_hot`; `DEMAND-002` hot page with low/unknown confidence. Warnings unless `audit.severity` lists them as errors. See `docs/audit.md` → *Demand* |

@@ -168,8 +168,9 @@ Local clone (stdio):
 
 ```bash
 claude mcp add --scope user almagest -- node /abs/path/almagest/server/bin/almagest.mjs mcp --repo /abs/path/almagest
-# as a specific person / role:
-claude mcp add --scope user almagest -e ALMAGEST_TOKEN=<your token> -- node /abs/path/almagest/server/bin/almagest.mjs mcp --repo /abs/path/almagest
+# as a specific person / role — use a contributor or viewer token here, never an
+# approver's: in token mode the same secret also signs in to the inbox (security.md → 1)
+claude mcp add --scope user almagest -e ALMAGEST_TOKEN=<contributor token> -- node /abs/path/almagest/server/bin/almagest.mjs mcp --repo /abs/path/almagest
 ```
 
 Remote (HTTP) — OAuth is offered automatically (`/mcp` → Authenticate):

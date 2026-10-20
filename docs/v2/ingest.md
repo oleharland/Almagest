@@ -5,8 +5,8 @@ whether it is new, ingests it on its own branch in its own git worktree, checks
 the result with the audit, commits it, and puts a proposal in the review inbox.
 Nothing reaches `main` until a person approves the diff.
 
-This is `server/src/ingest/` (WS1). The contract is
-[spec.md → Background ingest](spec.md#background-ingest-ws1); this page is how
+This is `server/src/ingest/`. The contract is
+[spec.md → Background ingest](spec.md#background-ingest); this page is how
 to run it and what it guarantees.
 
 ```
@@ -49,7 +49,7 @@ own output, the audit's findings. The validated run report is kept at
 ## Configuration
 
 All optional; these are the defaults. The first block is the spec's; the rest
-are WS1 additions.
+were added beyond the core spec.
 
 ```yaml
 ingest:
@@ -62,7 +62,7 @@ ingest:
   watch_raw: true                # fs.watch the drop folder + scan it on start
   max_attempts: 2                # retryable failures only (see below)
 
-  # ── WS1 additions ─────────────────────────────────────────────────────────
+  # ── beyond the core spec ─────────────────────────────────────────────────────────
   extra_tools: []                # extra allowlist entries for the agent, e.g.
                                  #   ["Bash(pdftotext:*)", "Bash(pandoc:*)"]
   cli: claude                    # the Claude Code binary (claude-code driver)
@@ -88,7 +88,7 @@ background with Claude Code, and a Codex model name would break it.
 |---|---|---|
 | `ingest` | A new or changed source | new `ingest/<source-slug>-<sha7>` |
 | `revise` | Apply a decision's `effect` or a reviewer's requested changes | the proposal's |
-| `reverify` | Re-check a page (WS5 `auto_reverify`) against its sidecars | new `ingest/reverify-<slug>-<sha7 of main>`, or a proposal's |
+| `reverify` | Re-check a page (telemetry `auto_reverify`) against its sidecars | new `ingest/reverify-<slug>-<sha7 of main>`, or a proposal's |
 | `drop-page` | Undo one page on a proposal — mechanical, no agent | the proposal's |
 
 Status: `queued → running → succeeded | blocked | failed | cancelled`.
@@ -149,7 +149,7 @@ after that; the `enqueue` hook falls back to the spool). `GET /api/jobs` and
 `GET /api/jobs/:id` need any authenticated actor; `job.error` never quotes the
 run report or the model's output. The API only ever enqueues `ingest` — `revise` and
 `drop-page` carry instructions the agent is told to trust, so they come from
-governance through `ctx`, never from a request body. MCP `submit_source` (WS4)
+governance through `ctx`, never from a request body. MCP `submit_source`
 writes into `.almagest/submissions/` and enqueues a local source from there,
 with `onBehalfOf` the human; that person co-authors the commit.
 
@@ -302,9 +302,10 @@ prompt.
 - The audit runs on the whole worktree. If `main` already fails the audit,
   every ingest fails until it is fixed — on purpose: a branch that does not pass
   is not a reviewable diff.
-- After a merge, a binary original stays untracked in your checkout's
-  `brain/raw/` (processed binaries are gitignored). The watcher skips it as
-  unchanged; deleting it is yours.
+- After a merge, the file you dropped stays untracked in your checkout's
+  `brain/raw/`: the runner ingests a copy in its own worktree, and the move to
+  `processed/` happens on the branch, not in your folder. The watcher skips it
+  as unchanged; deleting it is yours, and until you do `git status` lists it.
 - `hook enqueue` and a person ingesting the same file by hand in an interactive
   session will both run; the interactive session wins only if it reaches the
   branch first. Turn the hook off for manual-ingest sessions if that matters.
