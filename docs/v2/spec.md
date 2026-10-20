@@ -153,6 +153,7 @@ holds that token, not the person.
   trigger: 'watch' | 'schedule' | 'manual' | 'mcp' | 'hook' | 'decision' | 'feedback' | 'demand',
   requestedBy: Actor.id,
   proposalId?: 'prp_…',                   // revise / drop-page work on an existing proposal's branch
+  slug?: '<page slug>',                   // reverify: the page to re-check (WS5 enqueues with trigger 'demand')
   instructions?: 'free text for the agent (decision resolution, reviewer feedback)',
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked' | 'cancelled',
   attempts: 0, maxAttempts: 2,
@@ -232,11 +233,21 @@ proposal's branch with the chosen option's `effect` as `instructions`. A
 { id: 'evt_…', ts, channel: 'mcp' | 'web' | 'site' | 'cli',
   tool: 'search' | 'get_page' | 'ask' | …,
   actorId?: '<hashed unless telemetry.store_actor: plain>',
-  client?: 'claude.ai' | 'claude-code' | …, sessionId?,
+  client?: 'claude.ai' | 'claude-code' | …,
+  sessionId?: '<hashed unless telemetry.store_actor: plain>',
   query?: '<per telemetry.store_queries: plain | hashed | none>', queryHash?,
-  results: [{ slug, rank, score }], pagesRead: [slug],
-  answered: true | false | null, latencyMs }
+  queryTokens?: ['<normalised token>'],   // gap clustering; hashed when telemetry.store_tokens: hashed
+  queryHashed?: true, tokensHashed?: true,
+  results: [{ slug, rank, score }],       // top 10 by rank
+  pagesRead: [slug],
+  answered: true | false | null, latencyMs,
+  helpful?: true | false }                // tool: 'feedback' — the explicit demand signal
 ```
+
+Callers pass a partial (`{ channel, tool, actor | actorId, sessionId, query,
+results, pagesRead, answered, latencyMs, helpful? }`); `ctx.telemetry.record`
+fills `id` and `ts` and applies the privacy settings before anything is stored.
+Full field semantics: `docs/v2/telemetry.md`.
 
 ### AuditEntry (governance audit log — append-only)
 
@@ -303,16 +314,21 @@ ctx.governance  .listProposals(filter) .getProposal(id)
                 .resolveDecision(decId, actor, { optionId, note, channel })
                 .createConfirmation(prpId, onBehalfOf, action) → { url, code, expiresAt }   // chat channel
 
-ctx.demand      .get(slugs) → Map<slug, { score, rank, hot }>   // WS5 implements, WS3 consumes
+ctx.demand      .get(slugs) → Map<slug, { score, rank, hot }>   // WS5 implements, WS3 consumes; unknown → zeros
                 .hot() → [slug]
+                .top(n) → [{ slug, score, rank, hot, distinctSessions }]
+                .recompute() → { computedAt, population, hot, entries, changed }
 ctx.telemetry   .record(evtPartial) → void                       // never throws, never blocks the caller
-                .gaps({ limit }) → [{ cluster, queries, count, lastSeen }]
+                .gaps({ limit, since }) → [{ cluster, representative, tokens, queries, count,
+                                             distinctSessions, firstSeen, lastSeen, suggestion }]
+                .explain(slug) → { score, rank, hot, byTool, topContributors, trend, formula, … }
+                .recompute() .prune() .flush() .stats() .start() .stop()
 
 ctx.mcp         .serveStdio() .handleHttp(req, res)
 
 ctx.snapshot    .load() → { sha, dir, pages, byId, known }   // core — main's pages, never the checkout's
                 .refresh({ fetch? }) → sha
-ctx.telemetry   .reverifyQueue() → [{ slug, title, score, lastVerified, overdueDays }]   // hot pages due a re-check
+ctx.telemetry   .reverifyQueue() → [{ slug, title, score, lastVerified, overdueDays, reason }]   // hot pages due a re-check
 ```
 
 **Proposals are upserted by branch.** `createFromJob` on a branch that already
@@ -389,12 +405,18 @@ telemetry:
   enabled: true
   store_queries: plain             # plain | hashed | none
   store_actor: hashed              # plain | hashed | none
+  store_tokens: plain              # plain | hashed — the normalised token set used to cluster gaps
   retention_days: 90
+  recompute_seconds: 300
   demand:
     half_life_days: 14
     hot_percentile: 90             # top 10% by score are hot …
     min_score: 3                   # … and must clear this floor
+    dedupe_minutes: 10             # one session × one page counts once per window
+    # weights: { get_page: 1.0, resource: 1.0, ask: 0.6, search: 0.3, feedback_helpful: 2, feedback_unhelpful: -1 }
   stale_after_days_hot: 30         # hot pages re-verify sooner (DEMAND-001)
+  auto_reverify: false             # true: enqueue `reverify` jobs for due hot pages, once per page per window
+  gaps: { similarity: 0.5, window_days: 30, min_count: 1 }
 ```
 
 ## Background ingest (WS1)
@@ -543,6 +565,14 @@ and on `POST /hooks/git`.
   audit behaves exactly as v1.
 - Retention: `store.events.prune` daily per `retention_days`. Raw events never
   enter git.
+- **Explainability** — `ctx.telemetry.explain(slug)` returns the events and
+  weights behind a score (top contributors, counts per tool, deduped events, the
+  trend against the previous half-life window). Every demand effect — a stricter
+  approval, a re-verify entry, a DEMAND-* warning — is traceable to events.
+- HTTP (auth `any`): `GET /api/demand?top=N`, `GET /api/demand/:slug` (explain),
+  `GET /api/gaps`, `GET /api/reverify`. CLI: `almagest demand [--top N]`,
+  `almagest gaps`, `almagest reverify`. Long form, formula worked through,
+  privacy guidance: `docs/v2/telemetry.md`.
 
 ## Testing
 

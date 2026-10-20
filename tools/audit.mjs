@@ -7,6 +7,7 @@
  *   tools/audit.mjs --json          machine-readable findings
  *   tools/audit.mjs index           regenerate brain/.index/
  *   tools/audit.mjs --check-index   verify brain/.index/ is current (CI)
+ *   tools/audit.mjs --demand <tsv>  also run DEMAND-001/002 against a demand export
  *
  * Exit codes: 0 clean · 1 violations found · 2 tool error.
  *
@@ -30,7 +31,8 @@ import matter from 'gray-matter';
 
 import { loadWiki, WIKI_DIRS } from './lib/wiki-core.mjs';
 import { loadChallenges, loadConfig, loadIndex, loadManifest } from './lib/config.mjs';
-import { runChecks, templatePages } from './lib/checks.mjs';
+import { CATEGORIES, runChecks, templatePages } from './lib/checks.mjs';
+import { checkDemand, DEMAND_CATEGORY, loadDemand } from './lib/checks-demand.mjs';
 import { renderJson, renderReport, colors } from './lib/report.mjs';
 import { diffIndex, indexFiles, writeIndex } from './lib/derived-index.mjs';
 
@@ -52,6 +54,7 @@ Options:
   --manifest <path>       Manifest to reconcile against. Overrides manifest.path.
   --index-md <path>       index.md to reconcile against. Default: <brain>/index.md.
   --index-dir <dir>       Where the derived index is written. Overrides audit.index_dir.
+  --demand <file>         Demand export (.almagest/demand.tsv) — adds DEMAND-001/002 for hot pages.
   --no-example-pages      Skip \`_\`-prefixed slugs entirely.
   --no-color              Never emit ANSI colour.
   -h, --help              This text.
@@ -71,6 +74,7 @@ function parseArgs(argv) {
     manifest: null,
     indexMd: null,
     indexDir: null,
+    demand: null,
     showExamplePages: true,
     color: process.stdout.isTTY === true && !process.env.NO_COLOR,
   };
@@ -93,6 +97,7 @@ function parseArgs(argv) {
       case '--manifest': opts.manifest = next(); break;
       case '--index-md': opts.indexMd = next(); break;
       case '--index-dir': opts.indexDir = next(); break;
+      case '--demand': opts.demand = next(); break;
       case '--no-example-pages': opts.showExamplePages = false; break;
       case '--no-color': opts.color = false; break;
       case '-h': case '--help': opts.command = 'help'; break;
@@ -154,7 +159,15 @@ function loadEverything(opts) {
 
 function cmdAudit(opts) {
   const ctx = loadEverything(opts);
-  const findings = runChecks({ ...ctx, today: referenceDate() });
+  // Loaded before any check runs: an unreadable demand file is a tool error
+  // (exit 2), never a silent "nothing is hot".
+  const demand = opts.demand ? loadDemand(path.resolve(ctx.repoRoot, opts.demand)) : null;
+  const today = referenceDate();
+  const findings = runChecks({ ...ctx, today });
+  if (demand) {
+    if (!CATEGORIES.some((c) => c.key === DEMAND_CATEGORY.key)) CATEGORIES.push(DEMAND_CATEGORY);
+    findings.push(...checkDemand({ pages: ctx.pages, config: ctx.config, demand, today }));
+  }
 
   const meta = {
     pageCount: ctx.pages.length,
