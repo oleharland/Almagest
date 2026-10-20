@@ -4,6 +4,30 @@ Almagest can read content directly from remote repositories over MCP (Model Cont
 
 Remote sources are entirely optional. If you only ever drop files into `brain/raw/`, skip this page.
 
+## With the v2 service: remote sources are connectors
+
+If you run the Almagest service (`server/`), `sources.remote` is no longer a
+separate path. Each entry is loaded as a **connector** with the `github` or
+`gitlab` recipe — same `.mcp.json` server, same `repo` / `paths` / `branch` —
+and syncs like any other MCP source ([v2/connectors.md](v2/connectors.md)):
+
+| | v1 agent-driven remote ingest (below) | v2 connector |
+|---|---|---|
+| Who reads the repo | the agent, over MCP | the service, over MCP; the agent has no network |
+| Change detection | commit SHA | sha256 of the rendered snapshot; the blob SHA only skips fetches |
+| What pages cite | `github:owner/repo/path@sha` | a committed snapshot under `brain/raw/extracted/<connector-id>/` |
+| Manifest entry | `kind: remote` | `kind: connector` (the commit is kept in `commit`) |
+
+Nothing needs changing in `brain.config.yaml`. On the first service sync each
+file that already has a `kind: remote` entry is re-ingested once as a connector
+source and its old entry is marked `superseded`. Existing pages keep working
+until then — the audit still checks `kind: remote` citations exactly as below.
+Everything on the rest of this page still applies when you ingest without the
+service.
+
+For hosted servers that use OAuth rather than a token in `.mcp.json`, run
+`almagest connectors login <id>` once; see [v2/connectors.md → OAuth login](v2/connectors.md#oauth-login).
+
 ## Remote sync can now run unattended
 
 This is the change that makes this page worth reading. Under the old approval

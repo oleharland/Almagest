@@ -69,6 +69,25 @@ sources:
     pages:
       - architecture-overview
     status: ingested
+
+  - id: "product-drive:1AbCdEfGhIjK"
+    kind: connector
+    connector: product-drive
+    server: google-drive
+    ref: 1AbCdEfGhIjK
+    version: "2026-08-24T16:02:11Z"
+    path: brain/raw/extracted/product-drive/1abcdefghijk-a24224a1.txt
+    sha256: ac4e1a1a82cbda5cd119a77100ffd01aaa046bedfe855e512169979e0fb2aec2
+    extracted: brain/raw/extracted/product-drive/1abcdefghijk-a24224a1.txt
+    extracted_sha256: ac4e1a1a82cbda5cd119a77100ffd01aaa046bedfe855e512169979e0fb2aec2
+    snapshot: commit
+    label: product
+    bytes: 427
+    first_ingested: 2026-08-25
+    last_ingested: 2026-08-25
+    pages:
+      - release-policy
+    status: ingested
 ```
 
 A fresh brain ships with `sources: []` and the same field reference in comments.
@@ -79,9 +98,9 @@ A fresh brain ships with `sources: []` and the same field reference in comments.
 
 | Field | Required | Meaning |
 |-------|----------|---------|
-| `id` | yes | Stable identifier, assigned at first ingest and **never changed**. Convention: slugified filename (local), `provider:repo:path` (remote). It survives renames — that is why it is separate from `path` |
-| `kind` | yes | `local` or `remote` |
-| `path` | yes | Local: path from the repo root to the **original** (gitignored, if binary). Remote: path within the repo |
+| `id` | yes | Stable identifier, assigned at first ingest and **never changed**. Convention: slugified filename (local), `provider:repo:path` (remote), `<connector-id>:<ref>` (connector). It survives renames — that is why it is separate from `path` |
+| `kind` | yes | `local`, `remote`, or `connector` |
+| `path` | yes | Local: path from the repo root to the **original** (gitignored, if binary). Remote: path within the repo. Connector: the snapshot path, same as `extracted` |
 | `bytes` | yes | Size at last ingest. Diagnostic only — never used for change detection |
 | `first_ingested` | yes | ISO-8601 date of the first successful ingest. Never changes |
 | `last_ingested` | yes | ISO-8601 date of the most recent successful ingest |
@@ -109,6 +128,30 @@ A fresh brain ships with `sources: []` and the same field reference in comments.
 | `commit` | yes | Commit SHA the file was read at |
 | `label` | no | The `label` from `brain.config.yaml` → `sources.remote` |
 
+### Connector-only fields
+
+A `kind: connector` source is an item the Almagest service fetched from an MCP
+server ([v2/connectors.md](v2/connectors.md)). There is no original on disk —
+the provider holds it — so the rendered **snapshot** is both the thing
+fingerprinted and the committed sidecar pages cite. `sha256` and
+`extracted_sha256` are therefore the same digest, and `path` and `extracted`
+the same file.
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `connector` | yes | The connector `id` from `brain.config.yaml` → `sources.connectors` |
+| `server` | yes | The MCP server it was read from: the `.mcp.json` key, an inline server's `name`, its URL without the query string, or `stdio:<command>`. Never anything that can carry a credential |
+| `ref` | yes | The provider's id for the item (Drive file id, issue id, resource URI, repo path) |
+| `version` | no | The provider's revision marker at fetch time (`updatedAt`, etag, blob sha). An optimisation for skipping fetches, **never** the change detector |
+| `commit` | no | For `github` / `gitlab` connectors: the commit the file was read at |
+| `sha256` | yes | 64-character hex digest of the **snapshot file** — every byte, header included. Computed by the service, never by the agent |
+| `extracted` | yes | The snapshot path: `brain/raw/extracted/<connector-id>/<slug>.txt` |
+| `extracted_sha256` | yes | Same digest as `sha256`. This is the value every citing page carries in `sources[].sha256` |
+| `snapshot` | no | `commit` (default) or `ephemeral`. An ephemeral snapshot is not committed, so its citations cannot be resolved from a clone — `PROV-001` reports them as a warning |
+| `label` | no | The connector's `label` |
+
+A v1 `sources.remote` repo now syncs as a connector (`github` / `gitlab` recipe). When one of its files already has a `kind: remote` entry, the new `kind: connector` entry replaces it: the old entry gets `status: superseded` and `superseded_by: <connector entry id>`, and its `pages` carry over.
+
 ### Status values
 
 | Status | Meaning |
@@ -116,7 +159,7 @@ A fresh brain ships with `sources: []` and the same field reference in comments.
 | `ingested` | Fully processed. The manifest matches reality |
 | `partial` | The user approved some proposed pages and rejected others. `notes` says which |
 | `skipped` | Deliberately not ingested — outside canonical scope. Recorded so it is not re-proposed on every run |
-| `missing` | The original is gone from `raw/processed/`, or the remote file is gone from the repo. Pages stay, the entry stays, nothing is re-ingested — and the sidecar is committed, so citations into it still verify |
+| `missing` | The original is gone from `raw/processed/`, the remote file is gone from the repo, or a full connector listing no longer contains the item. Pages stay, the entry stays, nothing is re-ingested — and the sidecar is committed, so citations into it still verify |
 | `superseded` | Replaced by another entry, named in `superseded_by` |
 
 ## Extracted sidecars
@@ -147,7 +190,7 @@ That buys three things at once:
 | **Byte-level re-ingest** | A changed binary is diffed against its committed sidecar. The old "the comparison was semantic, not byte-level" caveat now applies only to sources with no extractable text at all |
 | **A checkable audit** | `tools/audit.mjs` can resolve `sources[].path` (`PROV-001`) and compare digests (`CITE-005`) because the file it needs is in the repo |
 
-Text sources get no sidecar: the original is already committed and is cited directly. Remote sources get none either — the `commit` pins the exact bytes.
+Text sources get no sidecar: the original is already committed and is cited directly. Remote sources get none either — the `commit` pins the exact bytes. Connector sources are the opposite case: the snapshot is the *only* copy in the repo, written by the service under `brain/raw/extracted/<connector-id>/`, with `=== section: … ===`, `=== row n ===` and `=== t hh:mm:ss ===` markers as well as page markers.
 
 ### The digest appears twice, on purpose
 
@@ -183,6 +226,8 @@ sha256sum  "brain/raw/system-overview.pdf" | cut -d' ' -f1      # Linux
 Binary sources are hashed twice, because two different files matter. The original's digest goes in `sha256` and is what change detection compares. The sidecar's digest goes in `extracted_sha256`, and that is the one wiki pages carry — a page cites the file its locators point into, which is the sidecar.
 
 Remote sources are not hashed. The fingerprint is the commit SHA the file was read at, which the provider supplies over MCP.
+
+Connector sources are hashed by the **service**: sha256 of the rendered snapshot bytes. The snapshot holds nothing volatile (no fetch time, no provider revision), so the same upstream content always produces the same digest, and `shasum -a 256` on the committed snapshot reproduces `extracted_sha256`. The provider's `version` only lets a sync skip re-fetching an item; it never decides that something is unchanged.
 
 Filename, modification time, and file size are never used to decide whether a source changed. An edited file usually keeps its name and often keeps its size.
 

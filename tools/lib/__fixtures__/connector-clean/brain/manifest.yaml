@@ -1,0 +1,43 @@
+version: 1
+
+# Fixture — connector sources (kind: connector) that pass every check.
+# The snapshots under brain/raw/extracted/<connector>/ are real output of the
+# service's snapshot builder; their sha256 is of every byte of the file.
+sources:
+  - id: "product-drive:1AbCdEfGhIjK"
+    kind: connector
+    connector: product-drive
+    server: google-drive
+    ref: 1AbCdEfGhIjK
+    version: "2026-01-04T09:00:00Z"
+    path: brain/raw/extracted/product-drive/1abcdefghijk-a24224a1.txt
+    sha256: ac4e1a1a82cbda5cd119a77100ffd01aaa046bedfe855e512169979e0fb2aec2
+    extracted: brain/raw/extracted/product-drive/1abcdefghijk-a24224a1.txt
+    extracted_sha256: ac4e1a1a82cbda5cd119a77100ffd01aaa046bedfe855e512169979e0fb2aec2
+    snapshot: commit
+    label: product
+    bytes: 427
+    first_ingested: 2026-01-05
+    last_ingested: 2026-01-05
+    pages:
+      - release-policy
+    status: ingested
+
+  - id: "team-calls:not_Abc123Def456Gh"
+    kind: connector
+    connector: team-calls
+    server: granola
+    ref: not_Abc123Def456Gh
+    version: "2026-01-04T15:30:00Z"
+    path: brain/raw/extracted/team-calls/not-abc123def456gh-6eeedaeb.txt
+    sha256: 7c7be2da5871b5b92e087ab6c7ea744e33149422f859efec2448d88997f30a64
+    extracted: brain/raw/extracted/team-calls/not-abc123def456gh-6eeedaeb.txt
+    extracted_sha256: 7c7be2da5871b5b92e087ab6c7ea744e33149422f859efec2448d88997f30a64
+    snapshot: commit
+    bytes: 368
+    first_ingested: 2026-01-05
+    last_ingested: 2026-01-05
+    pages:
+      - release-policy
+      - release-cadence
+    status: ingested
