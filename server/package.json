@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node bin/almagest.mjs serve",
-    "test": "node --test --test-timeout=60000 --test-force-exit \"test/**/*.test.mjs\""
+    "test": "node --test --test-timeout=60000 \"test/**/*.test.mjs\""
   },
   "engines": {
     "node": ">=22.13"
