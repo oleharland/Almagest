@@ -9,7 +9,9 @@
     "audit:json": "node tools/audit.mjs --json",
     "index": "node tools/audit.mjs index",
     "check": "tools/agent-shims.sh check && node tools/audit.mjs --check-index && node tools/audit.mjs",
-    "selftest": "node tools/lib/selftest.mjs"
+    "selftest": "node tools/lib/selftest.mjs",
+    "serve": "node server/bin/almagest.mjs serve",
+    "test:server": "npm test --workspace server"
   },
   "engines": {
     "node": ">=22"
@@ -17,5 +19,8 @@
   "dependencies": {
     "gray-matter": "^4.0.3",
     "yaml": "^2.8.0"
-  }
+  },
+  "workspaces": [
+    "server"
+  ]
 }

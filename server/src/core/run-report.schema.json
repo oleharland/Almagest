@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Almagest ingest run report",
+  "description": "Written by the headless ingest agent to .almagest/run-report.json in its worktree. Validated by server/src/core/schemas.mjs → validateRunReport. See docs/v2/spec.md → RunReport.",
+  "type": "object",
+  "required": ["source", "outcome"],
+  "properties": {
+    "source": {
+      "type": "object",
+      "required": ["id"],
+      "properties": { "id": { "type": "string" }, "sha256": { "type": "string" } }
+    },
+    "outcome": { "enum": ["written", "unchanged", "blocked-only", "failed"] },
+    "pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["slug", "action"],
+        "properties": {
+          "slug": { "type": "string" },
+          "action": { "enum": ["create", "update"] },
+          "tier": { "type": "string" },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "blocked": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "question", "options"],
+        "properties": {
+          "kind": { "enum": ["contradiction", "canonical_conflict", "delete", "merge", "rename", "low_confidence", "anonymization"] },
+          "slug": { "type": "string" },
+          "question": { "type": "string" },
+          "claimA": { "type": "string" },
+          "sourceA": { "type": "string" },
+          "claimB": { "type": "string" },
+          "sourceB": { "type": "string" },
+          "options": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["id", "label", "effect"],
+              "properties": { "id": { "type": "string" }, "label": { "type": "string" }, "effect": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "notes": { "type": "string" }
+  }
+}

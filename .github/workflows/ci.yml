@@ -60,6 +60,25 @@ jobs:
       - name: Audit selftest
         run: node tools/lib/selftest.mjs
 
+  server:
+    name: Service (v2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # The root workspace installs server/ too; the service imports the audit's
+      # own config loader from tools/lib/, so they share one node_modules.
+      - run: npm ci
+
+      - name: Service tests
+        run: npm test --workspace server
+
   benchmarks:
     name: Benchmark harness
     runs-on: ubuntu-latest

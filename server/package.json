@@ -1,0 +1,25 @@
+{
+  "name": "almagest-server",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Almagest v2 service layer — background ingest, connectors, governance, MCP server, telemetry. See docs/v2/spec.md.",
+  "bin": {
+    "almagest": "bin/almagest.mjs"
+  },
+  "scripts": {
+    "start": "node bin/almagest.mjs serve",
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "gray-matter": "^4.0.3",
+    "yaml": "^2.9.1"
+  },
+  "optionalDependencies": {
+    "pg": "^8.23.1"
+  }
+}
