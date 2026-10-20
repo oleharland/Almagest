@@ -61,9 +61,17 @@ export async function createApp(options = {}) {
 
   return {
     ctx,
-    async start({ http = true } = {}) {
-      await ctx.ingest.start?.();
-      await ctx.telemetry.start?.();
+    /**
+     * `background: false` is the read side only — no ingest runner, no
+     * watcher, no telemetry timers. `almagest mcp` uses it: every chat that
+     * spawns the stdio server would otherwise start a competing runner on the
+     * same brain, and one runner per brain is the limit ingest relies on.
+     */
+    async start({ http = true, background = true } = {}) {
+      if (background) {
+        await ctx.ingest.start?.();
+        await ctx.telemetry.start?.();
+      }
       if (http) {
         server = await ctx.http.listen({ host: config.service.http.host, port: config.service.http.port });
         log.info('listening', { url: config.service.http.base_url, profile: config.profile });

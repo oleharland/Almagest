@@ -119,7 +119,8 @@ function serviceSettings(repoRoot, configPath) {
     const raw = loadConfig(repoRoot, configPath).raw;
     const http = raw.service?.http || {};
     const host = http.host || '127.0.0.1';
-    const port = http.port || 4747;
+    // Same precedence as server/src/core/config.mjs: the env wins over the file.
+    const port = process.env.ALMAGEST_PORT || process.env.PORT || http.port || 4747;
     return {
       baseUrl: String(process.env.ALMAGEST_URL || http.base_url || `http://${host}:${port}`).replace(/\/+$/, ''),
       localPath: String(raw.sources?.local?.path || 'brain/raw'),
@@ -165,11 +166,14 @@ export async function statusLine({ repoRoot, configPath, timeoutMs = 1000 } = {}
   try { proposals = await getJson(`${baseUrl}/api/proposals?status=open`, token, timeoutMs); }
   catch { return ''; }
   const open = count(proposals);
+  // The proposal list already carries each proposal's open decisions; a
+  // separate /api/decisions call is only a fallback for older services.
+  const list = proposals?.items || proposals?.proposals || (Array.isArray(proposals) ? proposals : []);
   let decisions = NaN;
-  try { decisions = count(await getJson(`${baseUrl}/api/decisions?status=open`, token, timeoutMs)); }
-  catch {
-    const list = proposals?.items || proposals?.proposals || (Array.isArray(proposals) ? proposals : []);
-    if (list.every((p) => Array.isArray(p.openDecisions))) decisions = list.reduce((n, p) => n + p.openDecisions.length, 0);
+  if (list.every((p) => Array.isArray(p.openDecisions) || Number.isFinite(p.openDecisions))) {
+    decisions = list.reduce((n, p) => n + (Array.isArray(p.openDecisions) ? p.openDecisions.length : p.openDecisions), 0);
+  } else {
+    try { decisions = count(await getJson(`${baseUrl}/api/decisions?status=open`, token, timeoutMs)); } catch { /* leave NaN */ }
   }
   if (!Number.isFinite(open)) return '';
   const parts = [`${open} open proposal${open === 1 ? '' : 's'}`];

@@ -153,3 +153,16 @@ describe('snapshot', () => {
     await app.stop();
   });
 });
+
+describe('app start', () => {
+  it('background: false starts neither the ingest runner nor telemetry timers (almagest mcp)', async () => {
+    const started = [];
+    const spy = (name) => ({ create: async () => ({ start: async () => { started.push(name); }, stop: async () => {} }), commands: {} });
+    const app = await makeApp({ repoRoot: repo(), modules: { ingest: spy('ingest'), telemetry: spy('telemetry') } });
+    await app.start({ http: false, background: false });
+    assert.deepEqual(started, []);
+    await app.start({ http: false });
+    assert.deepEqual(started.sort(), ['ingest', 'telemetry']);
+    await app.stop();
+  });
+});

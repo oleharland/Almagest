@@ -59,6 +59,11 @@ Stdio: the human is the owner of `ALMAGEST_TOKEN` when it is set (an unknown
 token refuses to start), otherwise a local `usr_local` with role
 `mcp.stdio_role` (default `owner`).
 
+Stdio is the read side only: it serves the tools and records telemetry, but runs
+no ingest runner, folder watcher or background timers — `submit_source` queues a
+job that `almagest serve` picks up. Every chat that spawns `almagest mcp` would
+otherwise start its own runner on the same brain.
+
 ## Configuration
 
 All optional. Defaults shown.

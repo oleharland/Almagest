@@ -287,6 +287,25 @@ describe('mcp tools — submit_source', () => {
 });
 
 describe('mcp tools — governance', () => {
+  it('counts only approvals given for the current head', async () => {
+    const saved = PROPOSAL.approvals;
+    PROPOSAL.approvals = [
+      { actorId: 'usr_bob', at: '2026-10-01T00:00:00.000Z', scope: 'all', channel: 'web', headSha: 'a' },   // older version
+      { actorId: 'usr_ada', at: '2026-10-02T00:00:00.000Z', scope: 'all', channel: 'web', headSha: 'b' },
+    ];
+    try {
+      const { ctx } = await setup();
+      const { client, close } = await connect(ctx, viewer);
+      const list = await call(client, 'list_proposals', {});
+      assert.equal(list.structuredContent.proposals[0].approvals, 1);
+      const one = await call(client, 'get_proposal', { id: PROPOSAL.id });
+      assert.match(one.text, /1\/1 approvals for this version/);
+      await close();
+    } finally {
+      PROPOSAL.approvals = saved;
+    }
+  });
+
   it('lists and explains proposals', async () => {
     const { ctx, calls } = await setup();
     const { client, close } = await connect(ctx, viewer);

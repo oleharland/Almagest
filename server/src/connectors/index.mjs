@@ -379,8 +379,10 @@ export function createConnectors(ctx, options = {}) {
 const HELP = `Usage: almagest connectors <command>
 
   list                          configured connectors and their last sync
-  sync <id> [--dry-run] [--full] [--json]
+  sync <id> [--dry-run] [--full] [--json] [--ingest]
                                 fetch, snapshot and fingerprint; print new/changed items
+                                (--ingest: also queue an ingest job per item for the service —
+                                the path for connectors with no schedule)
   test <id> [--fetch]           connect, list the first page, print the mapping
                                 (--fetch: also render the first item's snapshot)
   init <mcp> [--name <n>] [--stdout]
@@ -426,6 +428,16 @@ async function run(argv, env) {
         for (const r of s.refs) print(`  ${r.change.padEnd(10)} ${r.sha256.slice(0, 8)}  ${r.path}  ${r.title}`);
         for (const m of s.missing) print(`  missing    ${m.id} (pages: ${(m.pages || []).join(', ') || '—'})`);
         for (const e of s.errors) print(`  error      ${e.ref}: ${e.error}`);
+        if (f.ingest && !s.dryRun && s.refs.length) {
+          // Queued, not run: the CLI process exits now, and the running service's
+          // workers pick the jobs up from the shared store. Dedup makes a repeat
+          // `sync --ingest` of the same bytes a no-op.
+          for (const ref of s.refs) {
+            const job = await env.ctx.ingest.enqueue({ kind: 'ingest', source: ref, trigger: 'manual', requestedBy: 'svc:cli' });
+            print(`  queued     ${job.id}  ${ref.title}`);
+          }
+          print('Jobs are picked up by `almagest serve`; follow them with `almagest jobs`.');
+        }
         return s.errors.length ? 1 : 0;
       }
       case 'test': {

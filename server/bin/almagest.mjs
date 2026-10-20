@@ -68,10 +68,35 @@ async function doctor(repoRoot, configPath) {
     if (maj < 2 || (maj === 2 && min < 38)) throw new Error(`${v} — need 2.38+ for merge-tree --write-tree`);
     return v;
   });
+  let config = null;
   check('config', () => {
-    const c = loadServiceConfig(repoRoot, { configPath });
-    return `profile ${c.profile}, store ${c.service.store.driver}, ${c.sources.connectors.length} connector(s)`;
+    config = loadServiceConfig(repoRoot, { configPath });
+    return `profile ${config.profile}, store ${config.service.store.driver}, ${config.sources.connectors.length} connector(s)`;
   });
+  if (config) {
+    // What `serve` needs to be usable, not just to start: without these it
+    // boots, and then nobody can sign in or no connector token can be stored.
+    check('secret key', () => {
+      if (!process.env.ALMAGEST_SECRET_KEY) throw new Error('ALMAGEST_SECRET_KEY is not set — sessions, links and connector tokens need it');
+      return 'set';
+    });
+    check('sign-in', () => {
+      const { provider, tokens_env: tokensEnv = 'ALMAGEST_TOKENS', oidc = {} } = config.service.auth;
+      if (provider === 'oidc') {
+        if (!oidc.issuer || !oidc.client_id) throw new Error('service.auth.oidc needs issuer and client_id');
+        return `oidc ${oidc.issuer}`;
+      }
+      const n = String(process.env[tokensEnv] || '').split(';').filter((e) => e.trim()).length;
+      if (!n) throw new Error(`${tokensEnv} is empty — nobody can sign in to the inbox`);
+      return `${n} token(s) in ${tokensEnv}`;
+    });
+    check('ingest driver', () => {
+      const driver = config.ingest.driver;
+      if (driver !== 'claude-code') return driver;
+      const cli = config.ingest.cli || 'claude';
+      return `claude-code — ${execFileSync(cli, ['--version'], { encoding: 'utf-8' }).trim().split('\n')[0]}`;
+    });
+  }
   return ok ? 0 : 1;
 }
 
@@ -98,7 +123,7 @@ async function main() {
 
   if (command === 'mcp') {
     const app = await createApp({ repoRoot, configPath: opts.config });
-    await app.start({ http: false });
+    await app.start({ http: false, background: false });
     await app.ctx.mcp.serveStdio();
     return new Promise(() => {});
   }

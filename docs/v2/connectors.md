@@ -51,7 +51,7 @@ sources:
       recipe: google-drive         # shipped recipe name · ./path/to/recipe.yaml · custom
       select:                      # recipe-specific — see the recipe's header comment
         query: "parentId = '1AbCdEf'"
-      schedule: "0 * * * *"        # cron, run by the ingest runner (WS1); omit for manual only
+      schedule: "0 * * * *"        # cron, run by the ingest runner; omit for manual only — then `almagest connectors sync <id> --ingest`
       label: product               # tag for pages derived from this connector
       tier: evidence               # default tier for pages from this connector
       snapshot: commit             # commit (default — citations verifiable) | ephemeral

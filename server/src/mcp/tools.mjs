@@ -439,6 +439,10 @@ export function buildServer(ctx, cfg, brain, { human, sessionId, transport = 'me
     }
   };
   const inboxUrl = (id) => `${baseUrl}/inbox/p/${encodeURIComponent(id)}`;
+  // An approval counts only for the headSha it was given for (docs/v2/spec.md →
+  // Proposals are upserted by branch). Reporting the raw list would tell a chat
+  // a proposal is approved when its only approval was for an older version.
+  const currentApprovals = (p) => (p.approvals || []).filter((a) => !a.headSha || a.headSha === p.headSha).length;
 
   tool('list_proposals', 'governance', {
     title: 'List proposals awaiting review',
@@ -454,7 +458,7 @@ export function buildServer(ctx, cfg, brain, { human, sessionId, transport = 'me
     const rows = (list || []).slice(0, limit).map((p) => ({
       id: p.id, title: p.title, status: p.status, branch: p.branch, summary: p.summary,
       pages: (p.changes || []).length, decisions: (p.decisions || []).length,
-      approvals: (p.approvals || []).length, required: p.required?.approvals ?? null,
+      approvals: currentApprovals(p), required: p.required?.approvals ?? null,
       updatedAt: p.updatedAt || p.createdAt, url: inboxUrl(p.id),
     }));
     return {
@@ -474,7 +478,7 @@ export function buildServer(ctx, cfg, brain, { human, sessionId, transport = 'me
   }, async ({ id }) => {
     const p = await governance(() => ctx.governance.getProposal(id));
     if (!p) throw new ToolError(`No proposal ${id}.`);
-    const lines = [`# ${p.title}  (${p.id}, ${p.status})`, p.summary || '', `branch ${p.branch} · audit exit ${p.audit?.exit ?? '?'} · ${(p.approvals || []).length}/${p.required?.approvals ?? '?'} approvals`];
+    const lines = [`# ${p.title}  (${p.id}, ${p.status})`, p.summary || '', `branch ${p.branch} · audit exit ${p.audit?.exit ?? '?'} · ${currentApprovals(p)}/${p.required?.approvals ?? '?'} approvals for this version`];
     if (p.required?.reasons?.length) lines.push(`requires: ${p.required.reasons.join('; ')}`);
     for (const c of p.changes || []) {
       lines.push('', `## ${c.action} [[${c.slug}]] (${c.tier}${c.hot ? ', hot' : ''}) — ${c.pageStatus}`);
