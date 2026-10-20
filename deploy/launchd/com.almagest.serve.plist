@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  com.almagest.serve.plist — keep `almagest serve` running on macOS.
+
+  Template: replace every __PLACEHOLDER__ before loading.
+    __NODE__     absolute path to Node 22.13+   (`command -v node`)
+    __REPO__     absolute path to the brain checkout (the repo with brain/ and server/)
+    __HOME__     your home directory (Claude Code finds its login through it)
+    __PATH__     a PATH that contains `git` and `claude` (`echo $PATH`) —
+                 launchd starts jobs with almost nothing on PATH
+
+  Install:
+    cp deploy/launchd/com.almagest.serve.plist ~/Library/LaunchAgents/
+    # edit the placeholders, then:
+    mkdir -p __REPO__/.almagest/logs          # launchd will not create the log directory
+    chmod 600 ~/Library/LaunchAgents/com.almagest.serve.plist   # it may hold secrets
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.almagest.serve.plist
+    launchctl kickstart -k gui/$(id -u)/com.almagest.serve      # restart after a config change
+    launchctl bootout gui/$(id -u)/com.almagest.serve            # stop and unload
+
+  Logs: __REPO__/.almagest/logs/serve.log (service) and
+        __REPO__/.almagest/logs/<jobId>.log (one per ingest job).
+
+  A LaunchAgent (per user, not a LaunchDaemon) on purpose: the ingest agent
+  runs as you, with your Claude Code login, against your checkout. Secrets
+  (ALMAGEST_TOKENS, ALMAGEST_SECRET_KEY) belong in the EnvironmentVariables
+  block below, in this mode-0600 file — never in brain.config.yaml, which is
+  committed. The service strips them from the ingest agent's environment.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.almagest.serve</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>__REPO__/server/bin/almagest.mjs</string>
+    <string>serve</string>
+    <string>--repo</string>
+    <string>__REPO__</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>PATH</key>
+    <string>__PATH__</string>
+    <key>ALMAGEST_LOG_JSON</key>
+    <string>1</string>
+    <!-- <key>ALMAGEST_TOKENS</key><string>you:owner:change-me</string> -->
+  </dict>
+
+  <!-- Start at login, restart if it exits — but not in a tight loop. -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <!-- SIGTERM lets the runner return a running job to the queue before exit. -->
+  <key>ExitTimeOut</key>
+  <integer>30</integer>
+
+  <key>StandardOutPath</key>
+  <string>__REPO__/.almagest/logs/serve.log</string>
+  <key>StandardErrorPath</key>
+  <string>__REPO__/.almagest/logs/serve.log</string>
+
+  <!-- Ingest is background work; let the foreground win. -->
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+</dict>
+</plist>

@@ -157,18 +157,37 @@ optionally `commit` and `supersedes` (a v1 `kind: remote` manifest id) — see
   source: SourceRef | null,
   trigger: 'watch' | 'schedule' | 'manual' | 'mcp' | 'hook' | 'decision' | 'feedback' | 'demand',
   requestedBy: Actor.id,
-  proposalId?: 'prp_…',                   // revise / drop-page work on an existing proposal's branch
+  requester?: { id, kind?, display?, email? },   // when enqueue got an Actor, not an id — the commit co-author
+  onBehalfOf?: Actor.id,                  // an agent acting for a person (MCP submit_source); also co-authors
+  proposalId?: 'prp_…',                   // revise / drop-page work on an existing proposal's branch;
+                                          // an ingest job gets it once its proposal exists
   slug?: '<page slug>',                   // reverify: the page to re-check (WS5 enqueues with trigger 'demand')
+                                          // drop-page: the page to drop (required); `slugs?: [...]` for several
   instructions?: 'free text for the agent (decision resolution, reviewer feedback)',
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked' | 'cancelled',
-  attempts: 0, maxAttempts: 2,
-  branch?: 'ingest/<source-slug>-<sha7>', worktree?: '<abs path>',
-  runReport?: RunReport, error?: 'message',
+  attempts: 0, maxAttempts: 2, lastError?, workerId?,
+  branch?: 'ingest/<source-slug>-<sha7>', worktree?: '<abs path>', baseSha?, headSha?,
+  runReport?: RunReport, audit?: Proposal.audit, costUsd?, error?: 'message', note?: 'e.g. unchanged — nothing to review',
   createdAt, startedAt?, finishedAt? }
 ```
 
+`blocked` = the run produced decisions and nothing else (`outcome: blocked-only`);
+a proposal still exists to carry them. A run with nothing to review (`unchanged`,
+or no diff and no decisions) succeeds with no proposal, and an empty branch it
+created is deleted.
+
 Dedup: enqueueing a job whose `(kind, source.id, source.sha256)` matches a
-`queued` or `running` job returns the existing job.
+`queued` or `running` job returns the existing job. Refinements (WS1):
+- a source-less `reverify` dedups on `(kind, slug)`;
+- `drop-page` dedups on `(proposalId, slug)`;
+- a `revise` still **queued** for the same proposal absorbs the new
+  `instructions` (appended) instead of being collapsed or duplicated — two
+  decisions resolved back to back must both reach the agent;
+- an `ingest` from an automatic trigger (`watch`, `schedule`, `hook`, `mcp`)
+  also returns a finished job for the same bytes whose proposal is not yet
+  merged / rejected / superseded, or that found nothing to review — a connector
+  re-listing an item under review every 15 minutes spawns no new jobs.
+  `manual` skips this: `almagest ingest <path>` is how a person forces a re-run.
 
 ### RunReport — what the agent hands back
 
@@ -303,8 +322,10 @@ What each module promises on `ctx`. The signatures are the contract; internals
 are the module's own business.
 
 ```
-ctx.ingest      .enqueue({ kind, source, trigger, requestedBy, proposalId?, instructions? }) → Job
-                .get(id) .list(filter) .start() .stop()
+ctx.ingest      .enqueue({ kind, source, trigger, requestedBy, onBehalfOf?, proposalId?, instructions?, slug?, slugs? }) → Job
+                .get(id) .list(filter) .start() .stop() .cancel(id)
+                // requestedBy: an Actor.id or an Actor; a local source without sha256 is fingerprinted here.
+                // Local sources must live under sources.local.path or .almagest/submissions/.
 
 ctx.connectors  .list() → [{ id, mcp, recipe, schedule, lastSync }]
                 .sync(id, { since?, full?, dryRun? }) → [SourceRef]   // fetch + snapshot + fingerprint
@@ -449,15 +470,21 @@ Runner, per job:
 1. Create `ingest/<source-slug>-<sha7>` from `main` with
    `git worktree add <worktree_dir>/<branch>`. `revise` / `drop-page` jobs reuse
    the proposal's branch. The user's checkout is never touched.
-2. Place the source in the worktree (local file copied into `brain/raw/`;
-   connector snapshot written to its sidecar path).
+2. Place the source in the worktree (local file copied into `brain/raw/` from
+   a content-addressed staging copy taken at enqueue; connector snapshot via
+   `ctx.connectors.materialize(ref, worktree)`), re-hashed against
+   `source.sha256`.
 3. Run the driver (`ingest/drivers/*.mjs`) with cwd = worktree, the ingest
    prompt (rules + "runner mode" addendum + `instructions`), a **locked-down tool
    allowlist** (read/write/edit inside the worktree, `shasum`, `node
    tools/audit.mjs`; **no** git, **no** network, **no** MCP), the budget and the
    timeout. Source content is untrusted input; the prompt says so, and the tool
    allowlist is what makes it true.
-4. Validate `.almagest/run-report.json`.
+4. Validate `.almagest/run-report.json` (then remove `.almagest/` from the
+   worktree, so it can never be committed). A local original moves to
+   `processed/`. **Path guard:** any change outside `brain/`'s writable paths
+   (wiki, raw, `.index`, index.md, manifest, log.md, canonical-challenges.md)
+   or to a canonical page fails the job, uncommitted.
 5. Run `node tools/audit.mjs index` then `node tools/audit.mjs --json`, both
    with `--repo <worktree>`, using the **service's own checkout** of
    `tools/audit.mjs` — never a copy inside the worktree, which the agent could

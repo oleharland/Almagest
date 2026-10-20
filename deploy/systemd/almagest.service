@@ -1,0 +1,58 @@
+# almagest.service — keep `almagest serve` running on Linux (systemd).
+#
+# Template. Two ways to install:
+#
+#   Per user (a laptop / workstation — the agent runs with your Claude Code login):
+#     mkdir -p ~/.config/systemd/user
+#     cp deploy/systemd/almagest.service ~/.config/systemd/user/
+#     # edit ExecStart / WorkingDirectory / EnvironmentFile, then:
+#     systemctl --user daemon-reload
+#     systemctl --user enable --now almagest
+#     loginctl enable-linger "$USER"        # keep running after you log out
+#
+#   System-wide (a server): copy to /etc/systemd/system/, uncomment User= and
+#   Group=, point the paths at the service account's checkout, then
+#     systemctl daemon-reload && systemctl enable --now almagest
+#
+# Logs: journalctl [--user] -u almagest -f   (service)
+#       <repo>/.almagest/logs/<jobId>.log     (one per ingest job)
+#
+# Secrets (ALMAGEST_TOKENS, ALMAGEST_SECRET_KEY, ANTHROPIC_API_KEY, OIDC client
+# secrets) go in the EnvironmentFile, mode 0600 — never in brain.config.yaml,
+# which is committed.
+
+[Unit]
+Description=Almagest service (review inbox, MCP, background ingest)
+Documentation=file://%h/almagest/docs/v2/ingest.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# User=almagest
+# Group=almagest
+WorkingDirectory=%h/almagest
+ExecStart=/usr/bin/env node %h/almagest/server/bin/almagest.mjs serve --repo %h/almagest
+EnvironmentFile=-%h/.config/almagest/env
+Environment=ALMAGEST_LOG_JSON=1
+# git and claude must be on this PATH.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:%h/.local/bin
+
+Restart=on-failure
+RestartSec=10
+# SIGTERM lets the runner hand a running job back to the queue before exit.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+# Agent CLIs spawn children; stop them with the service.
+KillMode=control-group
+
+# Background work: let interactive load win.
+Nice=10
+IOSchedulingClass=idle
+
+# Hardening that does not get in the way of git worktrees under the repo.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
