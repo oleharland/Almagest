@@ -136,6 +136,7 @@ export function createQueue(ctx, { runner, prepareSource, logsDir }) {
         // recorded too, and becomes the commit's co-author.
         ...(input.onBehalfOf ? { onBehalfOf: String(typeof input.onBehalfOf === 'object' ? input.onBehalfOf.id : input.onBehalfOf) } : {}),
         ...(input.proposalId ? { proposalId: input.proposalId } : {}),
+        ...(input.decisionId ? { decisionId: String(input.decisionId) } : {}),   // governance: which decision this revise resolves
         ...(input.instructions ? { instructions: String(input.instructions) } : {}),
         ...(input.slug ? { slug: String(input.slug) } : {}),
         ...(input.slugs ? { slugs: input.slugs.map(String) } : {}),
