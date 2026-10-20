@@ -13,6 +13,7 @@ import { loadServiceConfig } from './core/config.mjs';
 import { createGit } from './core/git.mjs';
 import { createRouter } from './core/http.mjs';
 import { createLogger } from './core/log.mjs';
+import { createSnapshot } from './core/snapshot.mjs';
 import { createStore } from './core/store/index.mjs';
 
 import * as telemetry from './telemetry/index.mjs';
@@ -46,6 +47,7 @@ export async function createApp(options = {}) {
   ctx.git = createGit({ repoRoot, main: config.service.git.main, worktreeDir: config.paths.worktrees });
   ctx.auth = createAuth(ctx);
   ctx.http = createRouter({ auth: ctx.auth, log });
+  ctx.snapshot = createSnapshot(ctx);
 
   ctx.http.route('GET', '/healthz', async () => ({ ok: true, profile: config.profile }));
 

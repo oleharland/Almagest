@@ -75,6 +75,7 @@ server/                       its own package, like site/ — plain ESM .mjs + J
       auth.mjs                Actor model, AuthProvider interface, assertCanApprove
       http.mjs                tiny router over node:http (no framework)
       log.mjs                 structured logger
+      snapshot.mjs            ctx.snapshot — main's pages via a detached worktree, cached per sha
     ingest/      WS1          create(ctx) → ctx.ingest
     connectors/  WS2          create(ctx) → ctx.connectors
     governance/  WS3          create(ctx) → ctx.governance
@@ -96,7 +97,7 @@ Postgres (`pg`) is an optional dependency loaded only when `store.driver: postgr
 
 ```js
 // server/src/app.mjs
-const ctx = { repoRoot, config, log, store, git, bus, auth, http };
+const ctx = { repoRoot, config, log, store, git, bus, auth, http, snapshot };
 ctx.telemetry  = await telemetry.create(ctx);   // also sets ctx.demand
 ctx.connectors = await connectors.create(ctx);
 ctx.ingest     = await ingest.create(ctx);
@@ -308,7 +309,18 @@ ctx.telemetry   .record(evtPartial) → void                       // never thro
                 .gaps({ limit }) → [{ cluster, queries, count, lastSeen }]
 
 ctx.mcp         .serveStdio() .handleHttp(req, res)
+
+ctx.snapshot    .load() → { sha, dir, pages, byId, known }   // core — main's pages, never the checkout's
+                .refresh({ fetch? }) → sha
+ctx.telemetry   .reverifyQueue() → [{ slug, title, score, lastVerified, overdueDays }]   // hot pages due a re-check
 ```
+
+**Proposals are upserted by branch.** `createFromJob` on a branch that already
+has an open proposal (a `revise` or `drop-page` job) updates that proposal: new
+`headSha`, recomputed `changes`, `audit` and `required`. Every approval records
+the `headSha` it was given for, and **an approval only counts while it matches
+the current `headSha`** — a reviewer approves a specific diff, not a branch name
+that can move under them.
 
 ## Config additions (`brain.config.yaml`)
 

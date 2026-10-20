@@ -136,3 +136,20 @@ describe('app', () => {
     await app.stop();
   });
 });
+
+describe('snapshot', () => {
+  it('reads main even when the checkout is on another branch, and follows main', async () => {
+    const r = repo();
+    const app = await makeApp({ repoRoot: r });
+    const { git, snapshot } = app.ctx;
+    const before = (await snapshot.load()).pages.map((p) => p.slug);
+    const wt = await git.worktreeAdd('ingest/x-1234567');
+    fs.writeFileSync(path.join(wt, 'brain', 'wiki', 'delta.md'), fs.readFileSync(path.join(wt, 'brain', 'wiki', 'alpha.md'), 'utf-8').replace(/title: .*/, 'title: "Delta"'));
+    await git.commitAll(wt, { message: 'delta', author: { name: 'A', email: 'a@a' } });
+    assert.deepEqual((await snapshot.load()).pages.map((p) => p.slug), before);
+    await git.run(['merge', '--ff-only', 'ingest/x-1234567']);
+    await snapshot.refresh();
+    assert.ok((await snapshot.load()).pages.some((p) => p.slug === 'delta'));
+    await app.stop();
+  });
+});
