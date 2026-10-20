@@ -22,7 +22,7 @@ import { serviceActor } from '../core/auth.mjs';
 import { modelForTier } from '../core/config.mjs';
 import { gitIdentity } from '../core/git.mjs';
 import { ingestBranch, nowIso, slugify, validateRunReport } from '../core/schemas.mjs';
-import { AUDIT_SCRIPT, auditSummary, runAudit } from './audit.mjs';
+import { auditSummary, runAudit, wrapperIntact, writeAuditWrapper } from './audit.mjs';
 import { allowedTools as claudeAllowedTools } from './drivers/claude-code.mjs';
 import { appendTableRow, removeTableRowsFor } from './md.mjs';
 import { buildPrompt, RUN_REPORT_PATH } from './prompt.mjs';
@@ -141,9 +141,22 @@ export function createRunner(ctx, { driver, logsDir }) {
   function readReport(wt, source, placed) {
     const file = path.join(wt, RUN_REPORT_PATH);
     if (!fs.existsSync(file)) throw new JobError(`agent finished without writing ${RUN_REPORT_PATH}`, { retryable: true });
+    // job.error is readable through /api/jobs, so it never echoes report
+    // contents — which the agent wrote and which may quote source text. A
+    // fixed message, the byte offset of a parse error, and field names only.
+    const text = fs.readFileSync(file, 'utf-8');
+    let parsed;
+    try { parsed = JSON.parse(text); }
+    catch (err) {
+      const at = /position (\d+)/.exec(err.message)?.[1];
+      throw new JobError(`run report is not valid JSON (${Buffer.byteLength(text)} bytes${at ? `, error at byte ${at}` : ''})`, { retryable: true });
+    }
     let report;
-    try { report = validateRunReport(JSON.parse(fs.readFileSync(file, 'utf-8'))); }
-    catch (err) { throw new JobError(`invalid run report: ${err.message}`, { retryable: true }); }
+    try { report = validateRunReport(parsed); }
+    catch (err) {
+      const problems = (err.problems || []).map((p) => p.replace(/\s*\(got [\s\S]*\)$/, '')).slice(0, 8);
+      throw new JobError(`invalid run report: ${problems.join('; ').slice(0, 400) || 'not an object'}`, { retryable: true });
+    }
     const expected = placed?.sha256 || source?.sha256;
     if (expected && report.source.sha256 && report.source.sha256 !== expected) {
       throw new JobError(`run report fingerprints ${report.source.id} as ${report.source.sha256.slice(0, 7)}… but the runner computed ${expected.slice(0, 7)}… — the agent must use the runner's sha256`);
@@ -252,17 +265,33 @@ export function createRunner(ctx, { driver, logsDir }) {
         write(`step 2: placed ${placed.path} (${placed.sha256.slice(0, 7)}…, ${placed.bytes} bytes)`);
       }
 
-      const tools = claudeAllowedTools(config);
-      const { prompt, systemPrompt } = buildPrompt({
-        job, source: t.source, placed, branch: t.branch, proposal: t.proposal,
-        auditCommand: `node ${AUDIT_SCRIPT} --repo ${wt}`, allowedTools: tools,
+      // The agent's self-check audit: a fixed wrapper outside the worktree,
+      // written fresh for this job (audit.mjs → writeAuditWrapper).
+      const wrapper = await writeAuditWrapper({
+        dir: path.join(config.paths.state, 'runner', job.id),
+        worktree: wt,
+        configFile: path.join(wt, 'brain.config.yaml'),
+        demandFile: config.paths.demand,
       });
-      write(`step 3: driver ${driver.name}, model ${modelFor(config, driver.name) || '(default)'}, budget $${config.ingest.budget_usd_per_job}`);
-      const result = await runDriver(job, {
-        cwd: wt, prompt, systemPrompt, allowedTools: tools,
-        model: modelFor(config, driver.name), budgetUsd: config.ingest.budget_usd_per_job,
-        logStream: write.stream, job, source: t.source, sourcePath: placed?.path,
-      }, timeoutMs, signal, write);
+      let result;
+      try {
+        const tools = claudeAllowedTools(config, { auditWrapper: wrapper.path });
+        const { prompt, systemPrompt } = buildPrompt({
+          job, source: t.source, placed, branch: t.branch, proposal: t.proposal,
+          auditCommand: wrapper.path, allowedTools: tools,
+        });
+        write(`step 3: driver ${driver.name}, model ${modelFor(config, driver.name) || '(default)'}, budget $${config.ingest.budget_usd_per_job}`);
+        result = await runDriver(job, {
+          cwd: wt, prompt, systemPrompt, allowedTools: tools,
+          model: modelFor(config, driver.name), budgetUsd: config.ingest.budget_usd_per_job,
+          logStream: write.stream, job, source: t.source, sourcePath: placed?.path,
+        }, timeoutMs, signal, write);
+        if (!wrapperIntact(wrapper)) {
+          throw new JobError('the audit wrapper changed during the run — something the agent ran could write outside the worktree; nothing committed, inspect the job log');
+        }
+      } finally {
+        fs.rmSync(wrapper.dir, { recursive: true, force: true });
+      }
 
       const report = readReport(wt, t.source, placed);
       fs.mkdirSync(path.join(logsDir, '..', 'reports'), { recursive: true });
@@ -274,7 +303,8 @@ export function createRunner(ctx, { driver, logsDir }) {
       write(`step 4: run report — outcome ${report.outcome}, ${report.pages.length} page(s), ${report.blocked.length} blocked`);
       job = await patchJob({ runReport: report, costUsd: result.costUsd });
 
-      if (report.outcome === 'failed') throw new JobError(`agent reported failure: ${report.notes || 'no notes'}`);
+      // The full notes are in the saved report; the error carries a short, single-line excerpt.
+      if (report.outcome === 'failed') throw new JobError(`agent reported failure: ${String(report.notes || 'no notes').replace(/\s+/g, ' ').slice(0, 200)}`);
       if (report.outcome === 'unchanged' && report.blocked.length === 0) {
         await discard(wt, t.branch, created, baseSha);
         return { status: 'succeeded', note: 'unchanged — nothing to review' };

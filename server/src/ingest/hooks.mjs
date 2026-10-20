@@ -6,6 +6,7 @@
  * and exit.
  *
  *   guard-wiki   PreToolUse Write|Edit|MultiEdit   exit 2 = block
+ *   guard-git    PreToolUse Bash                   exit 2 = block (guard-git.mjs)
  *   enqueue      PostToolUse Write                 always exit 0
  *   status       SessionStart                      always exit 0, stdout = context
  *
@@ -21,6 +22,7 @@ import path from 'node:path';
 
 import { loadConfig } from '../../../tools/lib/config.mjs';
 import { isIngestCandidate, isInside, realish } from './source.mjs';
+import { guardGitDecision } from './guard-git.mjs';
 import { writeSpool } from './spool.mjs';
 
 /** stdin as JSON, or {} — a hook run by hand from a terminal has no stdin to wait for. */
@@ -176,7 +178,7 @@ export async function statusLine({ repoRoot, configPath, timeoutMs = 1000 } = {}
 }
 
 export const hookCommand = {
-  summary: 'Claude Code hooks: guard-wiki | enqueue | status',
+  summary: 'Claude Code hooks: guard-wiki | guard-git | enqueue | status',
   needsApp: false,
   async run(argv, env) {
     const [name] = argv;
@@ -184,6 +186,13 @@ export const hookCommand = {
       let decision;
       try { decision = guardWikiDecision(await readHookInput()); }
       catch { return 0; }   // fail open on the guard's own errors — see the header
+      if (decision.block) { process.stderr.write(`${decision.reason}\n`); return 2; }
+      return 0;
+    }
+    if (name === 'guard-git') {
+      let decision;
+      try { decision = guardGitDecision(await readHookInput()); }
+      catch { return 0; }   // fail open on the guard's own errors
       if (decision.block) { process.stderr.write(`${decision.reason}\n`); return 2; }
       return 0;
     }
@@ -204,7 +213,7 @@ export const hookCommand = {
     }
     // Exit 1, not 2: in a PreToolUse slot exit 2 means "block", and a typo in
     // settings.json should not block every edit.
-    process.stderr.write('usage: almagest hook <guard-wiki | enqueue | status>  (reads Claude Code hook JSON on stdin)\n');
+    process.stderr.write('usage: almagest hook <guard-wiki | guard-git | enqueue | status>  (reads Claude Code hook JSON on stdin)\n');
     return 1;
   },
 };

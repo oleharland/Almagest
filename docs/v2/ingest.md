@@ -75,6 +75,7 @@ ingest:
   watch_rescan_seconds: 60       # safety-net rescan under fs.watch (0 = off); unchanged files are not re-hashed
   spool_interval_seconds: 15     # how often the hook spool is drained (0 = on start only)
   poll_ms: 2000                  # idle workers re-check the store (jobs enqueued by another process)
+  manual_rate_per_hour: 30       # POST /api/jobs per actor per hour (0 = no limit)
 ```
 
 `model_tier` resolves through the profile of the harness the **driver** runs,
@@ -135,9 +136,18 @@ job. A connector whose last sync is still running is skipped, not stacked.
 is not listening, drained on start and every `spool_interval_seconds`. A bad
 entry is renamed `.failed` and left for a person.
 
-**API and MCP.** `POST /api/jobs` with `{ path }` (a file under the drop
-folder) or `{ source }` (a SourceRef), authenticated; `GET /api/jobs`,
-`GET /api/jobs/:id`. The API only ever enqueues `ingest` — `revise` and
+**API and MCP.** `POST /api/jobs` needs a `contributor` role or above
+(viewers get 403) and takes `{ path }` — a file under the drop folder or
+`.almagest/submissions/`, nothing else — or `{ source: { kind: "connector",
+connector, ref } }`. A connector source is a pointer only: the service looks the
+item up in what a sync recorded and builds the SourceRef itself; a
+client-supplied `path`, `staged`, `sha256`, `title`, `change` or `supersedes` is
+ignored, since all of them reach the agent's prompt and the sha256 is the
+fingerprint only the service may compute. An item that was never synced is a
+400. Each actor may enqueue `ingest.manual_rate_per_hour` jobs an hour (429
+after that; the `enqueue` hook falls back to the spool). `GET /api/jobs` and
+`GET /api/jobs/:id` need any authenticated actor; `job.error` never quotes the
+run report or the model's output. The API only ever enqueues `ingest` — `revise` and
 `drop-page` carry instructions the agent is told to trust, so they come from
 governance through `ctx`, never from a request body. MCP `submit_source` (WS4)
 writes into `.almagest/submissions/` and enqueues a local source from there,
@@ -187,13 +197,26 @@ Claude Code, wired in `.claude/settings.json`:
 | Hook | Event | Does |
 |---|---|---|
 | `hook guard-wiki` | PreToolUse `Write\|Edit\|MultiEdit` | Exit 2 (block, reason on stderr) when the target is under `<brain_dir>/wiki/` of a checkout on `main`. Any other situation — including the hook's own errors — allows. A guard that blocks on its own bugs gets uninstalled |
+| `hook guard-git` | PreToolUse `Bash` | The same rule for shell commands. On `main`, blocks `git commit` (staged changes, plus unstaged ones for `-a` / pathspecs), `git merge`, `git cherry-pick`, `git revert`, `git am` and `git stash pop\|apply` when they would bring `brain/wiki/` changes in, and plain writes into `brain/wiki/` (`>`, `cp`, `mv`, `tee`, `sed -i`, `rm`). On any branch, blocks `--no-verify`, `commit -n` and `-c core.hooksPath=…`, which skip the pre-commit audit. Follows `cd`, `git -C` and an earlier `git switch main` in the same command. Allows what it cannot parse (`bash -c`, scripts, here-docs) — the git hook below is the backstop |
 | `hook enqueue` | PostToolUse `Write` | A new file in the drop folder → `POST /api/jobs` (with `ALMAGEST_TOKEN` if set, base URL from `service.http` or `ALMAGEST_URL`), else a spool file. Ignores `processed/`, `extracted/`, `.almagest/`, and anything written by the runner's own agent (`ALMAGEST_RUNNER=1`) |
 | `hook status` | SessionStart | One line of context — open proposals and decisions — when the service is up; nothing when it is not |
 
-All three run without the app: no database, no worktree, no network beyond one
+None of them needs the app: no database, no worktree, no network beyond one
 short request.
 
-Every other harness, and every person: install the git hook once per clone.
+The checked-in permissions match: `node` is pre-approved only for
+`tools/audit.mjs`, `tools/lib/selftest.mjs` and `server/bin/almagest.mjs`;
+`git push` asks every time; `git commit --no-verify`, `git commit -n`,
+`git push --no-verify`, `git -c core.hooksPath…` and `git update-ref` are
+denied outright. `git commit` and `git checkout` stay pre-approved, because the
+v1 flow commits on ingest branches — `guard-git` is what stops them on `main`.
+
+These hooks bind Claude Code's tool calls only. A person typing in their own
+terminal is not affected, on purpose: a human merging a reviewed diff is the
+gate.
+
+**Every clone, every harness, every person: install the git hook.** It is the
+one guard that sees every commit, whatever made it.
 
 ```bash
 git config core.hooksPath tools/hooks
@@ -218,8 +241,15 @@ checks after it finishes.
 Code 2.1.x):
 
 - Read, Write, Edit, Glob, Grep — confined to the worktree (`--restricted`).
-- Bash for exactly: `shasum`, `sha256sum`, `wc`, and
-  `node <service checkout>/tools/audit.mjs` — plus `ingest.extra_tools`.
+- Bash for exactly: `shasum`, `sha256sum`, `wc`, and two exact commands —
+  `<state>/runner/<jobId>/audit` and the same followed by `index` — plus
+  `ingest.extra_tools`. That wrapper is a script the runner writes outside the
+  worktree for each job: it ignores every argument but a leading `index`, pins
+  `--repo` to the worktree and `--config` to a copy of the config taken before
+  the agent ran, clears `NODE_OPTIONS`, and is hash-checked after the run (a
+  changed wrapper fails the job). The raw `tools/audit.mjs` is not allowlisted:
+  its `--repo`, `--config` and `--index-dir` flags would read and write
+  anywhere. The runner's own gating audit never goes through the wrapper.
 - Nothing else is allowed, and nothing waits for a human to allow it:
   `--permission-mode dontAsk --permission-prompts none`. Claude Code itself
   auto-approves a few read-only built-ins inside the working directory (`ls`
@@ -231,9 +261,11 @@ server (`--strict-mcp-config` with an empty config); read or write outside the
 worktree; load your user settings, CLAUDE.md, skills, plugins or hooks
 (`--restricted --safe-mode`); spend past `budget_usd_per_job`; run past
 `timeout_minutes`; keep anything between runs (`--no-session-persistence`).
-A manual smoke test of this exact flag set (haiku, $0.002) saw `Write` and
-`shasum` allowed and `git status`, `cat /etc/hosts`, `curl`, `node -e`, a Read
-of `/etc/hosts` and a Write to `../` all denied.
+Manual smoke tests of this exact flag set (haiku, about $0.006 in all) saw
+`Write`, `shasum` and the two wrapper commands allowed, and `git status`,
+`cat /etc/hosts`, `curl`, `node -e`, a Read of `/etc/hosts`, a Write to `../`,
+`<wrapper> --repo /`, `<wrapper> $(id)`, a redirect into the wrapper's
+directory and a Read of the wrapper itself all denied.
 
 **What it never holds:** the service's secrets. The child environment drops
 `ALMAGEST_*` (approval tokens, the sealing key), `DATABASE_URL`, `PG*`,

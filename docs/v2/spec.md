@@ -476,8 +476,10 @@ Runner, per job:
    `source.sha256`.
 3. Run the driver (`ingest/drivers/*.mjs`) with cwd = worktree, the ingest
    prompt (rules + "runner mode" addendum + `instructions`), a **locked-down tool
-   allowlist** (read/write/edit inside the worktree, `shasum`, `node
-   tools/audit.mjs`; **no** git, **no** network, **no** MCP), the budget and the
+   allowlist** (read/write/edit inside the worktree, `shasum`, and a per-job
+   audit wrapper outside the worktree that takes no arguments and is pinned to
+   the worktree — never `node tools/audit.mjs:*`, whose flags reach anywhere;
+   **no** git, **no** network, **no** MCP), the budget and the
    timeout. Source content is untrusted input; the prompt says so, and the tool
    allowlist is what makes it true.
 4. Validate `.almagest/run-report.json` (then remove `.almagest/` from the

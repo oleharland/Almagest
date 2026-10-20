@@ -20,6 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { loadManifest } from '../../../tools/lib/config.mjs';
+import { ForbiddenError, hasRole } from '../core/auth.mjs';
 import { createDriver } from './drivers/index.mjs';
 import { hookCommand } from './hooks.mjs';
 import { createQueue, EnqueueError } from './queue.mjs';
@@ -30,7 +31,10 @@ import { drainSpool } from './spool.mjs';
 import { createWatcher, listCandidates } from './watcher.mjs';
 
 const TERMINAL = new Set(['succeeded', 'failed', 'blocked', 'cancelled']);
-const API_TRIGGERS = new Set(['manual', 'hook', 'mcp']);
+const API_TRIGGERS = new Set(['manual', 'hook']);   // MCP enqueues through ctx, not HTTP
+const ENQUEUE_ROLES = ['contributor', 'reviewer', 'owner', 'admin'];
+/** Where WS2 records each synced item (`<connector>:<ref>` → { sha256, path, version, title }). */
+const CONNECTOR_ITEM_NS = 'connector-item';
 
 export async function create(ctx) {
   const { config, store, log: rootLog, bus, git, repoRoot } = ctx;
@@ -147,9 +151,9 @@ export async function create(ctx) {
   // ── spool ─────────────────────────────────────────────────────────────────
 
   async function handleSpoolEntry(entry) {
-    if (entry.source) return queue.enqueue({ kind: 'ingest', source: entry.source, trigger: API_TRIGGERS.has(entry.trigger) ? entry.trigger : 'hook', requestedBy: entry.requestedBy || 'svc:ingest' });
+    if (entry.source) return queue.enqueue({ kind: 'ingest', source: await sourceFromRequest({ source: entry.source }), trigger: 'hook', requestedBy: 'svc:ingest' });
     if (!entry.path) throw new Error('spool entry has neither path nor source');
-    const r = await considerFile(path.resolve(repoRoot, entry.path), { trigger: 'hook', requestedBy: entry.requestedBy || 'svc:ingest' });
+    const r = await considerFile(path.resolve(repoRoot, entry.path), { trigger: 'hook', requestedBy: 'svc:ingest' });
     if (r.action === 'skipped' && !/unchanged|already/.test(r.reason)) throw new Error(r.reason);
     return r;
   }
@@ -171,21 +175,75 @@ export async function create(ctx) {
 
   // ── HTTP ──────────────────────────────────────────────────────────────────
 
+  /**
+   * A connector source from outside the service is only ever a POINTER —
+   * `{ connector, ref }` — resolved against what a sync recorded. Everything
+   * else a client could say about it (path, staged file, sha256, title,
+   * change, supersedes) is dropped: those reach the agent's prompt, and the
+   * sha256 is the fingerprint rule 5 says only the service computes.
+   */
+  async function connectorSource(input) {
+    const connector = String(input?.connector || '');
+    const ref = String(input?.ref || '');
+    if (!connector || !ref || ref.length > 512) throw new EnqueueError('a connector source is { kind: "connector", connector, ref }');
+    let known = [];
+    try { known = await ctx.connectors.list(); } catch { /* stub — fall back to config */ }
+    if (!Array.isArray(known) || !known.length) known = config.sources.connectors || [];
+    if (!known.some((c) => c.id === connector)) throw new EnqueueError(`unknown connector "${connector}"`);
+    const rec = (typeof ctx.connectors.lookup === 'function' ? await ctx.connectors.lookup(connector, ref) : null)
+      || (await store.kv.get(CONNECTOR_ITEM_NS, `${connector}:${ref}`));
+    if (!rec?.sha256 || !rec?.path) throw new EnqueueError(`${connector}:${ref} has not been synced — run \`almagest connectors sync ${connector}\` first`);
+    const cfg = (config.sources.connectors || []).find((c) => c.id === connector) || {};
+    return {
+      kind: 'connector', id: `${connector}:${ref}`, connector, ref,
+      server: typeof cfg.mcp === 'string' ? cfg.mcp : connector,
+      path: String(rec.path), sha256: String(rec.sha256),
+      ...(rec.version ? { version: String(rec.version) } : {}),
+      ...(rec.title ? { title: String(rec.title).slice(0, 200) } : {}),
+      ...(cfg.label ? { label: cfg.label } : {}), tier: cfg.tier || 'evidence', snapshot: cfg.snapshot || 'commit',
+    };
+  }
+
+  /** `{ path }` or `{ source }` from an untrusted caller → a SourceRef the queue may take. */
+  async function sourceFromRequest(body) {
+    if (body?.path) return { kind: 'local', path: String(body.path) };
+    const s = body?.source;
+    if (s?.kind === 'local' && s.path) return { kind: 'local', path: String(s.path) };
+    if (s?.kind === 'connector') return connectorSource(s);
+    throw new EnqueueError('body needs `path` (a file under the drop folder) or `source`: { kind: "local", path } | { kind: "connector", connector, ref }');
+  }
+
+  // Per-actor sliding window over the last hour. In memory: one service per
+  // brain (docs/v2/ingest.md → Limits), and a restart forgiving a burst is fine.
+  const recent = new Map();
+  function rateLimit(actor) {
+    const limit = Number(config.ingest.manual_rate_per_hour ?? 30);
+    if (!(limit > 0)) return;
+    const now = Date.now();
+    const hits = (recent.get(actor.id) || []).filter((t) => now - t < 3600_000);
+    if (hits.length >= limit) {
+      throw Object.assign(new Error(`rate limit: ${limit} enqueues per hour per actor (ingest.manual_rate_per_hour)`), { status: 429 });
+    }
+    hits.push(now);
+    recent.set(actor.id, hits);
+  }
+
   ctx.http.route('POST', '/api/jobs', async (_req, _res, { body, actor }) => {
+    // Enqueueing spends money and creates review work: contributor and up.
+    if (!hasRole(actor, ...ENQUEUE_ROLES)) throw new ForbiddenError(`${actor.display || actor.id} needs a contributor role to enqueue ingest jobs`);
     const trigger = API_TRIGGERS.has(body?.trigger) ? body.trigger : 'manual';
     // The API enqueues ingests only. `revise` and `drop-page` carry
     // instructions the agent is told to trust, so they come from governance
     // through ctx, never from a request body.
-    if (body?.path) {
-      if (trigger === 'hook') {
-        const r = await considerFile(path.resolve(repoRoot, String(body.path)), { trigger, requestedBy: actor });
-        if (r.action === 'skipped' && !r.job && r.reason !== 'unchanged') throw Object.assign(new Error(r.reason), { status: 400 });
-        return r.job ? { ...r.job, skipped: r.action === 'skipped' ? r.reason : undefined } : { skipped: r.reason };
-      }
-      return queue.enqueue({ kind: 'ingest', source: { kind: 'local', path: String(body.path) }, trigger, requestedBy: actor });
+    if (body?.kind && body.kind !== 'ingest') throw new EnqueueError('the API enqueues `ingest` jobs only');
+    const source = await sourceFromRequest(body);
+    rateLimit(actor);
+    if (trigger === 'hook' && source.kind === 'local') {
+      const r = await considerFile(path.resolve(repoRoot, source.path), { trigger, requestedBy: actor });
+      if (r.action === 'skipped' && !r.job && r.reason !== 'unchanged') throw Object.assign(new Error(r.reason), { status: 400 });
+      return r.job ? { ...r.job, skipped: r.action === 'skipped' ? r.reason : undefined } : { skipped: r.reason };
     }
-    if (body?.source) return queue.enqueue({ kind: 'ingest', source: body.source, trigger, requestedBy: actor });
-    throw Object.assign(new Error('body needs `path` (a file under the drop folder) or `source` (a SourceRef)'), { status: 400 });
+    return queue.enqueue({ kind: 'ingest', source, trigger, requestedBy: actor });
   }, { auth: 'any' });
 
   ctx.http.route('GET', '/api/jobs', async (_req, _res, { query }) => {
