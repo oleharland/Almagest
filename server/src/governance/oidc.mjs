@@ -18,7 +18,7 @@
  */
 import crypto from 'node:crypto';
 
-import { humanActor } from '../core/auth.mjs';
+import { actorFromClaims as sharedActorFromClaims } from '../core/auth-oidc.mjs';
 import { ROLES } from '../core/schemas.mjs';
 
 const ALGS = {
@@ -51,7 +51,7 @@ function claimAt(claims, dotted) {
   return String(dotted || '').split('.').filter(Boolean).reduce((o, k) => (o == null ? o : o[k]), claims);
 }
 
-export function createOidc(oidc = {}, { baseUrl = '', fetchImpl = globalThis.fetch, env = process.env, now = () => Date.now() } = {}) {
+export function createOidc(oidc = {}, { baseUrl = '', ownerTeams = [], fetchImpl = globalThis.fetch, env = process.env, now = () => Date.now() } = {}) {
   const issuer = String(oidc.issuer || '').replace(/\/+$/, '');
   let discovery = null;
   let jwks = null;
@@ -143,21 +143,9 @@ export function createOidc(oidc = {}, { baseUrl = '', fetchImpl = globalThis.fet
     return claims;
   }
 
+  /** One mapping for every OIDC path — core/auth-oidc.mjs owns it, so a person has one id. */
   function actorFromClaims(claims) {
-    const map = oidc.role_map || {};
-    const rawRoles = claimList(claimAt(claims, oidc.roles_claim || 'roles'));
-    const roles = [...new Set(rawRoles.map((r) => map[r] || r).filter((r) => ROLES.includes(r)))];
-    const teams = claimList(claimAt(claims, oidc.teams_claim || 'groups'));
-    const email = String(claims.email || '');
-    const handle = String(email || claims.preferred_username || claims.sub || '').toLowerCase();
-    const actor = humanActor({
-      id: `usr_${handle}`,
-      display: String(claims.name || claims.preferred_username || email || claims.sub || 'unknown'),
-      email,
-      roles: roles.length ? roles : claimList(oidc.default_roles || ['viewer']).filter((r) => ROLES.includes(r)),
-      teams,
-    });
-    return { ...actor, idp: 'oidc', sub: String(claims.sub || '') };
+    return sharedActorFromClaims(claims, oidc, ownerTeams);
   }
 
   return { issuer, discover, authorizeUrl, exchange, verifyJwt, actorFromClaims, redirectUri };

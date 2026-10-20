@@ -63,7 +63,7 @@ export function createSessions(ctx, { secret, ttlHours = 12, now = () => Date.no
   const mode = config.service.auth.provider;
   const secure = String(config.service.http.base_url).startsWith('https:');
   const ttlMs = ttlHours * 3600 * 1000;
-  const oidc = mode === 'oidc' ? createOidc(config.service.auth.oidc || {}, { baseUrl: config.service.http.base_url, now }) : null;
+  const oidc = mode === 'oidc' ? createOidc(config.service.auth.oidc || {}, { baseUrl: config.service.http.base_url, ownerTeams: config.v1.ownerTeams, now }) : null;
   const failures = new Map();   // ip → { n, until }
 
   const currentTokens = () => parseTokens(process.env[config.service.auth.tokens_env || 'ALMAGEST_TOKENS'] || '');

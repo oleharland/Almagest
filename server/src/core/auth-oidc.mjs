@@ -179,18 +179,27 @@ export function actorFromClaims(claims, oidc = {}, ownerTeams = []) {
     const mapped = roleMap[value] ?? value;
     if (ROLES.includes(mapped)) roles.add(mapped);
   }
-  if (!roles.size) roles.add(oidc.default_role && ROLES.includes(oidc.default_role) ? oidc.default_role : 'viewer');
+  if (!roles.size) {
+    // `default_roles` (list) and `default_role` (scalar) are both accepted —
+    // the inbox and MCP docs grew one each before this mapping was shared.
+    const defaults = [].concat(oidc.default_roles ?? oidc.default_role ?? 'viewer').map(String).filter((r) => ROLES.includes(r));
+    for (const r of defaults.length ? defaults : ['viewer']) roles.add(r);
+  }
 
   let teams = listClaim(claimAt(claims, oidc.teams_claim || 'groups')).map((t) => t.replace(/^\//, ''));
   if (ownerTeams.length) teams = teams.filter((t) => ownerTeams.includes(t));
 
-  return humanActor({
+  const actor = humanActor({
     id: `usr_${String(claims.sub).replace(/[^A-Za-z0-9._@-]/g, '_')}`,
     display: claims.name || claims.preferred_username || claims.email || String(claims.sub),
     email: claims.email || '',
     roles: [...roles],
     teams,
   });
+  // The id is keyed on `sub`, never on email: emails get reassigned, and
+  // separation of duties compares ids — the bearer token a chat presents and
+  // the browser session that approves must resolve to the same person.
+  return { ...actor, idp: 'oidc', sub: String(claims.sub) };
 }
 
 registerAuthProvider('oidc', (ctx) => {

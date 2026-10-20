@@ -269,7 +269,7 @@ describe('oidc browser sign-in', () => {
     assert.equal(rec.idp, 'oidc');
     assert.deepEqual(rec.actor.roles, ['owner']);
     assert.deepEqual(rec.actor.teams, ['engineering']);
-    assert.equal(rec.actor.id, 'usr_ada@acme.test');
+    assert.equal(rec.actor.id, 'usr_abc');
     assert.equal((await c.get('/inbox')).status, 200);
     await app.stop();
     await idp.close();
