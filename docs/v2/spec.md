@@ -45,7 +45,8 @@ defaults; every individual key can still be overridden.
 | | `solo` | `team` | `enterprise` |
 |---|---|---|---|
 | Store | sqlite | sqlite | postgres |
-| Human auth | static token | OIDC | OIDC (required) |
+| Human auth | static roles; sign-in secret or one-time link, never the API token | OIDC | OIDC (required) |
+| Roles must be confirmed within (session / Slack, GitHub) | 60 min / 24 h | 60 min / 24 h | 30 min / 8 h |
 | Separation of duties (submitter ≠ approver) | off | on | on |
 | Approvals for ordinary proposals | 1 | 1 | 1 |
 | Approvals for hot / canonical-adjacent pages | 1, per-page | 2, per-page | 2, per-page, owner team |
@@ -395,7 +396,8 @@ service:
     worktree_dir: .almagest/worktrees
   auth:
     provider: token                # token | oidc
-    tokens_env: ALMAGEST_TOKENS    # token: "name:role[,role]:secret;…"
+    tokens_env: ALMAGEST_TOKENS    # token: people, roles, API tokens — "name:role[,role]:secret;…"
+    logins_env: ALMAGEST_LOGINS    # token: inbox sign-in secrets — "name:secret;…"; an API token never signs in
     # oidc: { issuer, client_id, client_secret_env, audience, roles_claim, teams_claim }
 
 ingest:
@@ -430,6 +432,8 @@ governance:
   separation_of_duties: false      # profile default
   require_sso_for_approval: false  # enterprise: email/Slack links still demand an SSO session
   inherit_profile_rules: true      # the profile's rules come first, these are appended; false drops them (startup warning)
+  session_roles_max_age_minutes: 60  # a session's roles must be this recent to approve (enterprise: 30)
+  channel_roles_max_age_hours: 24  # Slack / GitHub use roles cached at the last inbox sign-in (enterprise: 8)
   rules:                           # every matching rule adds requirements; they combine by max / union
     - when: { label: legal }
       require: { approvals: 2, distinct_teams: 2 }

@@ -185,8 +185,8 @@ sign-in, so:
 
 ```yaml
 governance:
-  session_roles_max_age_minutes: 60   # a session's roles must be this recent to act
-  channel_roles_max_age_hours: 24     # Slack / GitHub: roles cached at the last inbox sign-in
+  session_roles_max_age_minutes: 60   # a session's roles must be this recent to act (enterprise: 30)
+  channel_roles_max_age_hours: 24     # Slack / GitHub: roles cached at the last inbox sign-in (enterprise: 8)
 ```
 
 - A single sign-on session uses the roles from its own sign-in, or from the

@@ -30,11 +30,32 @@ describe('doctor', () => {
     const r = repo();
     const unset = await run(r);
     assert.equal(unset.code, 0, unset.lines.join('\n'));
-    assert.match(unset.line('git hooks'), /^! git hooks: core\.hooksPath is not set .*git config core\.hooksPath tools\/hooks/);
+    assert.match(unset.line('git hooks'), /^! git hooks: core\.hooksPath is not set .*git config core\.hooksPath ".*tools\/hooks"/);
     assert.match(unset.line('main branch'), /^✓ main branch: main/);
 
+    const hooks = path.join(r, 'tools', 'hooks');
+    fs.mkdirSync(hooks, { recursive: true });
+    for (const h of ['pre-commit', 'reference-transaction']) fs.writeFileSync(path.join(hooks, h), '#!/bin/sh\n', { mode: 0o755 });
     git(r, 'config', 'core.hooksPath', 'tools/hooks');
-    assert.match((await run(r)).line('git hooks'), /^✓ git hooks: tools\/hooks/);
+    assert.match((await run(r)).line('git hooks'), /^! git hooks: core\.hooksPath is relative/);
+    git(r, 'config', 'core.hooksPath', hooks);
+    assert.match((await run(r)).line('git hooks'), /^✓ git hooks: /);
+  });
+
+  it('does not count API tokens as sign-ins', async () => {
+    const r = repo();
+    const none = await run(r, { env: { ALMAGEST_TOKENS: 'ada:owner:s3cret' } });
+    assert.equal(none.code, 1);
+    assert.match(none.line('sign-in'), /^✗ sign-in: no usable entry in ALMAGEST_LOGINS/);
+
+    const link = await run(r);
+    assert.match(link.line('sign-in'), /^✓ sign-in: .*almagest\.mjs login <name>/);
+
+    const reused = await run(r, { env: { ...READY_ENV, ALMAGEST_LOGINS: 'ada:s3cret' } });
+    assert.ok(reused.lines.some((l) => /^! sign-in: .*also an API token/.test(l)), reused.lines.join('\n'));
+
+    const ok = await run(r, { env: { ...READY_ENV, ALMAGEST_LOGINS: 'ada:other-secret' } });
+    assert.match(ok.line('sign-in'), /^✓ sign-in: 1 sign-in secret\(s\) in ALMAGEST_LOGINS/);
   });
 
   it('fails when there is no local main, and prints the fix', async () => {

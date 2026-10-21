@@ -17,7 +17,9 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { createApp, DEFAULT_REPO_ROOT, mainBranchProblem, MODULES } from '../src/app.mjs';
+import { parseLogins, parseTokens, resolveLogins } from '../src/core/auth.mjs';
 import { configErrors, loadServiceConfig } from '../src/core/config.mjs';
+import { hooksInstalled } from '../../tools/lib/git-hooks.mjs';
 
 const USAGE = `Usage: almagest <command> [options]
 
@@ -95,14 +97,11 @@ export async function doctor(repoRoot, configPath, deps = {}) {
     return config?.service.git.main || 'main';
   });
   advise('git hooks', () => {
-    // The pre-commit audit gate only runs when git is pointed at tools/hooks.
-    let hooksPath = '';
-    try { hooksPath = execFileSync('git', ['config', 'core.hooksPath'], { cwd: repoRoot, encoding: 'utf-8' }).trim(); }
-    catch { /* unset: git config exits 1 */ }
-    if (hooksPath !== 'tools/hooks') {
-      throw new Error(`core.hooksPath is ${hooksPath ? `"${hooksPath}"` : 'not set'} — the audit hooks will not run; fix: git config core.hooksPath tools/hooks`);
-    }
-    return 'tools/hooks';
+    // The pre-commit audit and the reference-transaction guard on main only
+    // run when git is pointed at tools/hooks by an absolute path.
+    const hooks = hooksInstalled(repoRoot);
+    if (!hooks.ok) throw new Error(hooks.problems.join('; '));
+    return hooks.hooksPath;
   });
   if (config) {
     await check('profile', () => {
@@ -125,14 +124,22 @@ export async function doctor(repoRoot, configPath, deps = {}) {
       return 'set';
     });
     await check('sign-in', () => {
-      const { provider, tokens_env: tokensEnv = 'ALMAGEST_TOKENS', oidc = {} } = config.service.auth;
+      const { provider, tokens_env: tokensEnv = 'ALMAGEST_TOKENS', logins_env: loginsEnv = 'ALMAGEST_LOGINS', oidc = {} } = config.service.auth;
       if (provider === 'oidc') {
         if (!oidc.issuer || !oidc.client_id) throw new Error('service.auth.oidc needs issuer and client_id');
         return `oidc ${oidc.issuer}`;
       }
-      const n = String(env[tokensEnv] || '').split(';').filter((e) => e.trim()).length;
-      if (!n) throw new Error(`${tokensEnv} is empty — nobody can sign in to the inbox`);
-      return `${n} token(s) in ${tokensEnv}`;
+      const tokens = parseTokens(env[tokensEnv] || '');
+      if (!tokens.length) throw new Error(`${tokensEnv} is empty — nobody has a role, so nobody can sign in or approve`);
+      // API tokens never sign in: a browser session comes from a separate
+      // sign-in secret, or from a one-time link (`almagest login <name>`).
+      const { usable, problems } = resolveLogins(tokens, parseLogins(env[loginsEnv] || ''), { loginsEnv, tokensEnv });
+      for (const problem of problems) out(`! sign-in: ${problem}`);
+      if (!usable.length) {
+        if (!env.ALMAGEST_SECRET_KEY) throw new Error(`no usable entry in ${loginsEnv} and no ALMAGEST_SECRET_KEY for one-time links — nobody can sign in to the inbox`);
+        return `no ${loginsEnv} entries — sign in with a one-time link: node server/bin/almagest.mjs login <name>`;
+      }
+      return `${usable.length} sign-in secret(s) in ${loginsEnv}, ${tokens.length} API token(s) in ${tokensEnv}`;
     });
     await check('ingest driver', () => {
       const driver = config.ingest.driver;

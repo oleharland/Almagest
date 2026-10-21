@@ -144,12 +144,21 @@ the audit and the site need only Node 22+.
 ```bash
 npm install
 export ALMAGEST_SECRET_KEY=$(openssl rand -hex 32)
-export TOKEN=$(openssl rand -hex 16) && echo "your inbox token: $TOKEN"
-export ALMAGEST_TOKENS="me:owner:$TOKEN"
-git config core.hooksPath tools/hooks
+export TOKEN=$(openssl rand -hex 16) && echo "your API token (for chats): $TOKEN"
+export LOGIN=$(openssl rand -hex 16) && echo "your inbox sign-in secret: $LOGIN"
+export ALMAGEST_TOKENS="me:owner:$TOKEN"             # who you are, your roles, your API token
+export ALMAGEST_LOGINS="me:$LOGIN"                   # your inbox sign-in — never an API token
+git config core.hooksPath "$PWD/tools/hooks"         # absolute: a relative path misses some hooks
 node server/bin/almagest.mjs doctor                  # ✓ passed, ✗ failed, ! warning only
 npm run serve                                        # inbox: http://127.0.0.1:4747/inbox
 ```
+
+The API token and the sign-in secret are deliberately different. The token goes
+into chat and hook configuration and can read; only the sign-in secret opens a
+browser session, and only a browser session can approve. Without
+`ALMAGEST_LOGINS`, `node server/bin/almagest.mjs login me` prints a one-time
+sign-in link instead. Give chats a `contributor` or `viewer` token where you can
+— see [the security status](v2/security.md).
 
 `doctor` checks the environment that `serve` relies on, so set the variables
 first. A `✗` line names what is missing and how to fix it. Ingest branches off

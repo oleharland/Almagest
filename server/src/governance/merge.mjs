@@ -280,7 +280,7 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
   }
 
   /**
-   * Compare-and-swap main from `oldSha` to `newSha`. [workstream C] The
+   * Compare-and-swap main from `oldSha` to `newSha`. The
    * reference-transaction hook refuses a wiki change to main from an agent
    * environment; a service started inside one says, for exactly this
    * transition, that it is the reviewed move (tools/lib/git-hooks.mjs).

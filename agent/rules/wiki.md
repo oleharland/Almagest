@@ -87,6 +87,8 @@ When new information contradicts what is already in the wiki:
 
 ## Wiki page template
 
+**Reserved slugs.** A page file must never be named like an agent instruction file, in any letter case: `claude`, `claude.local`, `agents`, `agent`, `gemini`, `skill`, `copilot-instructions`, or anything ending `.mdc`. On a case-insensitive file system `brain/wiki/claude.md` *is* the `CLAUDE.md` a harness loads as instructions, so the service refuses such a file anywhere in a proposal. Give the subject a longer slug (`claude-ai-assistant`, `agents-team`) and keep the short name in `aliases`.
+
 Schema **v2**. Every wiki page must have this frontmatter:
 
 ```yaml

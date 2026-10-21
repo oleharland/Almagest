@@ -21,7 +21,7 @@ const BASE = {
     store: { driver: 'sqlite', path: '.almagest/almagest.db', url: '' },
     http: { host: '127.0.0.1', port: 4747, base_url: '' },
     git: { main: 'main', remote: '', push: false, worktree_dir: '.almagest/worktrees' },
-    auth: { provider: 'token', tokens_env: 'ALMAGEST_TOKENS', oidc: {} },
+    auth: { provider: 'token', tokens_env: 'ALMAGEST_TOKENS', logins_env: 'ALMAGEST_LOGINS', oidc: {} },
   },
   ingest: {
     driver: 'claude-code',
@@ -37,6 +37,8 @@ const BASE = {
     separation_of_duties: false,
     require_sso_for_approval: false,
     inherit_profile_rules: true,
+    channel_roles_max_age_hours: 24,
+    session_roles_max_age_minutes: 60,
     rules: [],
   },
   telemetry: {
@@ -69,6 +71,8 @@ const PROFILE_DEFAULTS = {
       channels: [{ kind: 'web' }, { kind: 'slack' }, { kind: 'github-pr' }],
       separation_of_duties: true,
       require_sso_for_approval: true,
+      channel_roles_max_age_hours: 8,
+      session_roles_max_age_minutes: 30,
       rules: [
         { when: { hot: true }, require: { approvals: 2, per_page: true, owner_team: true } },
         { when: { decision: 'canonical_conflict' }, require: { roles: ['owner'] } },
