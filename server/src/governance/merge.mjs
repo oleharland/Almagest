@@ -29,6 +29,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { authorizeMainMove } from '../../../tools/lib/git-hooks.mjs';
 import { serviceActor } from '../core/auth.mjs';
 import { gitIdentity } from '../core/git.mjs';
 import { mergeManifest, stripRemovedPlaceholders } from './bookkeeping.mjs';
@@ -231,8 +232,18 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
     }
   }
 
-  /** Compare-and-swap main from `oldSha` to `newSha`. */
+  /**
+   * Compare-and-swap main from `oldSha` to `newSha`. [workstream C] The
+   * reference-transaction hook refuses a wiki change to main from an agent
+   * environment; a service started inside one says, for exactly this
+   * transition, that it is the reviewed move (tools/lib/git-hooks.mjs).
+   */
   async function moveMain(oldSha, newSha, message) {
+    const release = authorizeMainMove(git.repoRoot, { ref: `refs/heads/${main}`, oldSha, newSha });
+    try { return await casMain(oldSha, newSha, message); } finally { release(); }
+  }
+
+  async function casMain(oldSha, newSha, message) {
     const wt = await git.worktreeFor(main);
     if (wt) {
       const head = (await git.run(['rev-parse', 'HEAD'], { cwd: wt.path })).trim();

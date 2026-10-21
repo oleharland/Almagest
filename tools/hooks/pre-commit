@@ -15,9 +15,10 @@
 # dir — not the working tree, so what is checked is exactly what would be
 # committed: an unstaged fix cannot pass a staged mistake.
 #
-# Install once per clone:
+# Install once per clone — absolute, so the reference-transaction hook next to
+# this one also runs for a push into the repository (git runs those from .git/):
 #
-#   git config core.hooksPath tools/hooks
+#   git config core.hooksPath "$(git rev-parse --show-toplevel)/tools/hooks"
 #
 # `git commit --no-verify` skips it, as it skips every git hook. That is git's
 # own escape hatch, it is visible in the history of whoever uses it, and it is

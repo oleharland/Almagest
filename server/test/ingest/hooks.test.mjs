@@ -49,7 +49,28 @@ describe('hook guard-wiki', () => {
     assert.equal(guardWikiDecision(write(path.join(repo, 'brain', 'wiki', 'new-page.md'))).block, false);
   });
 
-  it('fails open on everything except the one case it guards', () => {
+  it('blocks writes into .git/ on any branch, in the repo and in any other git dir', () => {
+    const repo = makeTempRepo();
+    tmp.push(repo);
+    git(repo, 'switch', '-q', '-c', 'ingest/x-1234567');
+    for (const rel of ['.git/refs/heads/main', '.git/packed-refs', '.git/config', '.git/hooks/reference-transaction', '.git/almagest/main-move']) {
+      const d = guardWikiDecision(write(path.join(repo, rel)));
+      assert.equal(d.block, true, rel);
+      assert.match(d.reason, /inside a git directory/);
+    }
+    assert.equal(guardWikiDecision({ cwd: repo, tool_name: 'Edit', tool_input: { file_path: '.git/HEAD' } }).block, true);
+    // A separate git dir (`git init --separate-git-dir`, or a worktree's own) is found through git, not by name.
+    const sep = fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-sepgit-'));
+    tmp.push(sep);
+    git(sep, 'init', '-q', '--separate-git-dir', path.join(sep, 'gitdir'), path.join(sep, 'work'));
+    assert.equal(guardWikiDecision(write(path.join(sep, 'gitdir', 'refs', 'heads', 'main'))).block, true);
+    assert.equal(guardWikiDecision(write(path.join(sep, 'work', 'notes.md'))).block, false);
+    // Names that only look similar are not git dirs.
+    assert.equal(guardWikiDecision(write(path.join(repo, '.gitignore'))).block, false);
+    assert.equal(guardWikiDecision(write(path.join(repo, 'docs', 'x.git', 'a.md'))).block, false);
+  });
+
+  it('fails open on everything except the cases it guards', () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-nogit-'));
     tmp.push(outside);
     assert.equal(guardWikiDecision(write(path.join(outside, 'brain', 'wiki', 'x.md'))).block, false);

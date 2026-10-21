@@ -5,19 +5,36 @@
  * session can reach the same place through Bash instead: `git commit`,
  * `git merge ingest/x`, `git cherry-pick`, `git am`, `git stash pop`, or
  * plainly `cp draft.md brain/wiki/`. This hook reads the command Claude Code
- * is about to run and blocks (exit 2) when, on the main branch, it would put
- * a brain/wiki/ change into main or into main's working tree — and, on any
- * branch, when it would skip the commit hooks (`--no-verify`,
- * `-c core.hooksPath=…`), since the pre-commit audit is non-negotiable 7.
+ * is about to run and blocks (exit 2) when:
+ *
+ *   - on the main branch, it would put a brain/wiki/ change into main or into
+ *     main's working tree;
+ *   - on any branch, it would move or rewrite refs/heads/<main> without a
+ *     commit: `checkout -B` / `switch -C`, `branch -f|-m|-M|-c|-C|-d|-D`,
+ *     `update-ref`, `symbolic-ref`, `worktree add -B`, a `fetch` refspec or a
+ *     `push` to a local repository whose destination is main, a `rebase` of
+ *     main — and, while on main, `reset <commit>`, `rebase`, `commit --amend`
+ *     and `pull`;
+ *   - on any branch, it would skip or switch off the repository hooks
+ *     (`--no-verify`, `-c core.hooksPath=…`, `git config core.hooksPath`),
+ *     since the pre-commit audit is non-negotiable 7 and the
+ *     reference-transaction hook is the backstop under this one;
+ *   - on any branch, it would write inside a `.git/` directory, or clear one
+ *     of the agent-environment variables that hook relies on before running git.
  *
  * It parses shell the way a careful reader would, not the way bash does:
  * `&&` / `||` / `;` / `|` / newlines split commands, quotes group words, and
  * `cd <dir>` and `git switch|checkout <branch>` earlier in the same command
  * are followed, so `git switch main && git merge ingest/x` is judged on main.
- * What it cannot follow — `bash -c "…"`, a script, `eval` — it allows. The
- * principle is the same as guard-wiki: fail closed only on the clear case,
+ *
+ * What it cannot follow — `bash -c "…"`, a script, `eval`, `python3 -c` — it
+ * allows, with one exception: command text that names `refs/heads/<main>`,
+ * `.git/refs` or `packed-refs` and that this reader cannot account for is
+ * blocked. That class is narrow and has no everyday use; everywhere else the
+ * principle is the same as guard-wiki — fail closed only on the clear case,
  * open on everything else, because a guard that blocks on its own parse bugs
- * gets uninstalled. `tools/hooks/pre-commit` is the backstop under it.
+ * gets uninstalled. Under it sit `tools/hooks/pre-commit` (commits) and
+ * `tools/hooks/reference-transaction` (every ref update, whoever typed it).
  *
  * A human typing in their own terminal is not affected — Claude Code hooks
  * only see Claude Code's tool calls, and a human merge is the gate anyway.
@@ -27,6 +44,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../../../tools/lib/config.mjs';
+import { AGENT_ENV_VARS } from '../../../tools/lib/git-hooks.mjs';
 import { isInside, realish } from './source.mjs';
 
 // ── a small shell-words reader ──────────────────────────────────────────────
@@ -83,6 +101,7 @@ function git(cwd, args) {
   return execFileSync('git', args, { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 4000 }).trim();
 }
 const lines = (s) => s.split('\n').map((l) => l.trim()).filter(Boolean);
+const tryGit = (cwd, args) => { try { return git(cwd, args); } catch { return null; } };
 
 function repoAt(cwd) {
   try {
@@ -126,7 +145,7 @@ function parseGit(words, cwd) {
     if (GLOBAL_WITH_VALUE.has(w)) { i += 2; continue; }
     i++;
   }
-  return { cwd: dir, sub: words[i] || '', args: words.slice(i + 1), hooksDisabled };
+  return { cwd: dir, sub: words[i] || '', args: words.slice(i + 1).filter((w, j, a) => w !== '>' && a[j - 1] !== '>'), hooksDisabled };
 }
 
 /** Short-option cluster check: does `-anm` (before any value-taking letter) contain `n`? */
@@ -137,6 +156,19 @@ function clusterHas(arg, letter, valueLetters = 'mFCcSt') {
     if (valueLetters.includes(ch)) return false;
   }
   return false;
+}
+
+/** Non-option words, skipping the value of each option in `withValue` (`--opt value`; `--opt=value` is one word). */
+function operandsOf(args, withValue = new Set()) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--') { out.push(...args.slice(i + 1)); break; }
+    if (withValue.has(a)) { i++; continue; }
+    if (a.startsWith('-') && a !== '-') continue;
+    out.push(a);
+  }
+  return out;
 }
 
 /** Paths a git operation would bring into the current branch, or null when it cannot tell. */
@@ -193,6 +225,162 @@ function affectedPaths(repo, sub, args) {
   }
 }
 
+// ── moves of refs/heads/<main> ──────────────────────────────────────────────
+
+/** Does `name` (a branch name or full ref, possibly `+`-forced) denote refs/heads/<main>? */
+function namesMain(name, main) {
+  const n = String(name || '').replace(/^\+/, '');
+  return n === main || n === `refs/heads/${main}` || n === `heads/${main}`;
+}
+
+/** Does a refspec destination (fetch DWIMs a bare name to refs/heads/) cover refs/heads/<main>? Globs included. */
+function destCoversMain(dst, main) {
+  if (!dst) return false;
+  const d = dst.replace(/^\+/, '');
+  const full = d.startsWith('refs/') ? d : `refs/heads/${d}`;
+  if (!full.includes('*')) return namesMain(full, main);
+  const re = new RegExp(`^${full.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
+  return re.test(`refs/heads/${main}`);
+}
+
+/** Is a push/fetch <repository> argument this machine's disk (`.`, a path, file://, or a remote whose URL is one)? */
+function isLocalRepo(repoArg, top) {
+  const local = (u) => u === '.' || /^(\/|\.\.?\/|~|file:)/.test(u) || (!u.includes(':') && fs.existsSync(path.resolve(top, u)));
+  if (local(repoArg)) return true;
+  if (!/^[A-Za-z0-9._-]+$/.test(repoArg)) return false;
+  const urls = [tryGit(top, ['config', '--get-all', `remote.${repoArg}.url`]), tryGit(top, ['config', '--get-all', `remote.${repoArg}.pushurl`])]
+    .flatMap((v) => (v ? lines(v) : []));
+  return urls.some(local);
+}
+
+const BRANCH_VALUE = new Set(['-u', '--set-upstream-to', '--contains', '--no-contains', '--merged', '--no-merged', '--points-at', '--sort', '--format']);
+const REBASE_VALUE = new Set(['--onto', '-s', '--strategy', '-X', '--strategy-option', '-x', '--exec']);
+const FETCH_VALUE = new Set(['--depth', '--deepen', '--shallow-since', '--shallow-exclude', '-j', '--jobs', '--refmap', '--upload-pack',
+  '--negotiation-tip', '-o', '--server-option', '--receive-pack', '--repo', '--push-option', '-s', '--strategy', '-X', '--strategy-option']);
+
+/**
+ * When `git <sub> <args>` would move or rewrite refs/heads/<main>, a sentence
+ * saying how; else null. `branch` is the branch HEAD is on (or will be, after
+ * an earlier `git switch` in the same command).
+ */
+function mainMove(g, repo, branch) {
+  const { main, top } = repo;
+  const { sub, args } = g;
+  const onMain = branch === main;
+  const has = (...flags) => args.some((a) => flags.includes(a));
+
+  switch (sub) {
+    case 'checkout':
+    case 'switch': {
+      const i = args.findIndex((a) => a === '-B' || a === '-C' || a === '--force-create');
+      const forced = i !== -1 ? args[i + 1] : (args.find((a) => a.startsWith('--force-create=')) || '').slice(15);
+      return forced && namesMain(forced, main) ? `\`git ${sub} ${args[i] || '--force-create'} ${forced}\` resets ${main} to another commit` : null;
+    }
+    case 'branch': {
+      const short = (re) => args.some((a) => /^-[A-Za-z]+$/.test(a) && re.test(a));
+      const deletes = has('--delete') || short(/[dD]/);
+      const moves = has('--move') || short(/[mM]/);
+      const copies = has('--copy') || short(/[cC]/);
+      const ops = operandsOf(args, BRANCH_VALUE);
+      const listing = has('--list', '-l', '-a', '--all', '-r', '--remotes', '--show-current', '-v', '-vv', '--verbose',
+        '--contains', '--no-contains', '--merged', '--no-merged', '--points-at', '--edit-description', '-u', '--set-upstream-to', '--unset-upstream');
+      // Which operands name a branch this command writes: every one for -d,
+      // old and new for -m (one operand: HEAD's branch → it), new for -c, and
+      // the first for a create / -f (the second is only its start point).
+      let written;
+      if (deletes) written = ops;
+      else if (moves) written = ops.length === 1 ? [branch, ops[0]] : ops.slice(0, 2);
+      else if (copies) written = ops.length === 1 ? [ops[0]] : ops.slice(1, 2);
+      else if (listing) written = [];
+      else written = ops.slice(0, 1);
+      const hit = written.find((o) => namesMain(o, main));
+      return hit ? `\`git branch ${args.join(' ')}\` rewrites the ${main} branch` : null;
+    }
+    case 'worktree': {
+      if (args[0] !== 'add') return null;
+      const i = args.indexOf('-B');
+      return i !== -1 && namesMain(args[i + 1], main) ? `\`git worktree add -B ${args[i + 1]}\` resets ${main}` : null;
+    }
+    case 'update-ref': {
+      if (has('--stdin')) return '`git update-ref --stdin` updates refs this guard cannot see';
+      const [ref] = operandsOf(args, new Set(['-m']));
+      if (namesMain(ref, main)) return `\`git update-ref\` sets refs/heads/${main} directly`;
+      if (ref === 'HEAD' && onMain && !has('--no-deref')) return `\`git update-ref HEAD\` on \`${main}\` moves ${main}`;
+      return null;
+    }
+    case 'symbolic-ref': {
+      const ops = operandsOf(args, new Set(['-m']));
+      return (ops.length >= 2 || has('-d', '--delete')) && namesMain(ops[0], main) ? `\`git symbolic-ref\` repoints refs/heads/${main}` : null;
+    }
+    case 'fetch':
+    case 'pull': {
+      const ops = operandsOf(args, FETCH_VALUE);
+      const specs = has('--all', '--multiple') ? (has('--multiple') ? [] : ops) : ops.slice(1);
+      const hit = specs.find((s) => s.includes(':') && destCoversMain(s.slice(s.indexOf(':') + 1), main));
+      if (hit) return `\`git ${sub} … ${hit}\` writes refs/heads/${main}`;
+      if (sub === 'pull' && onMain && !has('--dry-run')) return `\`git pull\` on \`${main}\` moves ${main} to what the remote has`;
+      return null;
+    }
+    case 'push': {
+      const ops = operandsOf(args, FETCH_VALUE);
+      if (!ops.length || !isLocalRepo(ops[0], top)) return null;   // a remote's main is the remote's business
+      if (has('--mirror', '--all', '--branches')) return `\`git push ${ops[0]} --mirror|--all\` overwrites ${main} in a local repository`;
+      const deleting = has('-d', '--delete');
+      const hit = ops.slice(1).find((s) => {
+        const dst = s.includes(':') ? s.slice(s.indexOf(':') + 1) : s;
+        return destCoversMain(dst, main) || (deleting && namesMain(s, main));
+      });
+      return hit ? `\`git push ${ops[0]} ${hit}\` writes refs/heads/${main} in a local repository` : null;
+    }
+    case 'rebase': {
+      if (has('--abort', '--quit', '--edit-todo', '--show-current-patch')) return null;
+      const ops = operandsOf(args, REBASE_VALUE);
+      if (namesMain(ops[1], main)) return `\`git rebase … ${ops[1]}\` rewrites ${main}`;
+      if (onMain) return `\`git rebase\` on \`${main}\` rewrites ${main}`;
+      if (has('--continue', '--skip')) {
+        const gitDir = tryGit(top, ['rev-parse', '--path-format=absolute', '--git-dir']);
+        const headName = gitDir && ['rebase-merge', 'rebase-apply']
+          .map((d) => { try { return fs.readFileSync(path.join(gitDir, d, 'head-name'), 'utf-8').trim(); } catch { return ''; } })
+          .find(Boolean);
+        if (namesMain(headName, main)) return `\`git rebase ${args[0]}\` finishes a rebase of ${main}`;
+      }
+      return null;
+    }
+    case 'reset': {
+      if (!onMain || has('-p', '--patch') || args.some((a) => a.startsWith('--pathspec-from-file'))) return null;
+      const dd = args.indexOf('--');
+      const before = (dd === -1 ? args : args.slice(0, dd)).filter((a) => !a.startsWith('-'));
+      // Paths after `--`, or a commit followed by paths, touch the index only;
+      // no commit at all resets to HEAD. Only `reset [<mode>] <commit>` moves the branch.
+      if ((dd !== -1 && dd < args.length - 1) || before.length !== 1) return null;
+      const target = tryGit(top, ['rev-parse', '--verify', '--quiet', `${before[0]}^{commit}`]);
+      if (!target) return null;           // a path
+      const head = tryGit(top, ['rev-parse', 'HEAD']);
+      return target !== head ? `\`git reset ${args.join(' ')}\` on \`${main}\` moves ${main} to another commit` : null;
+    }
+    case 'commit':
+      return onMain && has('--amend') ? `\`git commit --amend\` on \`${main}\` rewrites a commit already on ${main}` : null;
+    case 'filter-branch':
+    case 'filter-repo':
+      return `\`git ${sub}\` rewrites history, ${main} included`;
+    default:
+      return null;
+  }
+}
+
+/** `git config core.hooksPath …`, `--unset core.hooksPath`, `config set|unset core.hooksPath`; reads are fine. */
+function setsHooksPath(g) {
+  if (g.sub !== 'config') return false;
+  if (!g.args.some((a) => /^core\.hookspath$/i.test(a))) return false;
+  const reads = ['--get', '--get-all', '--get-regexp', '-l', '--list', 'get', 'list', '--show-origin', '--show-scope'];
+  const writes = ['--unset', '--unset-all', '--replace-all', '--add', 'set', 'unset', '--edit', '-e'];
+  if (g.args.some((a) => writes.includes(a))) return true;
+  if (g.args.some((a) => reads.includes(a))) return false;
+  return g.args.filter((a) => !a.startsWith('-')).length >= 2;   // `git config core.hooksPath <value>`
+}
+
+// ── writers ─────────────────────────────────────────────────────────────────
+
 /** Commands that write their last argument(s) / redirect targets. Best effort; anything else is not a write. */
 function writeTargets(words) {
   const targets = [];
@@ -206,6 +394,54 @@ function writeTargets(words) {
   return targets;
 }
 
+/** Is `abs` inside a git directory — a `.git` path segment, or the repo's own (common) git dir? */
+function insideGitDir(abs, cwd) {
+  if (abs.split(path.sep).includes('.git')) return true;
+  const common = tryGit(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+  return Boolean(common && isInside(realish(common), abs));
+}
+
+// ── the narrow fail-closed class ────────────────────────────────────────────
+
+/** Programs whose words this guard accounts for when they name a ref file: readers, and git itself. */
+const READERS = new Set(['cat', 'ls', 'head', 'tail', 'grep', 'egrep', 'fgrep', 'rg', 'wc', 'less', 'more', 'file', 'stat',
+  'echo', 'printf', 'diff', 'cmp', 'test', '[', 'true', 'false', 'pwd', 'which', 'cd', 'git', 'sort', 'uniq', 'cut', 'tr']);
+
+/** git's own subcommands; anything else after `git` is an alias or an external `git-<name>`. */
+const GIT_SUBCOMMANDS = new Set(('add am annotate apply archive bisect blame branch bundle cat-file check-ignore check-ref-format '
+  + 'checkout cherry cherry-pick clean clone commit commit-tree config count-objects describe diff diff-files diff-index '
+  + 'diff-tree fetch filter-branch filter-repo for-each-ref format-patch fsck gc grep hash-object help init log ls-files '
+  + 'ls-remote ls-tree merge merge-base merge-file merge-tree mv name-rev notes prune pull push range-diff read-tree rebase '
+  + 'reflog remote repack replace reset restore rev-list rev-parse revert rm shortlog show show-branch show-ref sparse-checkout '
+  + 'stash status submodule switch symbolic-ref tag update-index update-ref var verify-commit version whatchanged worktree write-tree').split(' '));
+
+function refTextPattern(main) {
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`refs/heads/(${esc(main)}|main)(?![\\w./-])|\\.git/refs|packed-refs`);
+}
+
+/** Does this simple command clear an agent-environment variable that tools/hooks/reference-transaction reads? */
+function clearsAgentEnv(words) {
+  const listed = (name) => AGENT_ENV_VARS.includes(name);
+  if (words[0] === 'unset') return words.slice(1).some(listed);
+  if (words[0] === 'export' || words[0] === 'declare' || words[0] === 'typeset') return words.slice(1).some((w) => /^[A-Za-z_]\w*=/.test(w) && listed(w.split('=')[0]));
+  for (const w of words) {                                                     // CLAUDECODE= git …
+    if (!/^[A-Za-z_]\w*=/.test(w)) break;
+    if (listed(w.split('=')[0])) return true;
+  }
+  if (path.basename(words[0] || '') === 'env') {
+    for (let i = 1; i < words.length; i++) {
+      const w = words[i];
+      if (w === '-i' || w === '--ignore-environment' || w === '-') return true;
+      if ((w === '-u' || w === '--unset') && listed(words[i + 1])) return true;
+      if (w.startsWith('--unset=') && listed(w.slice(8))) return true;
+      if (/^-u./.test(w) && listed(w.slice(2))) return true;
+      if (/^[A-Za-z_]\w*=/.test(w) && listed(w.split('=')[0])) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * The decision: `{ block, reason }`.
  * @param {object} input  Claude Code PreToolUse JSON for a Bash call
@@ -213,19 +449,51 @@ function writeTargets(words) {
 export function guardGitDecision(input) {
   const command = String(input?.tool_input?.command || '');
   if (!command.trim()) return { block: false, reason: 'no command' };
-  const commands = splitCommands(command);
-  if (!commands) return { block: false, reason: 'not parsed' };
-
   let cwd = path.resolve(input.cwd || process.cwd());
+  const startRepo = repoAt(cwd);
+  const refText = refTextPattern(startRepo?.main || 'main');
+
+  const commands = splitCommands(command);
+  if (!commands) {
+    if (refText.test(command)) return unreadable(command.match(refText)[0]);
+    return { block: false, reason: 'not parsed' };
+  }
+
+  if (/\bgit\b/.test(command) && commands.some(clearsAgentEnv)) {
+    return {
+      block: true,
+      reason: 'Almagest: blocked — this command clears an agent-environment variable before running git. '
+        + 'tools/hooks/reference-transaction uses those variables to keep wiki changes off main (non-negotiable 1); run git as you are.',
+    };
+  }
+
   let simulatedBranch = null;   // set by an earlier `git switch|checkout <branch>` in the same command
 
   for (const words of commands) {
     if (words[0] === 'cd') { cwd = path.resolve(cwd, words[1] || process.env.HOME || '.'); simulatedBranch = null; continue; }
 
+    // Nothing writes inside a git directory, on any branch: refs, packed-refs,
+    // config and hooks there are what every other check stands on.
+    const targets = writeTargets(words);
+    const intoGit = targets.map((t) => realish(path.resolve(cwd, t)))
+      .find((t) => insideGitDir(t, cwd) && !(path.basename(words[0] || '') === 'rm' && t.endsWith('.lock')));
+    if (intoGit) {
+      return {
+        block: true,
+        reason: `Almagest: blocked — \`${words[0]}\` would write ${intoGit}, inside a git directory. `
+          + 'Refs, config and hooks there are what keeps wiki changes off main (non-negotiable 1); use git commands on an ingest branch instead.',
+      };
+    }
+
     const g = parseGit(words, cwd);
     if (!g) {
+      // A command this guard cannot account for, naming a ref file: closed.
+      const prog = path.basename(words.find((w) => !/^[A-Za-z_]\w*=/.test(w)) || '');
+      const named = words.find((w) => refText.test(w));
+      const unsafeFind = prog === 'find' && words.some((w) => ['-delete', '-exec', '-execdir', '-ok', '-okdir', '-fprint', '-fprintf', '-fls'].includes(w));
+      if (named && (!(READERS.has(prog) || prog === 'find') || unsafeFind)) return unreadable(named.match(refText)[0]);
+
       // Plain writers into the wiki while the checkout is on main.
-      const targets = writeTargets(words);
       if (!targets.length) continue;
       const repo = repoAt(cwd);
       if (!repo) continue;
@@ -238,18 +506,42 @@ export function guardGitDecision(input) {
       continue;
     }
 
+    // An alias (`git -c alias.x='!…' x`, or one from config) runs what this guard cannot see.
+    if (!GIT_SUBCOMMANDS.has(g.sub)) {
+      const named = words.find((w) => refText.test(w));
+      if (named) return unreadable(named.match(refText)[0]);
+    }
+
     const repo = repoAt(g.cwd);
     if (!repo) continue;
+    const branch = simulatedBranch ?? repo.branch;
+
+    // A redirect out of a git command (`git show x:a.md > brain/wiki/a.md`) is a plain write.
+    if (targets.length && branch === repo.main) {
+      const wiki = path.join(repo.top, repo.brainDir, 'wiki');
+      const hit = targets.map((t) => realish(path.resolve(cwd, t))).find((t) => isInside(wiki, t));
+      if (hit) return block(`\`git ${g.sub}\` output would be written to ${path.relative(repo.top, hit)} on \`${repo.main}\``, repo.main);
+    }
 
     // Skipping the hooks skips the pre-commit audit — on any branch.
     const runsHooks = ['commit', 'merge', 'push', 'cherry-pick', 'am', 'revert', 'rebase', 'pull'].includes(g.sub);
     const skipsHooks = runsHooks && (g.hooksDisabled
       || g.args.some((a) => a === '--no-verify' || (g.sub === 'commit' && (a === '-n' || clusterHas(a, 'n')))));
-    if (skipsHooks) {
+    if (skipsHooks || setsHooksPath(g)) {
       return {
         block: true,
-        reason: 'Almagest: blocked — this git command skips the repository hooks (`--no-verify`, `-n` or `-c core.hooksPath=`). '
-          + 'tools/hooks/pre-commit runs the audit that gates every commit (non-negotiable 7); fix what it reports instead.',
+        reason: 'Almagest: blocked — this git command skips or switches off the repository hooks (`--no-verify`, `-n`, `-c core.hooksPath=` or `git config core.hooksPath`). '
+          + 'tools/hooks/ runs the audit that gates every commit (non-negotiable 7) and keeps wiki changes off main; fix what it reports instead.',
+      };
+    }
+
+    // Moving main without a commit — on any branch.
+    const moved = mainMove(g, repo, branch);
+    if (moved) {
+      return {
+        block: true,
+        reason: `Almagest: blocked — ${moved}. Only a person moves \`${repo.main}\`, by merging a reviewed diff (non-negotiable 1): `
+          + 'work on an ingest branch (`git switch -c ingest/<source-slug>-<sha7>`) and leave main to the review.',
       };
     }
 
@@ -265,7 +557,6 @@ export function guardGitDecision(input) {
     }
 
     if (!['commit', 'merge', 'cherry-pick', 'revert', 'am', 'stash'].includes(g.sub)) continue;
-    const branch = simulatedBranch ?? repo.branch;
     if (branch !== repo.main) continue;
     const paths = affectedPaths(repo, g.sub, g.args);
     if (!paths) continue;   // could not tell — open
@@ -283,5 +574,13 @@ function block(what, main) {
     block: true,
     reason: `Almagest: blocked — ${what}. Nothing writes to brain/wiki/ on \`${main}\` (non-negotiable 1): `
       + 'work on an ingest branch (`git switch -c ingest/<source-slug>-<sha7>`) and let a person merge the reviewed diff.',
+  };
+}
+
+function unreadable(what) {
+  return {
+    block: true,
+    reason: `Almagest: blocked — this command names \`${what}\` in a form the guard cannot follow (a nested shell, an interpreter, a script). `
+      + 'Refs are changed with plain git commands on an ingest branch, never by writing them; main moves only by a reviewed merge (non-negotiable 1).',
   };
 }
