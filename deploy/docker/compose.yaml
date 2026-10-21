@@ -10,6 +10,7 @@ services:
       ALMAGEST_GIT_URL: ${ALMAGEST_GIT_URL:?}
       ALMAGEST_SECRET_KEY: ${ALMAGEST_SECRET_KEY:?}
       ALMAGEST_TOKENS: ${ALMAGEST_TOKENS:-}
+      ALMAGEST_LOGINS: ${ALMAGEST_LOGINS:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       DATABASE_URL: postgres://almagest:almagest@db:5432/almagest
     volumes: ["almagest-data:/data"]

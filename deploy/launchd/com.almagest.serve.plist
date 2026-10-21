@@ -23,7 +23,7 @@
 
   A LaunchAgent (per user, not a LaunchDaemon) on purpose: the ingest agent
   runs as you, with your Claude Code login, against your checkout. Secrets
-  (ALMAGEST_TOKENS, ALMAGEST_SECRET_KEY) belong in the EnvironmentVariables
+  (ALMAGEST_TOKENS, ALMAGEST_LOGINS, ALMAGEST_SECRET_KEY) belong in the EnvironmentVariables
   block below, in this mode-0600 file — never in brain.config.yaml, which is
   committed. The service strips them from the ingest agent's environment.
 -->
@@ -54,6 +54,7 @@
     <key>ALMAGEST_LOG_JSON</key>
     <string>1</string>
     <!-- <key>ALMAGEST_TOKENS</key><string>you:owner:change-me</string> -->
+    <!-- <key>ALMAGEST_LOGINS</key><string>you:a-different-sign-in-secret</string> -->
   </dict>
 
   <!-- Start at login, restart if it exits — but not in a tight loop. -->

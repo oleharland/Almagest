@@ -96,15 +96,17 @@ The flow above needs nothing but an agent session and git. `server/` adds an opt
 
 One code path, three profiles — `service.profile` in `brain.config.yaml`:
 
-- **solo** — your laptop or one small container. SQLite, a pasted token to sign in, approve from your phone (a chat can hand you the link, never approve for you).
+- **solo** — your laptop or one small container. SQLite, a sign-in secret kept apart from the API token your chats use, approve from your phone (a chat can hand you the link, never approve for you).
 - **team** — SSO sign-in, the person who submitted can't approve their own proposal, hot pages need two approvals.
 - **enterprise** — Postgres, SSO required to approve, owner-team sign-off on hot pages, Slack and GitHub-PR channels, remote MCP behind your IdP.
 
 ```bash
 npm install
 export ALMAGEST_SECRET_KEY=$(openssl rand -hex 32)
-export TOKEN=$(openssl rand -hex 16) && echo "your inbox token: $TOKEN"
-ALMAGEST_TOKENS="me:owner:$TOKEN" npm run serve
+export TOKEN=$(openssl rand -hex 16) && echo "API token, for chats: $TOKEN"
+export LOGIN=$(openssl rand -hex 16) && echo "inbox sign-in secret: $LOGIN"
+git config core.hooksPath "$PWD/tools/hooks"
+ALMAGEST_TOKENS="me:owner:$TOKEN" ALMAGEST_LOGINS="me:$LOGIN" npm run serve
 # inbox:  http://127.0.0.1:4747/inbox     MCP:  http://127.0.0.1:4747/mcp     or:  node server/bin/almagest.mjs mcp
 ```
 

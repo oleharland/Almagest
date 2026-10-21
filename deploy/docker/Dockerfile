@@ -6,7 +6,7 @@
 # layer. State (sqlite, worktrees, snapshots) lives under /data/repo/.almagest.
 #
 #   docker build -f deploy/docker/Dockerfile -t almagest .
-#   docker run -p 4747:4747 -e ALMAGEST_GIT_URL=… -e ALMAGEST_TOKENS=… -v almagest:/data almagest
+#   docker run -p 4747:4747 -e ALMAGEST_GIT_URL=… -e ALMAGEST_TOKENS=… -e ALMAGEST_LOGINS=… -v almagest:/data almagest
 FROM node:22-bookworm-slim
 
 # git: the store. poppler-utils: pdftotext for binary-source sidecars.

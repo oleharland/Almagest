@@ -17,7 +17,7 @@
 # Logs: journalctl [--user] -u almagest -f   (service)
 #       <repo>/.almagest/logs/<jobId>.log     (one per ingest job)
 #
-# Secrets (ALMAGEST_TOKENS, ALMAGEST_SECRET_KEY, ANTHROPIC_API_KEY, OIDC client
+# Secrets (ALMAGEST_TOKENS, ALMAGEST_LOGINS, ALMAGEST_SECRET_KEY, ANTHROPIC_API_KEY, OIDC client
 # secrets) go in the EnvironmentFile, mode 0600 — never in brain.config.yaml,
 # which is committed.
 
