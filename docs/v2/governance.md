@@ -223,7 +223,8 @@ These are code, not config. No rule, profile or flag changes them.
    `resolveDecision` take the `headSha` the person was shown and refuse (409,
    "this proposal changed since you opened it") when it is not the current
    one. A merged GitHub PR whose head is not the reviewed version records no
-   approval and is logged as a policy violation.
+   approval, leaves local main where it was, and is logged as a policy
+   violation.
 10. **People are counted, not ids.** Every human who signs in is remembered
     id ↔ email (`store.kv` → `governance.identity`). Approvals are counted by
     person (email when known, else id), and separation of duties compares the
@@ -381,15 +382,35 @@ msmtp, …) or an HTTPS mail API.
 PR whose body is the plain-language summary plus the inbox link. Webhook:
 POST `/channels/github/webhook` (content type JSON, event *Pull requests*),
 verified with `X-Hub-Signature-256`; each `X-GitHub-Delivery` is acted on
-once. A merged PR is recorded as the approval of the GitHub user who merged it
-(mapped through `users`) — only if the PR's head is the reviewed version — the
-proposal is
-marked merged, and local main is fast-forwarded to the remote's. Almagest
-never merges through the GitHub API. Because the merge happens on GitHub, the
-policy can't stop it there: mirror your rules in **branch protection**. A
-merge that did not meet the policy — wrong version, missing approvals, an
-unmapped or non-reviewer account — is still recorded (it happened) and shows
-up as a **policy violation** in the activity log.
+once. Only pull requests from `repo` itself into `service.git.main` count: a
+fork's PR whose branch happens to share a proposal's name is ignored (and
+logged). Almagest never merges through the GitHub API.
+
+**Almagest stays the gate for its own `main`.** A merge on GitHub is a request
+to accept a commit, not an order to move main. In this order:
+
+1. **The policy decides first**, through the same code as the inbox: the
+   merging GitHub user must map (through `users`) to a human with an approver
+   role, separation of duties applies, the PR's head must be the reviewed
+   version (`headSha`), and with that approval every requirement must be met.
+2. Only then is **`merge_commit_sha`** fetched from the remote — that commit,
+   never the remote's tip.
+3. Its parents must be exactly **(local main, reviewed head)**. A squash or
+   rebase merge has no such parents and cannot be checked.
+4. It must pass the **same path check and audit re-run** as an inbox merge
+   (`merge.mjs` → `verifyCandidate`), unchanged — a stale derived index fails
+   rather than being rebuilt.
+5. Local main moves to it by compare-and-swap; the proposal is `merged`.
+
+If any step fails, local main does not move. The proposal becomes
+**`merged_unaccepted`** — "Merged on GitHub, not accepted here" in the inbox —
+with `merge.accepted: false` and `merge.reason` (`policy` · `head` · `paths` ·
+`audit` · `shape` · `checkout` · `busy` · `error`) plus a message, and a
+**policy violation** in the activity log. An administrator reconciles it by
+hand (bring the change in through a new proposal, or revert it on GitHub).
+GitHub's **branch protection** is defence in depth: turn it on and mirror your
+rules there, so a bad merge is stopped before it reaches the remote — but the
+service does not rely on it.
 
 ### CLI
 

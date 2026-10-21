@@ -56,7 +56,7 @@ function headField(p) {
 // ── queue ────────────────────────────────────────────────────────────────────
 
 function statusChip(p) {
-  const cls = { merged: 'chip--ok', rejected: 'chip--bad', conflicted: 'chip--warn', superseded: '', changes_requested: '', approved: 'chip--ok' }[p.status] ?? '';
+  const cls = { merged: 'chip--ok', merged_unaccepted: 'chip--bad', rejected: 'chip--bad', conflicted: 'chip--warn', superseded: '', changes_requested: '', approved: 'chip--ok' }[p.status] ?? '';
   return html`<span class="chip ${cls}">${STATUS_HEADLINE[p.status] || p.status}</span>`;
 }
 
@@ -228,6 +228,9 @@ function decisionCard(p, d, { canAct, csrf }) {
 function needsBox(evaluation, p) {
   if (p.status === 'merged') {
     return html`<div class="needs ready"><h2>Added to the knowledge base</h2><p>${p.merge?.at ? `On ${p.merge.at.slice(0, 10)}` : ''}${p.merge?.approvers?.length ? `, approved by ${p.approvals.filter((a) => p.merge.approvers.includes(a.actorId)).map((a) => a.display).filter((v, i, a) => a.indexOf(v) === i).join(', ')}` : ''}.</p></div>`;
+  }
+  if (p.status === 'merged_unaccepted') {
+    return html`<div class="needs"><h2>Merged on GitHub, not accepted here</h2><p>${p.merge?.by ? `Merged by ${p.merge.by}` : 'Merged'}${p.merge?.at ? ` on ${p.merge.at.slice(0, 10)}` : ''}, but the knowledge base was not updated: ${p.merge?.message || p.mergeError?.message || 'it could not be verified.'}</p><p>An administrator has to reconcile it by hand. This is recorded as a policy violation.</p></div>`;
   }
   if (p.status === 'rejected') {
     return html`<div class="needs"><h2>Turned down</h2><p>${p.rejection?.display ? `By ${p.rejection.display}` : ''}${p.rejection?.reason ? html`: “${p.rejection.reason}”` : '.'}</p></div>`;

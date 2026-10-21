@@ -15,12 +15,18 @@
  * and opens (or updates) a pull request whose body is the plain-language
  * summary plus a link to the inbox. It never merges through the API.
  *
- * POST /channels/github/webhook verifies `X-Hub-Signature-256`. A merged PR
- * is recorded as the approval of the GitHub user who merged it (via `users`),
- * the proposal is marked merged, and main is fetched and fast-forwarded. A
- * merge by an unmapped or non-reviewer account is still recorded — it
- * happened — and logged as a policy violation. Mirror the policy in GitHub's
- * branch protection; GitHub is the gate on that path.
+ * POST /channels/github/webhook verifies `X-Hub-Signature-256` and acts only
+ * on pull requests from `repo` itself into main — a fork's PR with the same
+ * branch name is ignored. A merged PR is put to the policy first, as the
+ * approval of the GitHub user who merged it (via `users`): a mapped human
+ * reviewer, separation of duties, the reviewed head. Only if that holds is
+ * `merge_commit_sha` fetched — that commit, not the remote's tip — and local
+ * main moved to it, after its parents are checked to be exactly (local main,
+ * reviewed head) and it passes the same path check and audit as an inbox
+ * merge (merge.mjs → acceptExternal). Anything else leaves local main alone
+ * and marks the proposal `merged_unaccepted` with the reason, logged as a
+ * policy violation. Almagest stays the gate for its own main; GitHub's
+ * branch protection is defence in depth, not the gate.
  */
 import { HttpError } from '../../core/http.mjs';
 import { validateMappings } from '../identity.mjs';
@@ -55,7 +61,7 @@ export function prBody(p, decisions, base) {
   ].filter((l, i, a) => l !== '' || a[i - 1] !== '').join('\n');
 }
 
-export function create(ctx, cfg, { governance, merger, identities, people }) {
+export function create(ctx, cfg, { governance, identities, people }) {
   const { config, git, log, store } = ctx;
   const base = String(config.service.http.base_url).replace(/\/+$/, '');
   const api = String(cfg.api_url || 'https://api.github.com').replace(/\/+$/, '');
@@ -117,17 +123,22 @@ export function create(ctx, cfg, { governance, merger, identities, people }) {
     return vouch({ ...who.actor, idp: 'github' }, 'github-pr');
   }
 
-  /** Bring local main up to the remote's, by fast-forward only. */
-  async function followRemoteMain() {
-    if (!remote) return;
-    await git.run(['fetch', '--quiet', remote, `refs/heads/${main}`]);
-    const fetched = (await git.run(['rev-parse', 'FETCH_HEAD'])).trim();
-    const local = await git.revParse(main);
-    if (fetched === local) return;
-    const ff = await git.tryRun(['merge-base', '--is-ancestor', local, fetched]);
-    if (ff === null) { log.warn('remote main is not a fast-forward of local main — leaving local main alone'); return; }
-    const moved = await merger.moveMain(local, fetched, 'almagest: follow merged pull request');
-    if (!moved.ok) log.warn('could not fast-forward local main after a GitHub merge', { reason: moved.reason });
+  /**
+   * Bring the merge commit itself into the local object store — never a
+   * branch tip. Fetching by id needs a server that allows it (GitHub does);
+   * failing that, main is fetched and the commit must be in what came back.
+   * Nothing here moves a ref.
+   */
+  async function fetchCommit(sha) {
+    if (!remote || !/^([0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) return;
+    if ((await git.tryRun(['fetch', '--quiet', '--no-tags', remote, sha])) !== null) return;
+    await git.run(['fetch', '--quiet', '--no-tags', remote, `refs/heads/${main}`]);
+  }
+
+  /** A PR from this repo into main — not a fork's branch that happens to share the name. */
+  function fromThisRepo(pr) {
+    const headRepo = String(pr.head?.repo?.full_name || '').toLowerCase();
+    return Boolean(cfg.repo) && headRepo === String(cfg.repo).toLowerCase() && pr.base?.ref === main;
   }
 
   function routes(http) {
@@ -149,14 +160,21 @@ export function create(ctx, cfg, { governance, merger, identities, people }) {
         try { payload = JSON.parse(raw); } catch { throw new HttpError(400, 'invalid JSON'); }
         const pr = payload.pull_request || {};
         if (payload.action !== 'closed') return { ok: true, ignored: payload.action };
+        if (!fromThisRepo(pr)) {
+          log.warn('github webhook: ignoring a pull request that is not from this repository into main', {
+            pr: pr.number, head: String(pr.head?.repo?.full_name || ''), branch: String(pr.head?.ref || ''), base: String(pr.base?.ref || ''),
+          });
+          return { ok: true, ignored: 'not a pull request from this repository into main' };
+        }
         const p = await store.proposals.getByBranch(String(pr.head?.ref || ''));
         if (!p) return { ok: true, ignored: 'no proposal for that branch' };
 
         if (pr.merged) {
           const actor = await actorFor(String(pr.merged_by?.login || 'unknown'));
-          try { await followRemoteMain(); } catch (err) { log.warn('fetching main after a GitHub merge failed', { error: err.message }); }
-          const out = await governance.recordExternalMerge(p.id, actor, { sha: String(pr.merge_commit_sha || ''), headSha: String(pr.head?.sha || ''), channel: 'github-pr' });
-          return { ok: true, proposal: out.id, status: out.status, policyMet: out.merge?.policyMet };
+          const out = await governance.recordExternalMerge(p.id, actor, {
+            sha: String(pr.merge_commit_sha || ''), headSha: String(pr.head?.sha || ''), channel: 'github-pr', fetch: fetchCommit,
+          });
+          return { ok: true, proposal: out.id, status: out.status, policyMet: out.merge?.policyMet, accepted: out.merge?.accepted === true, ...(out.merge?.reason ? { reason: out.merge.reason } : {}) };
         }
         const login = String(payload.sender?.login || '');
         const actor = await actorFor(login);

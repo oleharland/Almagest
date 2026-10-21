@@ -522,35 +522,80 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
   }
 
   /**
-   * A merge that happened outside the service (a merged GitHub PR). Recorded
-   * as what it was — including when it did not meet the policy, which shows
-   * up in the activity log as a violation rather than being papered over.
+   * A merge that happened outside the service (a merged GitHub PR). The
+   * policy decides first, through the same checks as the inbox: a mapped,
+   * vouched human approver, the reviewed head, separation of duties, every
+   * requirement met. Only then may local main move — and only to the merge
+   * commit itself, once merger.acceptExternal() has checked its parents and
+   * re-run the path check and the audit. `fetch(sha)` brings that commit in
+   * from the remote first; if it throws, nothing is recorded and a
+   * redelivery can try again.
+   *
+   * Any refusal leaves main where it was and marks the proposal
+   * `merged_unaccepted` with the reason (`merge.reason`: policy · head ·
+   * paths · audit · shape · checkout · busy · error), logged as a policy
+   * violation — never as a normal merge. A person reconciles it by hand.
    */
-  async function recordExternalMerge(prpId, actor, { sha = '', headSha = '', channel = 'github-pr' } = {}) {
+  async function recordExternalMerge(prpId, actor, { sha = '', headSha = '', channel = 'github-pr', fetch = null } = {}) {
     return lock(async () => {
       const p = await load(prpId);
-      if (p.status === 'merged') return p;
-      let permitted = true;
-      try { assertCanApprove(actor); assertMayAct(actor, channel); } catch { permitted = false; }
+      if (p.status === 'merged' || p.status === 'merged_unaccepted') return p;
+      let refusal = null;
+      try { assertCanApprove(actor); assertMayAct(actor, channel); } catch { refusal = { reason: 'policy', message: `${actor.display} is not a reviewer` }; }
       // The PR's head must be the reviewed version, or the merge is not an approval of it.
-      const sameHead = Boolean(headSha) && headSha === p.headSha;
-      const counts = permitted && sameHead;
-      const approvals = counts ? [...(p.approvals || []), approvalRecord(actor, { scope: 'all', channel, headSha })] : p.approvals || [];
-      const draft = { ...p, approvals };
-      const { evaluation } = await evaluateProposal(draft);
-      const met = counts && evaluation.blockers.filter((b) => b.code !== 'status').length === 0 && evaluation.missing.length === 0;
-      const updated = await store.proposals.update(p.id, {
-        status: 'merged', approvals, updatedAt: nowIso(), mergeError: null,
-        merge: { sha, at: nowIso(), by: actor.id, approvers: counts ? [actor.id] : [], method: channel, external: true, headSha, policyMet: met, ...(met ? {} : { policyGap: evaluation.explanation }) },
-      });
-      await record('proposal.merge', actor, p.id, channel, { sha, headSha, external: true, policyMet: met });
-      if (!met) {
-        const reason = !permitted ? `${actor.display} is not a reviewer`
-          : !sameHead ? `GitHub merged version ${String(headSha).slice(0, 7) || 'unknown'}, but the reviewed version is ${String(p.headSha).slice(0, 7)}`
-            : evaluation.explanation;
-        await record('policy.violation', actor, p.id, channel, { reason, sha });
+      if (!refusal && !(headSha && headSha === p.headSha)) {
+        refusal = { reason: 'head', message: `GitHub merged version ${String(headSha).slice(0, 7) || 'unknown'}, but the reviewed version is ${String(p.headSha).slice(0, 7)}` };
       }
-      bus.emit('proposal.merged', { proposal: updated, actor });
+      if (!refusal) {
+        try {
+          policy.assertMayApprove(p, actor, { ...(await policyOptions(p, actor)), requireSso, scope: 'all', channel, headSha, requireHead: true });
+        } catch (err) {
+          refusal = { reason: 'policy', message: err.message };
+        }
+      }
+      const counts = !refusal;
+      const approvals = counts ? [...(p.approvals || []), approvalRecord(actor, { scope: 'all', channel, headSha })] : p.approvals || [];
+      const { evaluation } = await evaluateProposal({ ...p, approvals });
+      const met = counts && evaluation.ready;
+      if (!refusal && !met) refusal = { reason: 'policy', message: evaluation.explanation };
+
+      let result = null;
+      if (!refusal) {
+        if (fetch) await fetch(sha);
+        try {
+          result = await merger.acceptExternal(p, sha);
+        } catch (err) {
+          log.error('checking an external merge failed', { proposal: p.id, error: err.stack || err.message });
+          result = { ok: false, reason: 'error', message: `Something went wrong while checking it: ${err.message}` };
+        }
+        if (!result.ok) {
+          refusal = {
+            reason: result.reason, message: result.message, ...(result.files ? { files: result.files } : {}),
+            ...(result.audit ? { audit: { exit: result.audit.exit, errors: result.audit.errors, warnings: result.audit.warnings, findings: (result.audit.findings || []).slice(0, 20), ...(result.audit.error ? { error: result.audit.error } : {}) } } : {}),
+          };
+        }
+      }
+
+      const merge = { sha, at: nowIso(), by: actor.id, approvers: counts ? [actor.id] : [], method: channel, external: true, headSha, policyMet: met, ...(met ? {} : { policyGap: evaluation.explanation }) };
+      if (!refusal) {
+        const updated = await store.proposals.update(p.id, {
+          status: 'merged', approvals, updatedAt: nowIso(), mergeError: null,
+          merge: { ...merge, accepted: true, audit: { exit: result.audit.exit, errors: result.audit.errors, warnings: result.audit.warnings } },
+        });
+        await record('proposal.merge', actor, p.id, channel, { sha, headSha, external: true, policyMet: true, accepted: true });
+        bus.emit('proposal.merged', { proposal: updated, actor });
+        return updated;
+      }
+
+      log.error('merged on GitHub but not accepted — local main left as it was', { proposal: p.id, sha, reason: refusal.reason, message: refusal.message });
+      const updated = await store.proposals.update(p.id, {
+        status: 'merged_unaccepted', approvals, updatedAt: nowIso(),
+        mergeError: { reason: refusal.reason, message: refusal.message, at: nowIso(), ...(refusal.files ? { files: refusal.files } : {}), ...(refusal.audit ? { audit: refusal.audit } : {}) },
+        merge: { ...merge, accepted: false, reason: refusal.reason, message: refusal.message },
+      });
+      await record('proposal.merge_unaccepted', actor, p.id, channel, { sha, headSha, external: true, policyMet: met, reason: refusal.reason });
+      await record('policy.violation', actor, p.id, channel, { reason: refusal.message, code: refusal.reason, sha, ...(refusal.files ? { files: refusal.files } : {}) });
+      bus.emit('proposal.updated', { proposal: updated });
       return updated;
     });
   }

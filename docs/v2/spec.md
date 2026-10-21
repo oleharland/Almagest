@@ -209,7 +209,7 @@ it; an invalid or missing report fails the job.
 
 ```js
 { id: 'prp_…', jobId, branch, baseSha, headSha,
-  status: 'open' | 'changes_requested' | 'approved' | 'merged' | 'rejected' | 'superseded' | 'conflicted',
+  status: 'open' | 'changes_requested' | 'approved' | 'merged' | 'merged_unaccepted' | 'rejected' | 'superseded' | 'conflicted',
   title, summary, source: SourceRef, submittedBy: Actor.id,
   audit: { exit: 0|1|2, errors: n, warnings: n, findings: [...] },   // tools/audit.mjs --json
   changes: [ProposalChange],

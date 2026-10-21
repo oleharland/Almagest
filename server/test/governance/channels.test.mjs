@@ -138,7 +138,7 @@ describe('slack', () => {
 describe('github-pr', () => {
   const ghBody = (p, login, extra = {}) => JSON.stringify({
     action: 'closed',
-    pull_request: { merged: true, merge_commit_sha: 'f'.repeat(40), head: { ref: p.branch, sha: p.headSha }, merged_by: { login }, ...extra },
+    pull_request: { merged: true, merge_commit_sha: 'f'.repeat(40), head: { ref: p.branch, sha: p.headSha, repo: { full_name: 'acme/brain' } }, base: { ref: 'main' }, merged_by: { login }, ...extra },
   });
   const ghSig = (secret, body) => `sha256=${crypto.createHmac('sha256', secret).update(body).digest('hex')}`;
 
@@ -149,6 +149,7 @@ describe('github-pr', () => {
     assert.equal(verifyGithub('', ghSig('', 'x'), 'x'), false);
   });
 
+  // The full path, with a remote and real merge commits, is in github-pr.test.mjs.
   it('a merged PR is the merging user\'s approval; unmapped merges are recorded as violations', async () => {
     const { app, base, p } = await serve([{ kind: 'web' }, { kind: 'github-pr', repo: 'acme/brain', webhook_secret_env: 'T_GH_SECRET', users: { octo: { id: 'usr_ada', display: 'Ada', roles: ['owner'] } } }]);
     const post = (body, sig = ghSig(ENV.T_GH_SECRET, body), event = 'pull_request') => fetch(`${base}/channels/github/webhook`, { method: 'POST', headers: { 'x-github-event': event, 'x-hub-signature-256': sig, 'content-type': 'application/json' }, body });
@@ -160,11 +161,14 @@ describe('github-pr', () => {
     const res = await post(ghBody(p, 'octo'));
     assert.equal(res.status, 200);
     const out = await res.json();
-    assert.equal(out.status, 'merged');
     assert.equal(out.policyMet, true);
+    // No remote, so the merge commit cannot be fetched and checked: local main stays put.
+    assert.equal(out.status, 'merged_unaccepted');
+    assert.equal(out.reason, 'shape');
     const merged = await app.ctx.governance.getProposal(p.id);
     assert.equal(merged.approvals[0].channel, 'github-pr');
     assert.equal(merged.merge.external, true);
+    assert.equal(merged.merge.accepted, false);
     await app.stop();
 
     const second = await serve([{ kind: 'web' }, { kind: 'github-pr', repo: 'acme/brain', webhook_secret_env: 'T_GH_SECRET', users: {} }]);

@@ -93,6 +93,7 @@ export const STATUS_HEADLINE = {
   changes_requested: 'Being revised by the agent',
   approved: 'Approved — still being added',
   merged: 'Added to the knowledge base',
+  merged_unaccepted: 'Merged on GitHub — not accepted here',
   rejected: 'Turned down',
   superseded: 'Replaced by a newer version',
   conflicted: 'Clashes with recent changes — being revised',
