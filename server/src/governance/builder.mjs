@@ -112,7 +112,39 @@ export async function buildChanges({ git, baseSha, headSha, wikiDir = 'brain/wik
       pageStatus: 'pending',
     });
   }
+  for (const f of otherFiles) await attachPreview(f, { git, baseSha, headSha, readAt });
   return { changes, otherFiles };
+}
+
+const PREVIEW_LINES = 40;
+const PREVIEW_CHARS = 4000;
+
+/**
+ * What a non-wiki file in the proposal says, so the reviewer reads it rather
+ * than a filename: its size, and the first PREVIEW_LINES lines of a new file
+ * or the lines a change adds to an existing one. A file under raw/ is
+ * agent-written text like any page; approving it unseen is approving it blind.
+ */
+async function attachPreview(f, { git, baseSha, headSha, readAt }) {
+  if (f.status === 'D') return;
+  const text = await readAt(headSha, f.path);
+  if (text === null || text === undefined) return;
+  f.bytes = Buffer.byteLength(text);
+  if (text.includes('\0')) { f.binary = true; return; }
+  f.lines = text === '' ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+  let lines;
+  if (f.status === 'M') {
+    const diff = await git.run(['diff', '--unified=0', '--no-color', '--no-ext-diff', baseSha, headSha, '--', f.path]).catch(() => '');
+    lines = diff.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).map((l) => l.slice(1));
+    f.previewOf = 'added';
+  } else {
+    lines = text.split('\n');
+    if (text.endsWith('\n')) lines.pop();
+    f.previewOf = 'start';
+  }
+  f.previewTruncated = lines.length > PREVIEW_LINES;
+  f.preview = lines.slice(0, PREVIEW_LINES).join('\n');
+  if (f.preview.length > PREVIEW_CHARS) { f.preview = f.preview.slice(0, PREVIEW_CHARS); f.previewTruncated = true; }
 }
 
 async function attachExcerpt(claim, { page, sha }, readAt) {

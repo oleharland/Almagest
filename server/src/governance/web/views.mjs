@@ -237,6 +237,34 @@ function needsBox(evaluation, p) {
   return html`<div class="needs"><h2>Before this can be added</h2><ul>${items.map((x) => html`<li>${x.message}</li>`)}</ul></div>`;
 }
 
+const FILE_STATUS = { A: 'New file', M: 'Changed', D: 'Removed', R: 'Renamed' };
+
+function size(bytes) {
+  return bytes < 1024 ? plural(bytes, 'byte') : `${(bytes / 1024).toFixed(bytes < 10240 ? 1 : 0)} KB`;
+}
+
+/**
+ * Every file the proposal changes outside the wiki, with what it says — the
+ * bookkeeping, and anything under raw/. Approving the proposal approves these
+ * too, so they are shown, not just named.
+ */
+function otherFilesSection(files) {
+  if (!files.length) return '';
+  return html`<h2>Other files</h2>
+    <p class="muted">Approving also adds these. Read anything you didn't expect.</p>
+    ${files.map((f) => html`<section class="page">
+      <div class="head"><div class="grow">
+        <strong>${f.path}</strong>
+        <div class="chips"><span class="chip">${FILE_STATUS[f.status] || f.status}${f.from ? ` from ${f.from}` : ''}</span>${f.bytes != null ? html`<span class="chip">${size(f.bytes)}${f.lines != null ? `, ${plural(f.lines, 'line')}` : ''}</span>` : ''}</div>
+      </div></div>
+      <div class="body">
+        ${f.binary ? html`<p class="missing">A binary file — it can't be shown here.</p>`
+          : f.preview != null ? html`<p class="faint">${f.previewOf === 'added' ? 'Lines this adds' : 'Content'}${f.previewTruncated ? ' (the start only)' : ''}:</p><pre class="preview">${f.preview}</pre>`
+          : ''}
+      </div>
+    </section>`)}`;
+}
+
 export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, nonce, canAct, flash = null, now = Date.now(), why = {}, chat = null }) {
   const info = describe(p, decisions);
   const open = decisions.filter((d) => d.status === 'open');
@@ -272,6 +300,7 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
     <h2>What would change</h2>
     ${(p.changes || []).length === 0 ? html`<p class="muted">No pages change — only the knowledge base's own records.</p>` : ''}
     ${(p.changes || []).map((c) => pageCard(p, c, { canAct: live ? canAct : { ok: false }, csrf, required: p.required, why: why[c.slug] }))}
+    ${otherFilesSection(p.otherFiles || [])}
 
     ${done.length ? html`<h2>Answered questions</h2>${done.map((d) => decisionCard(p, d, { canAct, csrf }))}` : ''}
 
@@ -299,7 +328,6 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
       <dt>Based on</dt><dd>${String(p.baseSha || '').slice(0, 12)}</dd>
       ${p.merge?.sha ? html`<dt>Merged as</dt><dd>${p.merge.sha.slice(0, 12)}</dd>` : ''}
       <dt>Approvals</dt><dd>${(p.approvals || []).length ? p.approvals.map((a) => `${a.display} (${a.scope === 'all' ? 'everything' : a.scope}, ${a.channel}${a.headSha === p.headSha ? '' : ', earlier version'})`).join('; ') : 'none yet'}</dd>
-      ${(p.otherFiles || []).length ? html`<dt>Other files</dt><dd>${p.otherFiles.map((f) => f.path).join(', ')}</dd>` : ''}
     </dl></details>`;
 
   const footer = live ? html`<div class="actionbar"><div class="wrap">
