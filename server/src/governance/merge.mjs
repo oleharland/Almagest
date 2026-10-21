@@ -23,7 +23,8 @@
  *
  * Steps 5 and 6 are verifyCandidate(). acceptExternal() runs the same gate on
  * a merge commit made elsewhere (a merged GitHub PR) before main may move to
- * it — Almagest stays the gate for its own main.
+ * it, after checking that the commit holds exactly the merge of main and the
+ * reviewed head — Almagest stays the gate for its own main.
  *
  * Merges are serialised by the caller's mutex; the CAS covers everyone else.
  */
@@ -35,7 +36,7 @@ import { fileURLToPath } from 'node:url';
 
 import { authorizeMainMove } from '../../../tools/lib/git-hooks.mjs';
 import { serviceActor } from '../core/auth.mjs';
-import { gitIdentity } from '../core/git.mjs';
+import { childEnv, gitIdentity } from '../core/git.mjs';
 import { mergeManifest, stripRemovedPlaceholders } from './bookkeeping.mjs';
 import { describeOutside, listChanges, outsideFiles } from './paths.mjs';
 
@@ -53,12 +54,16 @@ export function createMutex() {
   };
 }
 
-/** execFile that resolves with the exit code instead of rejecting on it. */
+/**
+ * execFile that resolves with the exit code instead of rejecting on it. The
+ * child gets core/git.mjs's childEnv(): an inherited GIT_DIR, GIT_INDEX_FILE
+ * or GIT_WORK_TREE must not point a merge at another repository or index.
+ */
 function execp(cmd, args, { cwd, env, input } = {}) {
   return new Promise((resolve) => {
     const child = execFile(cmd, args, {
       cwd,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...env },
+      env: childEnv(env),
       maxBuffer: 64 * 1024 * 1024,
     }, (err, stdout, stderr) => {
       const code = err ? (typeof err.code === 'number' ? err.code : -1) : 0;
@@ -249,6 +254,45 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
     ], allowed);
   }
 
+  function refusePaths(outside, proposalId) {
+    log?.error('merge refused: files outside the knowledge base', { proposal: proposalId, files: outside.map((o) => o.path) });
+    return { ok: false, reason: 'paths', files: outside, message: describeOutside(outside) };
+  }
+
+  /**
+   * Does `commit` hold exactly the merge of `mainSha` and the reviewed `head`
+   * — what `git merge-tree` computes, and what a merge commit made by
+   * GitHub's merge button holds when nobody edited it? Returns null if so,
+   * else the files that differ (or that clash, when the two do not merge
+   * cleanly: how a clash was settled on GitHub is content nobody reviewed).
+   *
+   * The derived index (brain/.index/) is the one exception: a file there may
+   * differ from the plain merge — a merge of two index edits is rarely the
+   * current index, and whoever merged may have regenerated it. It is not
+   * free text: acceptExternal() verifies with `regenerate: false`, which
+   * rebuilds the index from the commit's (now proven reviewed) pages and
+   * refuses the commit unless every index file is exactly what that yields.
+   * Only modifications are tolerated, so the index cannot be dropped (which
+   * would skip that check) and no file can be added beside it.
+   */
+  async function unreviewedContent(commit, mainSha, head) {
+    const derived = (f) => f.startsWith(`${indexDir}/`);
+    const { tree: expected, conflicts } = await mergeTree(mainSha, head);
+    const clashes = conflicts.filter((f) => !derived(f));
+    if (clashes.length) return { clash: true, files: clashes.map((f) => ({ path: f, reason: 'clashes with the current knowledge base' })) };
+    const actual = (await git.run(['rev-parse', `${commit}^{tree}`])).trim();
+    if (actual === expected) return null;
+    const parts = (await git.run(['diff', '--name-status', '--no-renames', '-z', expected, actual])).split('\0');
+    const what = { A: 'added', D: 'removed', M: 'changed', T: 'changed' };
+    const files = [];
+    for (let i = 0; i + 1 < parts.length; i += 2) {
+      const [status, file] = [parts[i][0], parts[i + 1]];
+      if (status === 'M' && derived(file)) continue;
+      files.push({ path: file, reason: `${what[status] || 'changed'} after review` });
+    }
+    return files.length ? { clash: false, files } : null;
+  }
+
   /**
    * The gate every new main passes, whoever made the commit: only the
    * knowledge base's writable files change, and the result passes the
@@ -258,10 +302,7 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
    * @returns {Promise<{ ok: true, commit, audit } | { ok: false, reason: 'paths'|'audit', message, files?, audit? }>}
    */
   async function verifyCandidate(commit, { mainSha, base, head, parents, message, author, regenerate = true, proposalId = '' }) {
-    const refuse = (outside) => {
-      log?.error('merge refused: files outside the knowledge base', { proposal: proposalId, files: outside.map((o) => o.path) });
-      return { ok: false, reason: 'paths', files: outside, message: describeOutside(outside) };
-    };
+    const refuse = (outside) => refusePaths(outside, proposalId);
     let outside = await outsideOfCandidate(commit, { mainSha, base, head });
     if (outside.length) return refuse(outside);
     const { commit: final, audit } = await verify(commit, { parents, message, author, regenerate });
@@ -391,9 +432,13 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
   /**
    * Accept a merge commit made elsewhere (a pull request merged on GitHub) as
    * the new main — only if it is provably "the reviewed head on top of this
-   * main": parents exactly (local main, proposal.headSha), and the commit
-   * passes verifyCandidate() unchanged. A squash or rebase merge has no such
-   * parents and cannot be checked, so it is refused like any other mismatch.
+   * main": parents exactly (local main, proposal.headSha), its tree exactly
+   * the merge of the two (unreviewedContent(); refused as `content`), and the
+   * commit passes verifyCandidate() unchanged. GitHub's merge button writes
+   * no log row and resolves no bookkeeping clash, so a legitimate merge is
+   * the plain merge-tree result, not what merge() would have made. A squash
+   * or rebase merge has no such parents and cannot be checked, so it is
+   * refused like any other mismatch.
    * The caller holds the governance lock and has already decided the policy.
    *
    * @param {object} proposal
@@ -415,7 +460,25 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
       return { ok: false, reason: 'shape', message: `It was merged onto ${parents[0].slice(0, 7)}, which is not this knowledge base's main (${mainSha.slice(0, 7)}).` };
     }
     const base = await git.mergeBase(mainSha, proposal.headSha);
-    const checked = await verifyCandidate(commit, { mainSha, base, head: proposal.headSha, parents, regenerate: false, proposalId: proposal.id });
+    const candidate = { mainSha, base, head: proposal.headSha, parents, regenerate: false, proposalId: proposal.id };
+    // Paths first (an edit to the gate is named as such), then content, then
+    // verifyCandidate() — which repeats the path check, as every new main does.
+    const outside = await outsideOfCandidate(commit, candidate);
+    if (outside.length) return refusePaths(outside, proposal.id);
+    // Right parents say nothing about what the commit holds: a hand-made
+    // merge commit can carry any edit. It must be the reviewed merge, exactly.
+    const extra = await unreviewedContent(commit, mainSha, proposal.headSha);
+    if (extra) {
+      const list = `${extra.files.slice(0, 5).map((f) => f.path).join(', ')}${extra.files.length > 5 ? ` and ${extra.files.length - 5} more` : ''}`;
+      log?.error('external merge refused: content not in the reviewed version', { proposal: proposal.id, sha: commit, files: extra.files.map((f) => f.path) });
+      return {
+        ok: false, reason: 'content', files: extra.files,
+        message: extra.clash
+          ? `The merge on GitHub contains changes that were not in the reviewed version: the reviewed version clashes with the current knowledge base in ${list}, and how that was settled was never reviewed. Bring it in by hand.`
+          : `The merge on GitHub contains changes that were not in the reviewed version: ${list}.`,
+      };
+    }
+    const checked = await verifyCandidate(commit, candidate);
     if (!checked.ok) return checked;
     const moved = await moveMain(mainSha, commit, `almagest: accept merged pull request for ${proposal.id}`);
     if (!moved.ok) return { ok: false, reason: moved.reason === 'checkout' ? 'checkout' : 'busy', message: moved.message || 'The knowledge base changed while this was being checked.' };
