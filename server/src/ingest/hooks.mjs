@@ -11,8 +11,9 @@
  *   status       SessionStart                      always exit 0, stdout = context
  *
  * `guard-wiki` is the mechanical half of non-negotiable 1, and it fails closed
- * for exactly one case: the target resolves under a `brain/wiki/` whose
- * checkout is on `main`. Any OTHER error — unreadable stdin, no git, a path
+ * for exactly two cases: the target resolves under a `brain/wiki/` whose
+ * checkout is on `main`, or inside a `.git/` directory anywhere (refs, config
+ * and hooks — what the git hooks under this guard stand on). Any OTHER error — unreadable stdin, no git, a path
  * that is not in a repo — allows the edit. A guard that blocks on its own bugs
  * gets uninstalled, and then it guards nothing.
  */
@@ -24,6 +25,9 @@ import { loadConfig } from '../../../tools/lib/config.mjs';
 import { isIngestCandidate, isInside, realish } from './source.mjs';
 import { guardGitDecision } from './guard-git.mjs';
 import { writeSpool } from './spool.mjs';
+
+/** `{ ok, hooksPath, expected, problems[] }` — are tools/hooks/ installed and executable? (doctor) */
+export { hooksInstalled } from '../../../tools/lib/git-hooks.mjs';
 
 /** stdin as JSON, or {} — a hook run by hand from a terminal has no stdin to wait for. */
 export async function readHookInput(stream = process.stdin, timeoutMs = 2000) {
@@ -62,13 +66,39 @@ function brainSettings(top) {
 }
 
 /**
+ * The target path when it lies inside a git directory — a `.git` path segment
+ * (which covers a worktree's `.git` file too), or the git dir of the repository
+ * it sits in — else ''. Refs, packed-refs, config and hooks live there.
+ */
+function insideGitDir(file) {
+  const real = realish(file);
+  if (real.split(path.sep).includes('.git')) return real;
+  let dir = path.dirname(real);
+  while (!fs.existsSync(dir) && path.dirname(dir) !== dir) dir = path.dirname(dir);
+  try {
+    const common = realish(gitOut(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
+    if (isInside(common, real)) return real;
+  } catch { /* not in a repo */ }
+  return '';
+}
+
+/**
  * The guard decision, pure enough to test: `{ block, reason }`.
- * `block` is true only when the target is under `<brain_dir>/wiki/` of its
- * own checkout and that checkout is on the main branch.
+ * `block` is true when the target is inside a git directory (any branch), or
+ * when it is under `<brain_dir>/wiki/` of its own checkout and that checkout
+ * is on the main branch.
  */
 export function guardWikiDecision(input) {
   const file = targetPath(input);
   if (!file) return { block: false, reason: 'no target path' };
+  const gitDirHit = insideGitDir(file);
+  if (gitDirHit) {
+    return {
+      block: true,
+      reason: `Almagest: blocked — ${gitDirHit} is inside a git directory. Refs, config and hooks there are what keeps `
+        + 'wiki changes off main (non-negotiable 1); nothing edits them by hand. Use git commands on an ingest branch.',
+    };
+  }
   let dir = path.dirname(realish(file));
   while (!fs.existsSync(dir) && path.dirname(dir) !== dir) dir = path.dirname(dir);
   let top;

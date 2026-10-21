@@ -164,6 +164,143 @@ describe('guard-git: fails open', () => {
   });
 });
 
+describe('guard-git: moving main without a commit (any branch)', () => {
+  it('blocks every form that resets, renames, deletes or overwrites refs/heads/main', () => {
+    const r = repo();
+    branchWith(r, 'ingest/wiki-1111111', 'brain/wiki/new-page.md', '# new\n');
+    git(r, 'switch', '-q', 'ingest/wiki-1111111');
+    for (const cmd of [
+      'git checkout -B main ingest/wiki-1111111', 'git switch -C main ingest/wiki-1111111', 'git switch --force-create main HEAD',
+      'git branch -f main ingest/wiki-1111111', 'git branch --force main HEAD', 'git branch -M ingest/wiki-1111111 main',
+      'git branch -M main', 'git branch -C ingest/wiki-1111111 main', 'git branch -D main', 'git branch -m main old-main',
+      'git update-ref refs/heads/main HEAD', 'git update-ref -m x heads/main HEAD', 'git update-ref -d refs/heads/main',
+      'git update-ref --stdin', 'git symbolic-ref refs/heads/main refs/heads/ingest/wiki-1111111',
+      'git worktree add -B main ../elsewhere HEAD',
+      'git fetch . ingest/wiki-1111111:main', 'git fetch . +HEAD:refs/heads/main', 'git fetch origin "refs/heads/*:refs/heads/*"',
+      'git pull . ingest/wiki-1111111:main',
+      'git push . ingest/wiki-1111111:main', 'git push . HEAD:refs/heads/main', `git push ${r} HEAD:main`, 'git push . --delete main',
+      'git push . :main', 'git push --mirror .',
+      'git rebase ingest/wiki-1111111 main', 'git filter-branch -- --all',
+    ]) {
+      const d = bash(r, cmd);
+      assert.equal(d.block, true, cmd);
+      assert.match(d.reason, /Almagest: blocked/, cmd);
+    }
+  });
+
+  it('follows a remote whose URL is a local path, and leaves real remotes alone', () => {
+    const r = repo();
+    git(r, 'remote', 'add', 'self', '.');
+    git(r, 'remote', 'add', 'origin', 'git@github.com:acme/brain.git');
+    git(r, 'switch', '-q', '-c', 'ingest/x-1234567');
+    assert.equal(blocks(r, 'git push self HEAD:main'), true);
+    assert.equal(blocks(r, 'git push origin HEAD:main'), false, "the remote's main is protected by the remote");
+    assert.equal(blocks(r, 'git push origin ingest/x-1234567'), false);
+  });
+
+  it('blocks reset <commit>, rebase, commit --amend and pull while on main', () => {
+    const r = repo();
+    fs.writeFileSync(path.join(r, 'NOTES.txt'), 'n\n');
+    git(r, 'add', 'NOTES.txt');
+    git(r, 'commit', '-qm', 'notes');
+    for (const cmd of ['git reset --soft HEAD~1', 'git reset HEAD~1', 'git reset --mixed HEAD~1', 'git reset --keep HEAD~1',
+      'git rebase -i HEAD~1', 'git rebase ingest/x', 'git commit --amend -m x', 'git commit --amend --no-edit', 'git pull', 'git pull --rebase origin main']) {
+      assert.equal(blocks(r, cmd), true, cmd);
+    }
+    // These do not move main.
+    for (const cmd of ['git reset', 'git reset HEAD', 'git reset -- NOTES.txt', 'git reset NOTES.txt', 'git reset HEAD~1 -- NOTES.txt',
+      'git reset -p', 'git rebase --abort', 'git pull --dry-run']) {
+      assert.equal(blocks(r, cmd), false, cmd);
+    }
+    // The same commands on an ingest branch are that branch's business.
+    git(r, 'switch', '-q', '-c', 'ingest/x-1234567');
+    for (const cmd of ['git reset --soft HEAD~1', 'git rebase main', 'git commit --amend -m x', 'git pull origin main']) {
+      assert.equal(blocks(r, cmd), false, cmd);
+    }
+    assert.equal(blocks(r, 'git switch main && git reset --soft HEAD~1'), true, 'judged on the branch it will be on');
+  });
+
+  it('blocks finishing a rebase of main from the detached HEAD it leaves', () => {
+    const r = repo();
+    const gitDir = path.join(r, '.git');
+    git(r, 'checkout', '-q', '--detach');
+    fs.mkdirSync(path.join(gitDir, 'rebase-merge'));
+    fs.writeFileSync(path.join(gitDir, 'rebase-merge', 'head-name'), 'refs/heads/main\n');
+    assert.equal(blocks(r, 'git rebase --continue'), true);
+    fs.writeFileSync(path.join(gitDir, 'rebase-merge', 'head-name'), 'refs/heads/ingest/x\n');
+    assert.equal(blocks(r, 'git rebase --continue'), false);
+  });
+
+  it('keeps the everyday forms allowed, so the guard stays installed', () => {
+    const r = repo();
+    branchWith(r, 'ingest/x-1234567', 'brain/raw/a.md', 'a\n');
+    for (const cmd of ['git switch -c ingest/new-7654321', 'git checkout -b ingest/new-7654321', 'git checkout -B ingest/x-1234567 main',
+      'git branch --list', 'git branch --show-current', 'git branch', 'git branch -a', 'git branch -vv', 'git branch --contains main',
+      'git branch ingest/y-1111111 main', 'git branch -d ingest/x-1234567', 'git branch -D ingest/x-1234567', 'git branch -f ingest/x-1234567 main',
+      'git checkout ingest/x-1234567', 'git switch main', 'git update-ref refs/heads/ingest/x-1234567 HEAD',
+      'git fetch origin', 'git fetch origin main', 'git fetch origin main:refs/remotes/origin/main', 'git log refs/heads/main',
+      'git show-ref refs/heads/main', 'git rev-parse refs/heads/main', 'cat .git/packed-refs', 'ls .git/refs/heads',
+      'grep main .git/packed-refs', 'git -c core.hooksPath=/dev/null status', 'git config --get core.hooksPath', 'env | grep CLAUDE']) {
+      assert.equal(blocks(r, cmd), false, cmd);
+    }
+    git(r, 'switch', '-q', 'ingest/x-1234567');
+    assert.equal(blocks(r, 'git rebase main'), false);
+    assert.equal(blocks(r, 'git checkout ingest/x-1234567 && git merge main'), false);
+  });
+});
+
+describe('guard-git: .git/, hooks config, agent environment', () => {
+  it('blocks writes inside .git/ on any branch', () => {
+    const r = repo();
+    git(r, 'switch', '-q', '-c', 'ingest/x-1234567');
+    for (const cmd of ['echo abc > .git/refs/heads/main', 'cp /tmp/sha .git/refs/heads/main', 'mv x .git/packed-refs',
+      'tee .git/HEAD', 'ln -sf ../x .git/refs/heads/main', 'sed -i "" s/a/b/ .git/packed-refs', 'printf x >> .git/config',
+      'cd .git && echo x > refs/heads/main', 'git show HEAD:x > .git/refs/heads/main', 'rm .git/refs/heads/main',
+      'cp evil .git/hooks/reference-transaction']) {
+      assert.equal(blocks(r, cmd), true, cmd);
+    }
+    assert.equal(blocks(r, 'rm -f .git/index.lock'), false, 'clearing a stale lock moves no ref');
+    assert.equal(blocks(r, 'echo x > .gitignore'), false);
+  });
+
+  it('blocks switching the hooks off through git config', () => {
+    const r = repo();
+    for (const cmd of ['git config core.hooksPath /dev/null', 'git config --local core.hooksPath x', 'git config --unset core.hooksPath',
+      'git config set core.hooksPath x', 'git config unset core.hooksPath']) {
+      assert.equal(blocks(r, cmd), true, cmd);
+    }
+    assert.equal(blocks(r, 'git config core.hooksPath'), false, 'reading it is fine');
+    assert.equal(blocks(r, 'git config user.name x'), false);
+  });
+
+  it('blocks clearing the agent-environment variables the git hook reads, before git', () => {
+    const r = repo();
+    for (const cmd of ['env -u CLAUDECODE git merge ingest/x', 'env -i PATH=/usr/bin git branch -f main x', 'CLAUDECODE= git merge x',
+      'unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT; git merge x', 'export AI_AGENT= && git merge x', 'env --unset=CLAUDECODE git status']) {
+      assert.equal(blocks(r, cmd), true, cmd);
+    }
+    assert.equal(blocks(r, 'env -u FOO git status'), false);
+    assert.equal(blocks(r, 'unset CLAUDECODE; ls'), false, 'no git in the command');
+  });
+
+  it('fails closed only for text naming refs/heads/main, .git/refs or packed-refs that it cannot follow', () => {
+    const r = repo();
+    for (const cmd of [
+      `python3 -c "import subprocess; subprocess.run(['git','update-ref','refs/heads/main','HEAD'])"`,
+      'bash -c "git update-ref refs/heads/main HEAD"', 'sh -c "echo x > .git/refs/heads/main"', 'eval git update-ref refs/heads/main HEAD',
+      `node -e "require('fs').writeFileSync('.git/packed-refs', '')"`, 'echo HEAD | xargs git update-ref refs/heads/main',
+      `git -c alias.x='!git update-ref refs/heads/main HEAD' x`, 'cat <<EOF > x\nrefs/heads/main\nEOF', 'find .git/refs -delete',
+      'git commit -m "unbalanced refs/heads/main']) {
+      assert.equal(blocks(r, cmd), true, cmd);
+    }
+    // Outside that class the guard still fails open.
+    assert.equal(blocks(r, 'bash -c "git status"'), false);
+    assert.equal(blocks(r, 'python3 -c "print(1)"'), false);
+    assert.equal(blocks(r, 'bash -c "echo refs/heads/main-old"'), false, 'a different branch name');
+    assert.equal(blocks(r, 'find .git/refs -name main'), false, 'find without -delete/-exec only reads');
+  });
+});
+
 describe('.claude/settings.json (finding 5a)', () => {
   const settings = JSON.parse(fs.readFileSync(path.join(SERVICE_ROOT, '..', '.claude', 'settings.json'), 'utf-8'));
   it('does not pre-approve arbitrary node or git push, and denies hook-skipping commands', () => {
@@ -172,6 +309,13 @@ describe('.claude/settings.json (finding 5a)', () => {
     assert.ok(!allow.some((a) => a.startsWith('Bash(git push')));
     for (const d of ['Bash(git commit --no-verify:*)', 'Bash(git commit -n:*)', 'Bash(git push --no-verify:*)', 'Bash(git update-ref:*)']) assert.ok(deny.includes(d), d);
     assert.ok(allow.includes('Bash(node tools/audit.mjs:*)'));
+  });
+  it('pre-approves nothing that runs arbitrary code or moves main, and denies the ref movers', () => {
+    const { allow, deny } = settings.permissions;
+    for (const a of ['Bash(python3:*)', 'Bash(npx tsx:*)', 'Bash(xargs:*)', 'Bash(cp:*)', 'Bash(mv:*)', 'Bash(git branch:*)',
+      'Bash(git checkout:*)', 'Bash(git switch:*)', 'Bash(curl -s http://localhost:*)']) assert.ok(!allow.includes(a), a);
+    for (const d of ['Bash(git checkout -B:*)', 'Bash(git switch -C:*)', 'Bash(git branch -f:*)', 'Bash(git branch -M:*)', 'Bash(git branch -C:*)',
+      'Bash(git reset --soft:*)', 'Bash(git reset --mixed:*)', 'Bash(git update-ref:*)', 'Bash(curl *inbox/login*)']) assert.ok(deny.includes(d), d);
   });
   it('wires guard-git on Bash and guard-wiki on file edits', () => {
     const pre = settings.hooks.PreToolUse;
