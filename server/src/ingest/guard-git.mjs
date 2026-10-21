@@ -542,10 +542,12 @@ export function guardGitDecision(input) {
 
   const runsGit = /\bgit\b/.test(command);
   const runsService = SERVICE_TEXT.test(command) || commands.some((words) => words.some((w) => /^almagest(\.mjs)?$/.test(path.basename(w))));
-  if ((runsGit || runsService) && commands.some(clearsAgentEnv)) {
+  // Any program, not just git and the CLI: a renamed or wrapped bin is still a
+  // way to run as a person, and no legitimate agent command needs it.
+  if (commands.some(clearsAgentEnv)) {
     return {
       block: true,
-      reason: `Almagest: blocked — this command clears an agent-environment variable before running ${runsGit ? 'git' : 'the Almagest CLI'}. `
+      reason: `Almagest: blocked — this command clears an agent-environment variable before running ${runsGit ? 'git' : runsService ? 'the Almagest CLI' : 'a program'}. `
         + 'The reference-transaction hook and `almagest login` use those variables to tell an agent from a person, '
         + 'and only a person approves or moves main (non-negotiable 1); run it as you are.',
     };

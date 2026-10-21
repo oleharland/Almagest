@@ -273,14 +273,16 @@ describe('guard-git: .git/, hooks config, agent environment', () => {
     assert.equal(blocks(r, 'git config user.name x'), false);
   });
 
-  it('blocks clearing the agent-environment variables the git hook reads, before git', () => {
+  it('blocks clearing the agent-environment variables before any program', () => {
     const r = repo();
     for (const cmd of ['env -u CLAUDECODE git merge ingest/x', 'env -i PATH=/usr/bin git branch -f main x', 'CLAUDECODE= git merge x',
       'unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT; git merge x', 'export AI_AGENT= && git merge x', 'env --unset=CLAUDECODE git status']) {
       assert.equal(blocks(r, cmd), true, cmd);
     }
     assert.equal(blocks(r, 'env -u FOO git status'), false);
-    assert.equal(blocks(r, 'unset CLAUDECODE; ls'), false, 'no git in the command');
+    // A renamed or wrapped bin is just as much "running as a person" as git is.
+    assert.equal(blocks(r, 'env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT ./al login'), true, 'renamed bin');
+    assert.equal(blocks(r, 'unset CLAUDECODE; ls'), true, 'any program');
   });
 
   it('fails closed only for text naming refs/heads/main, .git/refs or packed-refs that it cannot follow', () => {

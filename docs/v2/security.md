@@ -27,21 +27,22 @@ and no setting relaxes this.
 | What chats read | The MCP server serves a snapshot of local `main` only, never the remote's | `server/src/core/snapshot.mjs` |
 | The ingest agent | No git, network or MCP tools; writes confined to `brain/`; the audit is an exact-command wrapper outside the worktree; `ALMAGEST_*` and other secrets stripped from its environment; source content declared untrusted | `server/src/ingest/drivers/`, `runner.mjs` |
 | The runner after the agent | Never trusts the worktree's `.git` file: the git dir is resolved from the repository, the `.git` file must be byte-identical to what the runner created, every git call passes `--git-dir`/`--work-tree` with fsmonitor and hooks off and inherited `GIT_*` dropped, and the commit must land on the job's branch with `main` untouched | `server/src/core/git.mjs`, `ingest/runner.mjs` |
-| Interactive agent sessions | `guard-wiki` (Write/Edit) blocks wiki changes on `main` and any write into `.git/`; `guard-git` (Bash) blocks wiki changes on `main` and, on any branch, every command that moves `main` without a commit; the `reference-transaction` hook refuses a wiki-changing move of `main` from an agent environment; `pre-commit` runs the audit. Both are installed from `main` into the git dir (`almagest hooks install`), so a checked-out branch cannot replace them; `guard-git` also blocks new remotes, hook-related git config, and `almagest login`, which itself refuses in an agent environment. The checked-in `.claude/settings.json` no longer pre-allows interpreters, `cp`/`mv`, branch-moving git commands, `git remote` writes, CLI subcommands that change state, or `curl` to the inbox | `server/src/ingest/hooks.mjs`, `guard-git.mjs`, `tools/hooks/`, `tools/lib/git-hooks.mjs`, `.claude/settings.json` |
+| Interactive agent sessions | `guard-wiki` (Write/Edit) blocks wiki changes on `main` and any write into `.git/`; `guard-git` (Bash) blocks wiki changes on `main` and, on any branch, every command that moves `main` without a commit; the `reference-transaction` hook refuses a wiki-changing move of `main` from an agent environment; `pre-commit` runs the audit. Both are installed from `main` into the git dir (`almagest hooks install`), so a checked-out branch cannot replace them; `guard-git` also blocks new remotes, hook-related git config, and `almagest login`, which itself refuses in an agent environment. `guard-git` also blocks clearing an agent-environment variable before any program. The checked-in `.claude/settings.json` no longer pre-allows interpreters, `cp`/`mv`, `npm install`/`ci` or arbitrary `npm run` scripts (only `check`, `audit`, `selftest`, `test:server`), branch-moving git commands, `git remote` writes, CLI subcommands that change state, or `curl` to the inbox | `server/src/ingest/hooks.mjs`, `guard-git.mjs`, `tools/hooks/`, `tools/lib/git-hooks.mjs`, `.claude/settings.json` |
 | Configuration | Your approval rules are added to the profile's, never instead of them (unless you set `inherit_profile_rules: false`, which warns at startup); `enterprise` without OIDC refuses to start; `serve` fails fast without a local `main` | `server/src/core/config.mjs`, `app.mjs` |
 
 ## Status
 
-Three independent reviews ran against this branch — an exploit-driven security
-review, an end-to-end QA run on the real service, and a second security review
-after the fix round. Every finding they raised has a fix in code with a
-regression test; what remains is below.
+Five independent reviews ran against this branch: an exploit-driven security
+review, an end-to-end QA run on the real service, a code-path and docs review,
+and two exploit re-checks after the fix rounds. Every finding they raised has a
+fix in code with a regression test, and the last re-check re-ran every earlier
+exploit against the result without a bypass; what remains is below.
 
 | Profile | Approval bypass over the service | Approval bypass through local git |
 |---|---|---|
 | **enterprise** (OIDC, `require_sso_for_approval`) | Closed | Closed for agent tools; see the limit below |
 | **team** (OIDC) | Closed | Same as enterprise |
-| **solo** (static roles, sign-in secret) | Closed, if chats and hooks get API tokens only (they cannot sign in) | Same as enterprise |
+| **solo** (static roles, sign-in secret) | Closed — API tokens cannot sign in; keep the secrets file out of agent shells | Same as enterprise |
 
 ### Known limits
 

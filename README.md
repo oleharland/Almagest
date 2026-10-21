@@ -119,7 +119,7 @@ The secrets live in a file outside the repo, mode 600, and only the service proc
 
 Containers: `deploy/docker/` (the image clones your brain at start). Always-on on a laptop: `deploy/launchd/`, `deploy/systemd/`. The design and every contract between the parts: [docs/v2/spec.md](docs/v2/spec.md).
 
-> **Before you expose it:** read [docs/v2/security.md](docs/v2/security.md). With SSO (team / enterprise) the approval path is closed; in **solo** token mode two known gaps remain open — keep approver tokens out of chat and hook configs, and protect `main` on your git host.
+> **Before you expose it:** read [docs/v2/security.md](docs/v2/security.md). Every known approval bypass is closed in all three profiles, with a regression test for each. What remains is the limit of any single machine: an agent with an unrestricted shell can reach `.git` and your secrets file, so run unattended ingest as its own OS user or in a container, and protect `main` on your git host.
 
 ## Where it sits
 
