@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+#
+# tools/hooks/reference-transaction — the backstop under every agent guard.
+#
+# pre-commit sees commits. `main` also moves without one: `git branch -f`,
+# `checkout -B`, `reset`, `update-ref`, `fetch . x:main`, `push . x:main`, a
+# fast-forward merge. Every one of those goes through a git reference
+# transaction, and this hook sees them all, whatever harness typed them.
+#
+# In the `prepared` state it refuses (exit 1 aborts the transaction) an update
+# of refs/heads/<main> when BOTH hold:
+#
+#   - the environment is an agent's (the variables below), and
+#   - the update changes <brain_dir>/wiki/ on main — the old and new trees
+#     for that directory differ — or deletes main outright.
+#
+# A person running git in their own terminal carries none of the variables and
+# is never blocked: a human merging a reviewed diff is the gate. Code-only moves
+# of main are left alone too; pre-commit and the review cover those.
+#
+# The service (server/src/governance/merge.mjs) moves main after review and the
+# audit. If it was started from inside an agent session it inherits the
+# variables, so it first writes `<old> <new> <ref>` to .git/almagest/main-move
+# (tools/lib/git-hooks.mjs → authorizeMainMove) and this hook accepts exactly
+# that transition while the file is fresh. Writing into .git/ is what the
+# Claude Code guards refuse; an agent able to write there could equally write
+# .git/refs/heads/main itself — see "Residual risk" in docs/v2/ingest.md. Only
+# separating the agent from the repository at the OS level closes that.
+#
+# The branch name and brain_dir are read from brain.config.yaml in the working
+# tree AND as committed on HEAD and on both sides of the update, so editing the
+# working-tree config does not unprotect main.
+#
+# Install once per clone (git 2.28+ runs this hook). Use the absolute path: git
+# runs the hooks of a push into this repository (`git push . x:main`) from
+# .git/, where a relative `tools/hooks` names nothing and this hook is skipped.
+#
+#   git config core.hooksPath "$(git rev-parse --show-toplevel)/tools/hooks"
+#
+# Dependencies: bash, git, awk, find.
+
+set -u
+export LC_ALL=C
+export GIT_NO_REPLACE_OBJECTS=1   # compare the real trees, not `git replace` stand-ins
+
+INPUT="$(cat)"
+[ "${1:-}" = prepared ] || exit 0
+
+# Keep in step with AGENT_ENV_VARS in tools/lib/git-hooks.mjs.
+AGENT_VARS="CLAUDECODE CLAUDE_CODE_ENTRYPOINT CODEX_SANDBOX CODEX_SANDBOX_NETWORK_DISABLED CODEX_MANAGED_BY_NPM CODEX_THREAD_ID GEMINI_CLI CURSOR_AGENT OPENCODE AI_AGENT ALMAGEST_RUNNER ALMAGEST_AGENT"
+AGENT=""
+for v in $AGENT_VARS; do
+    if [ -n "${!v:-}" ]; then AGENT="$v"; break; fi
+done
+[ -n "$AGENT" ] || exit 0
+
+# Fast path: nothing here touches a branch.
+case "$INPUT" in *" refs/heads/"*) ;; *) exit 0 ;; esac
+
+ZERO="0000000000000000000000000000000000000000"
+cfg_main()  { awk '/^service:/ { s=1; next } s && /^[^ #]/ { s=0 } s && /^ +main:/ { v=$2; gsub(/["\047]/, "", v); print v; exit }'; }
+cfg_brain() { awk -F: '/^brain_dir:/ { v=$2; gsub(/[ "\047]/, "", v); sub(/\/+$/, "", v); print v; exit }'; }
+committed() { [ -n "$1" ] && [ "$1" != "$ZERO" ] && git cat-file -p "$1:brain.config.yaml" 2>/dev/null; }
+
+TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+WT_CONFIG=""
+[ -n "$TOP" ] && [ -f "$TOP/brain.config.yaml" ] && WT_CONFIG="$(cat "$TOP/brain.config.yaml")"
+HEAD_SHA="$(git rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null || true)"
+
+MAINS="main $(printf '%s\n' "$WT_CONFIG" | cfg_main) $(committed "$HEAD_SHA" | cfg_main)"
+
+red() { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+
+wiki_tree() {   # <commit> <brain_dir> → tree id of <brain_dir>/wiki at that commit, or ""
+    [ -n "$1" ] && [ "$1" != "$ZERO" ] || return 0
+    git rev-parse -q --verify "$1^{commit}:$2/wiki" 2>/dev/null || true
+}
+
+authorized() {  # <old> <new> <ref>
+    local common file
+    common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+    file="$common/almagest/main-move"
+    [ -f "$file" ] || return 1
+    [ -n "$(find "$file" -mmin -5 2>/dev/null)" ] || return 1
+    [ "$(cat "$file")" = "$1 $2 $3" ]
+}
+
+while read -r _old NEW REF; do
+    [ -n "${REF:-}" ] || continue
+    IS_MAIN=""
+    for m in $MAINS; do [ "$REF" = "refs/heads/$m" ] && IS_MAIN=1; done
+    [ -n "$IS_MAIN" ] || continue
+
+    # The old value on stdin is all zeroes for a forced update, so read the
+    # ref itself: in `prepared` it is locked but still holds the old value.
+    CUR="$(git rev-parse -q --verify "$REF^{commit}" 2>/dev/null || true)"
+
+    WHY=""
+    if [ "$NEW" = "$ZERO" ]; then
+        WHY="it deletes $REF"
+    else
+        BRAINS="brain $(printf '%s\n' "$WT_CONFIG" | cfg_brain) $(committed "$CUR" | cfg_brain) $(committed "$NEW" | cfg_brain)"
+        for b in $BRAINS; do
+            if [ "$(wiki_tree "$CUR" "$b")" != "$(wiki_tree "$NEW" "$b")" ]; then
+                WHY="it changes $b/wiki/ on ${REF#refs/heads/}"
+                break
+            fi
+        done
+    fi
+    [ -n "$WHY" ] || continue
+    authorized "${CUR:-$ZERO}" "$NEW" "$REF" && continue
+
+    red "✗ reference-transaction: refusing to move $REF from an agent environment ($AGENT is set) — $WHY."
+    red "  Nothing reaches the wiki on main unless a person approved the exact version (non-negotiable 1)."
+    red "  Commit on an ingest branch (git switch -c ingest/<source-slug>-<sha7>) and let a person merge it."
+    exit 1
+done <<< "$INPUT"
+
+exit 0
