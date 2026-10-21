@@ -9,8 +9,12 @@ if [ ! -d "$repo/.git" ]; then
 fi
 git -C "$repo" config user.name  "${ALMAGEST_GIT_NAME:-Almagest}"
 git -C "$repo" config user.email "${ALMAGEST_GIT_EMAIL:-almagest@localhost}"
-# The audit and main-guard hooks, by absolute path (a relative one misses push hooks).
-git -C "$repo" config core.hooksPath "$repo/tools/hooks"
+# The audit and main-guard hooks: copied from main as committed into
+# .git/almagest/hooks/ (where a checkout cannot swap them) and core.hooksPath
+# pointed there. A brain whose main predates `hooks install` starts without
+# them — `almagest doctor` says so; the service's own merge re-audits anyway.
+node /opt/almagest/server/bin/almagest.mjs --repo "$repo" hooks install \
+  || echo "almagest: git hooks not installed (see above) — merge the current tools/hooks/ into main" >&2
 
 # The service binds 127.0.0.1 by default; inside a container it must listen on
 # all interfaces for the port mapping to reach it.

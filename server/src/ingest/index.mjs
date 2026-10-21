@@ -8,8 +8,8 @@
  *   considerFile(abs, { trigger }) · scan()      the watch path, exposed for tests and the API
  *
  * and wires the three triggers (watch, schedule, spool) and the HTTP API
- * (`/api/jobs`). `commands` adds `almagest hook`, `almagest ingest` and
- * `almagest jobs`.
+ * (`/api/jobs`). `commands` adds `almagest hook`, `almagest hooks install`,
+ * `almagest ingest` and `almagest jobs`.
  *
  * Talks to other modules only through ctx: connectors (sync, snapshotPath),
  * governance (getProposal, createFromJob), snapshot (main's manifest), store,
@@ -22,7 +22,7 @@ import path from 'node:path';
 import { loadManifest } from '../../../tools/lib/config.mjs';
 import { ForbiddenError, hasRole } from '../core/auth.mjs';
 import { createDriver } from './drivers/index.mjs';
-import { hookCommand } from './hooks.mjs';
+import { hookCommand, hooksCommand } from './hooks.mjs';
 import { createQueue, EnqueueError } from './queue.mjs';
 import { createRunner } from './runner.mjs';
 import { createScheduler } from './scheduler.mjs';
@@ -348,6 +348,7 @@ function line(j) {
 
 export const commands = {
   hook: hookCommand,
+  hooks: hooksCommand,
 
   ingest: {
     summary: 'Queue a file in the drop folder for background ingest [--wait]',

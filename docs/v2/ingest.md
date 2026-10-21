@@ -197,7 +197,7 @@ Claude Code, wired in `.claude/settings.json`:
 | Hook | Event | Does |
 |---|---|---|
 | `hook guard-wiki` | PreToolUse `Write\|Edit\|MultiEdit` | Exit 2 (block, reason on stderr) when the target is under `<brain_dir>/wiki/` of a checkout on `main`, or inside a git directory anywhere (a `.git` path segment, or the repository's git dir as git reports it). Any other situation — including the hook's own errors — allows. A guard that blocks on its own bugs gets uninstalled |
-| `hook guard-git` | PreToolUse `Bash` | The same rule for shell commands. On `main`, blocks `git commit` (staged changes, plus unstaged ones for `-a` / pathspecs), `git merge`, `git cherry-pick`, `git revert`, `git am` and `git stash pop\|apply` when they would bring `brain/wiki/` changes in, and plain writes into `brain/wiki/` (`>`, `cp`, `mv`, `tee`, `sed -i`, `rm`). On any branch, blocks every command that moves `refs/heads/<main>` without a commit: `checkout -B` / `switch -C`, `branch -f\|-m\|-M\|-c\|-C\|-d\|-D` naming main, `update-ref` (and `update-ref --stdin`), `symbolic-ref`, `worktree add -B`, `fetch`/`pull` refspecs whose destination is main, `push` to a local repository (`.`, a path, or a remote whose URL is one) that writes main, `rebase … main`, `filter-branch`; and, while on main, `reset <commit>`, `rebase`, `commit --amend` and `pull`. Also on any branch: `--no-verify`, `commit -n`, `-c core.hooksPath=…` and `git config core.hooksPath …`; any write inside `.git/` (except removing a `*.lock`); and clearing an agent-environment variable (`env -u`, `env -i`, `unset`, `VAR=`) in a command that runs git. Follows `cd`, `git -C` and an earlier `git switch main` in the same command. Allows what it cannot parse (`bash -c`, scripts, here-docs), with one narrow exception: text naming `refs/heads/<main>`, `.git/refs` or `packed-refs` that it cannot account for (an interpreter, a nested shell, a git alias, `xargs`, a here-doc) is blocked. The git hooks below are the backstop |
+| `hook guard-git` | PreToolUse `Bash` | The same rule for shell commands. On `main`, blocks `git commit` (staged changes, plus unstaged ones for `-a` / pathspecs), `git merge`, `git cherry-pick`, `git revert`, `git am` and `git stash pop\|apply` when they would bring `brain/wiki/` changes in, and plain writes into `brain/wiki/` (`>`, `cp`, `mv`, `tee`, `sed -i`, `rm`). On any branch, blocks every command that moves `refs/heads/<main>` without a commit: `checkout -B` / `switch -C`, `branch -f\|-m\|-M\|-c\|-C\|-d\|-D` naming main, `update-ref` (and `update-ref --stdin`), `symbolic-ref`, `worktree add -B`, `fetch`/`pull` refspecs whose destination is main, `push` to a local repository (`.`, a path, or a remote whose URL is one) that writes main, `rebase … main`, `filter-branch`; and, while on main, `reset <commit>`, `rebase`, `commit --amend` and `pull`. Also on any branch: `--no-verify`, `commit -n`, `-c core.hooksPath=…` / `-c include.path=…`, config handed through `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_PARAMETERS`, and `git config` writes to `core.hooksPath`, any `almagest.*` key, `include.path` / `includeIf.*`, `remote.<name>.url` and `url.<base>.insteadOf` (plus `--edit` and section removal of those); `git remote add` / `set-url` and a `fetch` / `pull` straight from a URL; any write inside `.git/` — `.git/almagest/hooks/` included, also from a linked worktree — by `>`, `cp`, `mv` (source or target), `tee`, `ln`, `rm`, `chmod` and the like (except removing a `*.lock`); clearing an agent-environment variable (`env -u`, `env -i`, `unset`, `VAR=`) in a command that runs git, the Almagest CLI or `npm run serve`; and `almagest login` in any form (`node server/bin/almagest.mjs login`, `npx almagest login`, inside `bash -c`). Follows `cd`, `git -C` and an earlier `git switch main` in the same command. Allows what it cannot parse (`bash -c`, scripts, here-docs), with one narrow exception: text naming `refs/heads/<main>`, `.git/refs` or `packed-refs` that it cannot account for (an interpreter, a nested shell, a git alias, `xargs`, a here-doc) is blocked. The git hooks below are the backstop |
 | `hook enqueue` | PostToolUse `Write` | A new file in the drop folder → `POST /api/jobs` (with `ALMAGEST_TOKEN` if set, base URL from `service.http` or `ALMAGEST_URL`), else a spool file. Ignores `processed/`, `extracted/`, `.almagest/`, and anything written by the runner's own agent (`ALMAGEST_RUNNER=1`) |
 | `hook status` | SessionStart | One line of context — open proposals and decisions — when the service is up; nothing when it is not. Needs `ALMAGEST_TOKEN` (any role — it only reads), and finds the service at `ALMAGEST_URL`, else `ALMAGEST_PORT`/`PORT`, else `service.http` |
 
@@ -205,14 +205,19 @@ None of them needs the app: no database, no worktree, no network beyond one
 short request.
 
 The checked-in permissions match: `node` is pre-approved only for
-`tools/audit.mjs`, `tools/lib/selftest.mjs` and `server/bin/almagest.mjs`;
-nothing that runs arbitrary code is pre-approved (`python3`, `npx tsx`,
-`xargs`, `cp`, `mv` and `curl` to the local service all ask); `git push` asks
-every time. `git branch`, `git checkout` and `git switch` are pre-approved only
+`tools/audit.mjs`, `tools/lib/selftest.mjs` and the read-only CLI subcommands
+(`almagest help`, `doctor`, `hooks check`, `jobs`, `proposals`, `gaps`,
+`connectors list`) — not `login`, `serve`, `ingest`, `hooks install`, `demand`
+or `reverify` (both recompute which pages are hot), or anything that syncs,
+sends or approves; nothing that runs arbitrary code is pre-approved (`python3`,
+`npx tsx`, `xargs`, `cp`, `mv` and `curl` to the local service all ask);
+`git push` asks every time, and of `git remote` only `git remote -v` is
+pre-approved. `git branch`, `git checkout` and `git switch` are pre-approved only
 in read-only or ingest-branch form (`git branch --list`, `--show-current`,
 `git switch -c ingest/*`, `git checkout -b ingest/*`). Denied outright:
 `git commit --no-verify`, `git commit -n`, `git push --no-verify`,
 `git -c core.hooksPath…`, `git config [--unset] core.hooksPath`,
+`git remote add|set-url`, `almagest login`, `almagest hooks install`,
 `git update-ref`, `git checkout -B`, `git switch -C` / `--force-create`,
 `git branch -f` / `--force` / `-M` / `-C`, `git reset --soft|--mixed|--keep|--hard`,
 and any `curl` to `…inbox/login…`. Permission rules match command text only —
@@ -226,24 +231,48 @@ gate.
 the guards that see every commit and every ref update, whatever made it.
 
 ```bash
-git config core.hooksPath "$(git rev-parse --show-toplevel)/tools/hooks"
+node server/bin/almagest.mjs hooks install    # in your own terminal; it refuses in an agent session
 ```
 
-Use the absolute path. git runs the hooks of a push into the repository
-(`git push . x:main`) from `.git/`, where a relative `tools/hooks` resolves to
-nothing and the reference-transaction hook would be skipped.
-`hooksInstalled(repoRoot)` in `tools/lib/git-hooks.mjs` (re-exported from
-`server/src/ingest/hooks.mjs`) reports an unset, wrong or relative
-`core.hooksPath` and any hook that is missing or not executable.
+The hooks git runs are **not** `tools/hooks/` in the working tree. A checkout
+replaces every tracked file with the branch's copy, so a hook run from the
+working tree is whichever one the checked-out branch ships — and a branch can
+ship a pre-commit that clears the agent variables and moves main itself.
+`hooks install` (`installHooks` in `tools/lib/git-hooks.mjs`) instead:
 
-`tools/hooks/pre-commit` refuses a commit on `main` that touches
+- reads each hook **as committed on `main`** (`git cat-file blob
+  main:tools/hooks/<hook>`, with `git replace` stand-ins ignored), never the
+  working tree;
+- bakes in the main branch name and `brain_dir` from main's committed
+  `brain.config.yaml` (the `MAIN_BRANCH="…"` / `BRAIN_DIR="…"` lines); the
+  working-tree config names the branch, but install refuses when main's own
+  committed config disagrees. The agent-variable list is already in main's copy;
+- writes them to `<git-common-dir>/almagest/hooks/`, executable (replacing, not
+  following, a symlink planted there), and sets `core.hooksPath` to that
+  absolute directory — shared by every worktree of the clone, and resolved
+  for a push into the repository too.
+
+Run it again whenever main's `tools/hooks/` or `brain_dir` changes: until then
+the installed copy is outdated. `hooksInstalled(repoRoot)` (re-exported from
+`server/src/ingest/hooks.mjs`; `almagest doctor` and `almagest hooks check`
+print it) reports a `core.hooksPath` that is unset or anything other than that
+directory, a hook that is missing, not executable, or not byte-identical to
+what install would write from main now ("outdated").
+
+The pre-commit hook refuses a commit on `main` that touches
 `brain/wiki/`, and audits any commit that touches `brain/` or
 `brain.config.yaml` — against the **staged** tree (`git checkout-index` into a
 temp dir), so an unstaged fix cannot pass a staged mistake. Exit 1 blocks. The
 service's own commits use `--no-verify`: they are on ingest branches and have
-just passed the same audit.
+just passed the same audit. The audit it runs is the working tree's
+`tools/audit.mjs` — a deliberate choice, explained in the hook: it gates only
+the branch it runs on, main is protected by reference-transaction and by the
+service's own re-audit, and a copy from main would still import
+`node_modules/`, which a checkout can overwrite (git treats ignored files as
+expendable). So code a branch ships does run in pre-commit, as it does under
+`npm run check` — see the residual risk below.
 
-`tools/hooks/reference-transaction` (git 2.28+) is the backstop for the
+The reference-transaction hook (git 2.28+) is the backstop for the
 moves that make no commit: `branch -f`, `checkout -B`, `reset`, `update-ref`,
 `fetch . x:main`, `push . x:main`, a fast-forward. In the `prepared` state it
 refuses an update of `refs/heads/<main>` when the environment is an agent's
@@ -256,10 +285,11 @@ directory differ) or deletes main. An agent environment is any of
 variables a person exports in their own shell (`CLAUDE_CODE_USE_BEDROCK`,
 `CODEX_HOME`) are deliberately not markers. A person's own terminal carries
 none of these variables, so a human merge goes through. Code-only moves of main
-also go through. The main branch name and `brain_dir` are read from the
-working-tree config *and* from the config committed on HEAD and on both sides
-of the update, so editing the working-tree `brain.config.yaml` does not
-unprotect main.
+also go through. The installed copy reads nothing a branch controls: the main
+branch name (and `main` itself) and `brain_dir` are baked in; besides those it
+compares only the `brain_dir` each side of the update commits to, which can add
+directories to check but never remove one. Editing the working-tree
+`brain.config.yaml` or `tools/hooks/` changes nothing.
 
 The service moves main in `governance/merge.mjs` (`merge --ff-only`, else
 `update-ref`). Normally it runs under launchd, systemd, Docker or a person's
@@ -274,9 +304,10 @@ secret. It binds one audited, approved transition, and it lives where
 **Residual risk, stated plainly.** An agent with an unrestricted shell and no
 Claude Code guards (or one that gets past them) can always edit `.git/`
 directly. It can rewrite `.git/refs/heads/main` or `packed-refs`, forge
-`main-move`, unset `core.hooksPath`, or edit `tools/hooks/` itself. It can also
-strip its own environment (`env -i`) or re-parent a process so that no marker
-is left. No in-repository check survives an adversary with write access to the
+`main-move`, unset `core.hooksPath`, or edit `.git/almagest/hooks/` itself. It
+can also strip its own environment (`env -i`) or re-parent a process so that no
+marker is left — from a script it wrote, from a branch's `tools/audit.mjs` that
+pre-commit runs, or from any `npm run` script. No in-repository check survives an adversary with write access to the
 repository. Only OS-level separation closes this: the agent runs as a user, or
 in a container, that cannot write the repository's git directory, and only the
 service's user can. The hooks raise the bar and catch honest mistakes and

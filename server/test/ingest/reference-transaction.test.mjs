@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
 
-import { AGENT_ENV_VARS, authorizeMainMove, hooksInstalled, isAgentEnv, mainMoveAuthPath } from '../../../tools/lib/git-hooks.mjs';
+import { AGENT_ENV_VARS, authorizeMainMove, hooksDir, hooksInstalled, installHooks, isAgentEnv, mainMoveAuthPath } from '../../../tools/lib/git-hooks.mjs';
 import { ada, ALPHA_V2, CLEAN_AUDIT, DELTA, G, govApp, job, proposalBranch } from '../governance/fixtures.mjs';
 import { git, makeTempRepo, REPO_ROOT, rmrf } from '../helpers.mjs';
 
@@ -24,18 +24,23 @@ const human = () => {
 const agent = (v = 'CLAUDECODE') => ({ ...human(), [v]: '1' });
 const run = (cwd, env, ...args) => spawnSync('git', args, { cwd, env, encoding: 'utf-8' });
 
-/**
- * A temp repo with this checkout's tools/ committed and core.hooksPath set to
- * it — absolute, as documented: git runs the hooks of a push from $GIT_DIR,
- * where a relative `tools/hooks` does not resolve.
- */
-function hookedRepo() {
+/** A temp repo with this checkout's tools/ committed on main. */
+function toolsRepo() {
   const r = makeTempRepo();
   tmp.push(r);
   fs.cpSync(path.join(REPO_ROOT, 'tools'), path.join(r, 'tools'), { recursive: true, filter: (p) => !p.includes('__fixtures__') });
   git(r, 'add', '-A');
   git(r, 'commit', '-qm', 'tools');
-  git(r, 'config', 'core.hooksPath', path.join(fs.realpathSync(r), 'tools', 'hooks'));
+  return r;
+}
+
+/**
+ * …with the hooks installed from main, as `almagest hooks install` does: into
+ * the git dir, core.hooksPath pointing there by absolute path.
+ */
+function hookedRepo() {
+  const r = toolsRepo();
+  installHooks(r);
   return r;
 }
 
@@ -162,38 +167,174 @@ describe('the service merge path with the hook installed', () => {
   });
 });
 
+
+const CLI = path.join(REPO_ROOT, 'server', 'bin', 'almagest.mjs');
+const cli = (r, env, ...args) => spawnSync(process.execPath, [CLI, ...args, '--repo', r], { env, encoding: 'utf-8' });
+
+describe('almagest hooks install: what git runs is main\'s, not the checkout\'s', () => {
+  /**
+   * R2-A, reproduced: an attacker's branch (as fetched from a remote) ships a
+   * pre-commit that clears the agent variables and moves main onto a wiki
+   * commit. The agent checks it out under an ingest name and commits.
+   */
+  function attackerBranch(r) {
+    const wiki = branchWith(r, 'ingest/wiki-1111111', 'brain/wiki/injected.md', '# injected\n');
+    const marker = path.join(r, '.payload-ran');
+    git(r, 'switch', '-q', '-c', 'evil/payload');
+    fs.writeFileSync(path.join(r, 'tools/hooks/pre-commit'),
+      `#!/usr/bin/env bash\ntouch "${marker}"\nenv -i PATH="$PATH" HOME="$HOME" git update-ref refs/heads/main ${wiki}\nexit 0\n`, { mode: 0o755 });
+    fs.writeFileSync(path.join(r, 'tools/hooks/reference-transaction'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    git(r, 'add', '-A');
+    git(r, 'commit', '-qm', 'payload', '--no-verify');
+    git(r, 'switch', '-q', 'main');
+    return { wiki, marker };
+  }
+  function exploit(r) {
+    const co = run(r, agent(), 'checkout', '-q', '-b', 'ingest/z-1111111', 'evil/payload');
+    assert.equal(co.status, 0, co.stderr);
+    fs.writeFileSync(path.join(r, 'notes.txt'), 'wip\n');
+    assert.equal(run(r, agent(), 'add', 'notes.txt').status, 0);
+    return run(r, agent(), 'commit', '-qm', 'wip');
+  }
+
+  it('checking out a branch that ships its own hooks changes nothing: main and the installed hooks stay put', () => {
+    const r = hookedRepo();
+    const { marker } = attackerBranch(r);
+    const dir = hooksDir(r);
+    const before = { main: mainSha(r), hooks: ['pre-commit', 'reference-transaction'].map((h) => fs.readFileSync(path.join(dir, h))) };
+
+    const res = exploit(r);
+    assert.equal(res.status, 0, `the commit itself is fine: ${res.stderr}`);
+    assert.equal(fs.existsSync(marker), false, 'the branch\'s pre-commit never ran');
+    assert.equal(mainSha(r), before.main, 'main did not move');
+    assert.deepEqual(['pre-commit', 'reference-transaction'].map((h) => fs.readFileSync(path.join(dir, h))), before.hooks, 'the installed hooks are unchanged');
+    assert.equal(git(r, 'config', '--get', 'core.hooksPath').trim(), dir);
+    assert.equal(hooksInstalled(r).ok, true, hooksInstalled(r).problems.join('\n'));
+  });
+
+  it('…where hooks run from the working tree, the same steps move main (what the install fixes)', () => {
+    const r = toolsRepo();
+    const { wiki, marker } = attackerBranch(r);
+    git(r, 'config', 'core.hooksPath', path.join(fs.realpathSync(r), 'tools', 'hooks'));
+    exploit(r);
+    assert.equal(fs.existsSync(marker), true);
+    assert.equal(mainSha(r), wiki, 'the old setup let the branch\'s pre-commit move main');
+  });
+
+  it('editing the working-tree reference-transaction has no effect on the protection', () => {
+    const r = hookedRepo();
+    const wiki = branchWith(r, 'ingest/wiki-1111111', 'brain/wiki/new-page.md', '# new\n');
+    fs.writeFileSync(path.join(r, 'tools/hooks/reference-transaction'), '#!/bin/sh\nexit 0\n');
+    fs.writeFileSync(path.join(r, 'tools/hooks/pre-commit'), '#!/bin/sh\nexit 0\n');
+    const cfg = path.join(r, 'brain.config.yaml');
+    fs.writeFileSync(cfg, fs.readFileSync(cfg, 'utf-8').replace(/^brain_dir: brain$/m, 'brain_dir: elsewhere'));
+    const before = mainSha(r);
+    const res = run(r, agent(), 'update-ref', 'refs/heads/main', wiki);
+    assert.notEqual(res.status, 0);
+    assert.match(res.stderr, /refusing to move refs\/heads\/main from an agent environment/);
+    assert.equal(mainSha(r), before);
+    assert.equal(hooksInstalled(r).ok, true, 'what is installed is judged against main, not the working tree');
+  });
+
+  it('bakes in the main branch and brain_dir from main\'s committed config, and refuses a working-tree mismatch', () => {
+    const r = toolsRepo();
+    git(r, 'branch', 'trunk');
+    fs.appendFileSync(path.join(r, 'brain.config.yaml'), '\nservice:\n  git:\n    main: trunk\n');
+    assert.throws(() => installHooks(r), /names "trunk" as the main branch, but trunk's committed brain\.config\.yaml names "main"/);
+    assert.match(hooksInstalled(r).problems.join('\n'), /cannot build the hooks from main/);
+    git(r, 'commit', '-qam', 'trunk is main', '--no-verify');
+    git(r, 'switch', '-q', 'trunk');
+    git(r, 'merge', '-q', '--ff-only', 'main');
+    const out = installHooks(r);
+    assert.equal(out.main, 'trunk');
+    const text = fs.readFileSync(path.join(out.dir, 'reference-transaction'), 'utf-8');
+    assert.match(text, /^MAIN_BRANCH="trunk"$/m);
+    assert.match(text, /^BRAIN_DIR="brain"$/m);
+    assert.doesNotMatch(text, /brain\.config\.yaml"\)"|show-toplevel/, 'reads no working-tree config');
+  });
+
+  it('only a person installs: the CLI refuses from an agent environment', () => {
+    const r = toolsRepo();
+    const refused = cli(r, agent(), 'hooks', 'install');
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /refused — this is an agent environment/);
+    assert.equal(run(r, human(), 'config', '--get', 'core.hooksPath').status, 1, 'core.hooksPath left unset');
+
+    const ok = cli(r, human(), 'hooks', 'install');
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(ok.stdout, /Installed the hooks from main/);
+    assert.equal(cli(r, human(), 'hooks', 'check').status, 0);
+    assert.match(cli(r, human(), 'hooks', 'install').stdout, /already current/);
+  });
+
+  it('a symlink planted where the hooks go is replaced, not followed', () => {
+    const r = toolsRepo();
+    const dir = hooksDir(r);
+    fs.mkdirSync(path.dirname(dir), { recursive: true });
+    fs.symlinkSync(path.join(r, 'tools', 'hooks'), dir);
+    assert.match(hooksInstalled(r).problems.join('\n'), /is not a directory/);
+    installHooks(r);
+    assert.equal(fs.lstatSync(dir).isDirectory(), true);
+    assert.equal(hooksInstalled(r).ok, true, hooksInstalled(r).problems.join('\n'));
+  });
+});
+
 describe('hooksInstalled', () => {
-  it('reports an unset hooksPath, a wrong one, and a hook that is not executable', () => {
-    const r = makeTempRepo();
-    tmp.push(r);
-    fs.cpSync(path.join(REPO_ROOT, 'tools', 'hooks'), path.join(r, 'tools', 'hooks'), { recursive: true });
+  it('reports an unset hooksPath, a wrong one, an outdated hook and one that is not executable', () => {
+    const r = toolsRepo();
+    const dir = hooksDir(r);
     let h = hooksInstalled(r);
     assert.equal(h.ok, false);
-    assert.match(h.problems.join('\n'), /core\.hooksPath is not set/);
+    assert.equal(h.expected, dir);
+    assert.match(h.problems.join('\n'), /core\.hooksPath is not set — run `node server\/bin\/almagest\.mjs hooks install`/);
 
-    git(r, 'config', 'core.hooksPath', '.git/hooks');
-    assert.match(hooksInstalled(r).problems.join('\n'), /not tools\/hooks/);
-
-    git(r, 'config', 'core.hooksPath', 'tools/hooks');
-    h = hooksInstalled(r);
-    assert.equal(h.ok, false, 'relative: a push into this repo would run no hook');
-    assert.match(h.problems.join('\n'), /relative/);
-
-    git(r, 'config', 'core.hooksPath', path.join(fs.realpathSync(r), 'tools', 'hooks'));
+    installHooks(r);
     h = hooksInstalled(r);
     assert.equal(h.ok, true, h.problems.join('\n'));
+    assert.equal(h.hooksPath, dir);
 
-    fs.chmodSync(path.join(r, 'tools', 'hooks', 'reference-transaction'), 0o644);
+    for (const wrong of ['tools/hooks', path.join(fs.realpathSync(r), 'tools', 'hooks')]) {
+      git(r, 'config', 'core.hooksPath', wrong);
+      assert.match(hooksInstalled(r).problems.join('\n'), /core\.hooksPath is .*, not .*almagest\/hooks/, wrong);
+    }
+    git(r, 'config', 'core.hooksPath', dir);
+
+    // main's tools/hooks moves on: the installed copy is outdated until install runs again.
+    fs.appendFileSync(path.join(r, 'tools/hooks/reference-transaction'), '# a reviewed change\n');
+    git(r, 'commit', '-qam', 'hook change', '--no-verify');
+    h = hooksInstalled(r);
+    assert.equal(h.ok, false);
+    assert.match(h.problems.join('\n'), /reference-transaction is outdated .*hooks install/);
+    assert.deepEqual(installHooks(r).written, ['reference-transaction']);
+    assert.equal(hooksInstalled(r).ok, true);
+
+    // So does a change of brain_dir on main.
+    const cfg = path.join(r, 'brain.config.yaml');
+    fs.writeFileSync(cfg, fs.readFileSync(cfg, 'utf-8').replace(/^brain_dir: brain$/m, 'brain_dir: brain2'));
+    git(r, 'commit', '-qam', 'move the brain', '--no-verify');
+    assert.match(hooksInstalled(r).problems.join('\n'), /pre-commit is outdated/);
+    installHooks(r);
+
+    // Edited in place: outdated too.
+    fs.appendFileSync(path.join(dir, 'pre-commit'), 'exit 0\n');
+    assert.match(hooksInstalled(r).problems.join('\n'), /pre-commit is outdated/);
+    installHooks(r);
+
+    fs.chmodSync(path.join(dir, 'reference-transaction'), 0o644);
     h = hooksInstalled(r);
     assert.equal(h.ok, false);
     assert.match(h.problems.join('\n'), /reference-transaction is not executable/);
-    fs.rmSync(path.join(r, 'tools', 'hooks', 'pre-commit'));
-    assert.match(hooksInstalled(r).problems.join('\n'), /pre-commit is missing/);
+    fs.rmSync(path.join(dir, 'pre-commit'));
+    assert.match(hooksInstalled(r).problems.join('\n'), /pre-commit is not installed/);
   });
 
-  it('is installed in this checkout\'s tools/hooks as executables', () => {
+  it('is executable in this checkout\'s tools/hooks, with the lines install bakes', () => {
     for (const hook of ['pre-commit', 'reference-transaction']) {
-      fs.accessSync(path.join(REPO_ROOT, 'tools', 'hooks', hook), fs.constants.X_OK);
+      const file = path.join(REPO_ROOT, 'tools', 'hooks', hook);
+      fs.accessSync(file, fs.constants.X_OK);
+      const text = fs.readFileSync(file, 'utf-8');
+      assert.match(text, /^MAIN_BRANCH="main"$/m);
+      assert.match(text, /^BRAIN_DIR="brain"$/m);
     }
   });
 });

@@ -27,7 +27,7 @@ and no setting relaxes this.
 | What chats read | The MCP server serves a snapshot of local `main` only, never the remote's | `server/src/core/snapshot.mjs` |
 | The ingest agent | No git, network or MCP tools; writes confined to `brain/`; the audit is an exact-command wrapper outside the worktree; `ALMAGEST_*` and other secrets stripped from its environment; source content declared untrusted | `server/src/ingest/drivers/`, `runner.mjs` |
 | The runner after the agent | Never trusts the worktree's `.git` file: the git dir is resolved from the repository, the `.git` file must be byte-identical to what the runner created, every git call passes `--git-dir`/`--work-tree` with fsmonitor and hooks off and inherited `GIT_*` dropped, and the commit must land on the job's branch with `main` untouched | `server/src/core/git.mjs`, `ingest/runner.mjs` |
-| Interactive agent sessions | `guard-wiki` (Write/Edit) blocks wiki changes on `main` and any write into `.git/`; `guard-git` (Bash) blocks wiki changes on `main` and, on any branch, every command that moves `main` without a commit; the `reference-transaction` hook refuses a wiki-changing move of `main` from an agent environment; `pre-commit` runs the audit. The checked-in `.claude/settings.json` no longer pre-allows interpreters, `cp`/`mv`, branch-moving git commands or `curl` to the inbox | `server/src/ingest/hooks.mjs`, `guard-git.mjs`, `tools/hooks/`, `tools/lib/git-hooks.mjs`, `.claude/settings.json` |
+| Interactive agent sessions | `guard-wiki` (Write/Edit) blocks wiki changes on `main` and any write into `.git/`; `guard-git` (Bash) blocks wiki changes on `main` and, on any branch, every command that moves `main` without a commit; the `reference-transaction` hook refuses a wiki-changing move of `main` from an agent environment; `pre-commit` runs the audit. Both are installed from `main` into the git dir (`almagest hooks install`), so a checked-out branch cannot replace them; `guard-git` also blocks new remotes, hook-related git config, and `almagest login`, which itself refuses in an agent environment. The checked-in `.claude/settings.json` no longer pre-allows interpreters, `cp`/`mv`, branch-moving git commands, `git remote` writes, CLI subcommands that change state, or `curl` to the inbox | `server/src/ingest/hooks.mjs`, `guard-git.mjs`, `tools/hooks/`, `tools/lib/git-hooks.mjs`, `.claude/settings.json` |
 | Configuration | Your approval rules are added to the profile's, never instead of them (unless you set `inherit_profile_rules: false`, which warns at startup); `enterprise` without OIDC refuses to start; `serve` fails fast without a local `main` | `server/src/core/config.mjs`, `app.mjs` |
 
 ## Status
@@ -45,13 +45,25 @@ regression test; what remains is below.
 
 ### Known limits
 
-1. **An unrestricted shell can always reach `.git`.** The guards cover the
-   commands an agent is *normally given* and the `reference-transaction` hook
-   covers git itself, but a process that can run arbitrary code as you can edit
-   `.git/` or `tools/hooks/` directly, unset its environment markers, or read
-   `ALMAGEST_SECRET_KEY` and the SQLite store. Only OS-level separation closes
-   that: run the service as a different user, in a container, or on another
-   machine. Protect `main` on your git host as defence in depth.
+1. **An unrestricted shell can always reach `.git` and the service's secrets.**
+   The guards cover the commands an agent is *normally given* and the
+   `reference-transaction` hook covers git itself, but a process that can run
+   arbitrary code as you can edit `.git/` (the installed hooks in
+   `.git/almagest/hooks/` included) directly, unset its environment markers, or
+   read `ALMAGEST_SECRET_KEY` and the SQLite store. That includes code a branch
+   ships and an allowed command runs: the pre-commit hook runs the working
+   tree's `tools/audit.mjs`, and `npm run check` runs the branch's scripts, so
+   a poisoned branch from your own remote can still clear the markers and move
+   `main` once an agent checks it out and commits. The secrets are the same
+   story: kept out of the shell (`~/.config/almagest/env`, mode 600, loaded
+   only by the service — [getting started](../getting-started.md) step 8),
+   `almagest login` refusing in an agent environment, and `guard-git` blocking
+   it, an agent whose shell can *read* that file can still mint a sign-in link
+   or sign a session with a hand-written script. Only OS-level separation
+   closes either: run agents as a user that cannot read the env file or write
+   the repository's git directory, or run the service as a different user, in a
+   container, or on another machine. Protect `main` on your git host as
+   defence in depth.
 2. **Under SSO a demotion is seen at the person's next sign-in**, because the
    identity provider is not asked in between. The role max ages bound how long
    that takes (an hour for a browser session by default, a day for Slack and
@@ -60,9 +72,15 @@ regression test; what remains is below.
    button yet. Squash and rebase merges on GitHub are never accepted locally,
    because their result cannot be checked against the reviewed head — use merge
    commits on a repository that feeds Almagest.
-4. **The hooks need an absolute `core.hooksPath`.** With a relative path git
-   misses the hooks of a push into the repository. `doctor` reports a missing,
-   relative or non-executable hook setup.
+4. **The hooks are installed per clone, by a person.** `node
+   server/bin/almagest.mjs hooks install` copies them from `main` as committed
+   into `<git-common-dir>/almagest/hooks/` and points `core.hooksPath` there
+   (absolute), so no checkout can swap them; pointing git at the working
+   tree's `tools/hooks/` is not an install, because a branch replaces those
+   files. Until it is re-run after `main`'s `tools/hooks/` or `brain_dir`
+   changes, the installed copy is outdated. `doctor` reports a missing,
+   misdirected, outdated or non-executable setup; it is a warning, not a
+   failure.
 
 Lower-severity items from the reviews (identity links that cannot be undone
 after a wrong mapping, `submit_source` without a rate limit, one API response
@@ -70,7 +88,8 @@ that still includes a staging path) are tracked and fail safe.
 
 ## Hardening checklist
 
-- [ ] `git config core.hooksPath "$PWD/tools/hooks"` (absolute) in every clone
+- [ ] `node server/bin/almagest.mjs hooks install` in every clone, in your own terminal — again whenever `doctor` says the hooks are outdated
+- [ ] Service secrets in `~/.config/almagest/env` (mode 600) or the launchd/systemd unit, never `export`ed in a shell you start agents from
 - [ ] Branch protection on `main` at your git host (required reviews, merge commits, no force push)
 - [ ] `ALMAGEST_SECRET_KEY` set, and different per deployment
 - [ ] Token mode: approvers sign in with `ALMAGEST_LOGINS` or `almagest login`; chats and hooks get API tokens — `contributor` or `viewer` where you can

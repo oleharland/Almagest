@@ -6,6 +6,7 @@ import path from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import { enqueueFromHook, guardWikiDecision, statusLine } from '../../src/ingest/hooks.mjs';
+import { hooksDir, installHooks } from '../../../tools/lib/git-hooks.mjs';
 import { git, makeTempRepo, REPO_ROOT, rmrf, SERVICE_ROOT } from '../helpers.mjs';
 import { cleanup, setup } from './_setup.mjs';
 
@@ -68,6 +69,22 @@ describe('hook guard-wiki', () => {
     // Names that only look similar are not git dirs.
     assert.equal(guardWikiDecision(write(path.join(repo, '.gitignore'))).block, false);
     assert.equal(guardWikiDecision(write(path.join(repo, 'docs', 'x.git', 'a.md'))).block, false);
+  });
+
+  it('blocks edits of the installed hooks, also from a linked worktree whose .git is a file (R2-A)', () => {
+    const repo = makeTempRepo();
+    tmp.push(repo);
+    const wt = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-wt-')), 'wt');
+    tmp.push(path.dirname(wt));
+    git(repo, 'worktree', 'add', '-q', '-b', 'ingest/w-1234567', wt);
+    const dir = hooksDir(wt);
+    assert.equal(dir, hooksDir(repo), 'one hooks dir per clone, shared by its worktrees');
+    for (const file of [path.join(dir, 'pre-commit'), path.join(dir, 'reference-transaction')]) {
+      const d = guardWikiDecision({ cwd: wt, tool_name: 'Edit', tool_input: { file_path: file } });
+      assert.equal(d.block, true, file);
+    }
+    assert.equal(guardWikiDecision({ cwd: wt, tool_name: 'Edit', tool_input: { file_path: path.join(wt, 'tools', 'hooks', 'pre-commit') } }).block, false,
+      'the tracked copy is not what git runs; editing it changes nothing until it is reviewed onto main and installed');
   });
 
   it('fails open on everything except the cases it guards', () => {
@@ -181,7 +198,7 @@ describe('tools/hooks/pre-commit', () => {
     fs.appendFileSync(path.join(repo, '.gitignore'), 'node_modules\n');
     git(repo, 'add', '-A');
     git(repo, 'commit', '-qm', 'tools');
-    git(repo, 'config', 'core.hooksPath', 'tools/hooks');
+    installHooks(repo);   // from main, into the git dir — what `almagest hooks install` does
     const env = { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@t', NO_COLOR: '1' };
     const commit = (msg) => spawnSync('git', ['commit', '-qm', msg], { cwd: repo, env, encoding: 'utf-8' });
     const alpha = path.join(repo, 'brain', 'wiki', 'alpha.md');

@@ -391,8 +391,8 @@ flow with an `OAuthClientProvider` whose storage is `store.kv`
 database in the clear, and never in git.
 
 ```bash
-export ALMAGEST_SECRET_KEY="$(openssl rand -hex 32)"   # once, kept with your other secrets
-almagest connectors login product-drive               # a connector id, or an .mcp.json key / URL
+# ALMAGEST_SECRET_KEY lives in ~/.config/almagest/env (getting started, step 8) — not exported in an agent's shell
+(set -a; . ~/.config/almagest/env; set +a; almagest connectors login product-drive)   # a connector id, or an .mcp.json key / URL
 # Open this URL in a browser to authorize Almagest:
 #   https://…/authorize?response_type=code&code_challenge_method=S256&…
 # Waiting for the redirect…

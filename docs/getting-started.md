@@ -143,25 +143,53 @@ the audit and the site need only Node 22+.
 
 ```bash
 npm install
-export ALMAGEST_SECRET_KEY=$(openssl rand -hex 32)
-export TOKEN=$(openssl rand -hex 16) && echo "your API token (for chats): $TOKEN"
-export LOGIN=$(openssl rand -hex 16) && echo "your inbox sign-in secret: $LOGIN"
-export ALMAGEST_TOKENS="me:owner:$TOKEN"             # who you are, your roles, your API token
-export ALMAGEST_LOGINS="me:$LOGIN"                   # your inbox sign-in — never an API token
-git config core.hooksPath "$PWD/tools/hooks"         # absolute: a relative path misses some hooks
-node server/bin/almagest.mjs doctor                  # ✓ passed, ✗ failed, ! warning only
-npm run serve                                        # inbox: http://127.0.0.1:4747/inbox
+node server/bin/almagest.mjs hooks install           # main's git hooks, into .git/almagest/hooks/
+
+# The secrets, in a file outside the repo that only you can read (mode 600):
+mkdir -p ~/.config/almagest && (umask 077; cat > ~/.config/almagest/env <<EOF
+ALMAGEST_SECRET_KEY=$(openssl rand -hex 32)
+ALMAGEST_TOKENS=me:owner:$(openssl rand -hex 16)
+ALMAGEST_LOGINS=me:$(openssl rand -hex 16)
+EOF
+)
+cat ~/.config/almagest/env   # TOKENS: who you are, your roles, your API token (for chats)
+                             # LOGINS: your inbox sign-in secret — never an API token
+
+# In a terminal you never start an agent from:
+(set -a; . ~/.config/almagest/env; set +a; node server/bin/almagest.mjs doctor)   # ✓ passed, ✗ failed, ! warning
+(set -a; . ~/.config/almagest/env; set +a; npm run serve)                         # inbox: http://127.0.0.1:4747/inbox
 ```
+
+**Why the file, and why not `export`.** An agent session inherits the
+environment of the shell it was started from. Export `ALMAGEST_SECRET_KEY` or
+`ALMAGEST_LOGINS` in your shell, start Claude Code (or any agent) there, and the
+agent holds them too: with the secret key it can mint a sign-in link and approve
+its own proposal. The parentheses run each command in a subshell, so the
+variables reach the service and nothing else — not even the terminal you typed
+them in. For an always-on service, `deploy/launchd/` and `deploy/systemd/` start
+it with the same file (systemd's `EnvironmentFile=~/.config/almagest/env`) and
+no terminal at all. An agent that can read the file can still use it; only
+running agents as another OS user closes that ([security](v2/security.md),
+Known limit 1).
+
+`hooks install` copies `tools/hooks/` **as committed on `main`** into the git
+directory and points `core.hooksPath` there. The hooks never run from the
+working tree: a checkout replaces those files with the branch's copies, and a
+branch could ship hooks that move `main`. Run it once per clone, in your own
+terminal (it refuses inside an agent session), and again whenever `doctor`
+reports the hooks outdated — after a merge that changed `tools/hooks/` or
+`brain_dir` on `main`.
 
 The API token and the sign-in secret are deliberately different. The token goes
 into chat and hook configuration and can read; only the sign-in secret opens a
 browser session, and only a browser session can approve. Without
-`ALMAGEST_LOGINS`, `node server/bin/almagest.mjs login me` prints a one-time
-sign-in link instead. Give chats a `contributor` or `viewer` token where you can
-— see [the security status](v2/security.md).
+`ALMAGEST_LOGINS`, `node server/bin/almagest.mjs login me` (run the same way, in
+your own terminal) prints a one-time sign-in link instead; it refuses to run
+inside an agent session. Give chats a `contributor` or `viewer` token where you
+can — see [the security status](v2/security.md).
 
-`doctor` checks the environment that `serve` relies on, so set the variables
-first. A `✗` line names what is missing and how to fix it. Ingest branches off
+`doctor` checks the environment that `serve` relies on, so run it with the
+same variables. A `✗` line names what is missing and how to fix it. Ingest branches off
 your local `main`, so a clone of another branch fails the `main branch` check.
 Create the branch with `git branch main origin/main`. Neither `doctor` nor
 `serve` creates or moves `main` for you.

@@ -509,9 +509,12 @@ Hooks (`bin/almagest.mjs hook <name>`, all fast, none needs the server running):
 | `guard-wiki` | PreToolUse `Write\|Edit\|MultiEdit` | exit 2 (block) when the target is under `brain/wiki/` and the current branch is `main` — the mechanical half of non-negotiable 1 |
 | `enqueue` | PostToolUse `Write` | target under `brain/raw/` → POST `/api/jobs`, or spool to `.almagest/spool/` when the server is down |
 | `status` | SessionStart | print open proposals and decisions as context (needs `ALMAGEST_TOKEN`; never fails the session) |
-| `guard-git` | PreToolUse `Bash` | exit 2 when a shell command would put wiki changes on `main` (commit, merge, cherry-pick, stash, plain file writers) or skip commit hooks (`--no-verify`, `-c core.hooksPath`) |
+| `guard-git` | PreToolUse `Bash` | exit 2 when a shell command would put wiki changes on `main` (commit, merge, cherry-pick, stash, plain file writers), move `main` without a commit, skip or reconfigure the git hooks (`--no-verify`, `-c core.hooksPath`, `git config core.hooksPath`/`almagest.*`), add a remote, write into `.git/`, or run `almagest login` |
 
-Plus `tools/hooks/pre-commit` — the harness-agnostic git hook (audit + main guard).
+Plus the git hooks `tools/hooks/pre-commit` (audit + main guard) and
+`tools/hooks/reference-transaction` (every move of `main`), installed per clone
+from `main` into `.git/almagest/hooks/` by `almagest hooks install` — never run
+from the working tree, which any checkout rewrites.
 Plus `deploy/launchd/` and `deploy/systemd/` to keep `almagest serve` running.
 
 ## Connectors

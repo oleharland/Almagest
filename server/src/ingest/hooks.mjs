@@ -22,11 +22,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../../../tools/lib/config.mjs';
+import { hooksInstalled, installHooks, isAgentEnv } from '../../../tools/lib/git-hooks.mjs';
 import { isIngestCandidate, isInside, realish } from './source.mjs';
 import { guardGitDecision } from './guard-git.mjs';
 import { writeSpool } from './spool.mjs';
 
-/** `{ ok, hooksPath, expected, problems[] }` — are tools/hooks/ installed and executable? (doctor) */
+/** `{ ok, hooksPath, expected, problems[] }` — are main's hooks installed in the git dir, current and executable? (doctor) */
 export { hooksInstalled } from '../../../tools/lib/git-hooks.mjs';
 
 /** stdin as JSON, or {} — a hook run by hand from a terminal has no stdin to wait for. */
@@ -248,6 +249,45 @@ export const hookCommand = {
     // Exit 1, not 2: in a PreToolUse slot exit 2 means "block", and a typo in
     // settings.json should not block every edit.
     process.stderr.write('usage: almagest hook <guard-wiki | guard-git | enqueue | status>  (reads Claude Code hook JSON on stdin)\n');
+    return 1;
+  },
+};
+
+/**
+ * `almagest hooks install` — put main's git hooks where a checkout cannot
+ * reach them (tools/lib/git-hooks.mjs → installHooks). `almagest hooks check`
+ * prints what doctor's "git hooks" line says, and exits 1 on a problem.
+ *
+ * Install refuses to run from an agent environment: it decides what guards
+ * main, so it is a person's step, run once per clone in their own terminal
+ * (and again whenever doctor says the hooks are outdated).
+ */
+export const hooksCommand = {
+  summary: 'Git hooks: install (from main, into .git/almagest/hooks) | check',
+  needsApp: false,
+  async run(argv, env) {
+    const [action] = argv;
+    if (action === 'install') {
+      if (isAgentEnv(process.env)) {
+        process.stderr.write('almagest hooks install: refused — this is an agent environment. The hooks decide what protects main, '
+          + 'so a person installs them, in their own terminal: node server/bin/almagest.mjs hooks install\n');
+        return 1;
+      }
+      let r;
+      try { r = installHooks(env.repoRoot); }
+      catch (err) { process.stderr.write(`almagest hooks install: ${err.message}\n`); return 1; }
+      const what = r.written.length ? `wrote ${r.written.join(', ')}` : 'already current';
+      process.stdout.write(`Installed the hooks from ${r.main} (brain_dir ${r.brainDir}) into ${r.dir} — ${what}.\n`
+        + `core.hooksPath = ${r.dir}\n`);
+      return 0;
+    }
+    if (action === 'check') {
+      const h = hooksInstalled(env.repoRoot);
+      if (h.ok) { process.stdout.write(`git hooks: ${h.hooksPath}\n`); return 0; }
+      process.stdout.write(`git hooks: ${h.problems.join('; ')}\n`);
+      return 1;
+    }
+    process.stderr.write('usage: almagest hooks <install | check>\n');
     return 1;
   },
 };

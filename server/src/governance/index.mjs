@@ -9,6 +9,7 @@
  *   create(ctx) → service object   (registers inbox/API/channel routes, a session auth provider)
  *   commands    → CLI subcommands
  */
+import { isAgentEnv } from '../../../tools/lib/git-hooks.mjs';
 import { parseTokens } from '../core/auth.mjs';
 import { loadServiceConfig } from '../core/config.mjs';
 import { createChannels } from './channels/index.mjs';
@@ -77,6 +78,14 @@ export const commands = {
     summary: 'Print a one-time inbox sign-in link: login [name] [--next <path>] [--minutes 10]',
     needsApp: false,
     async run(argv, { repoRoot, configPath }) {
+      // A sign-in link is an approver's session. An agent shell started from a
+      // person's terminal inherits ALMAGEST_SECRET_KEY with everything else,
+      // so the link is minted only where no agent harness is running.
+      if (isAgentEnv(process.env)) {
+        process.stderr.write('almagest login: refused — this is an agent environment. A sign-in link signs in as a person who can approve, '
+          + 'so it must be run by that person in their own terminal, not from an agent session.\n');
+        return 1;
+      }
       const args = { name: '', next: '/inbox', minutes: LOGIN_LINK_MINUTES };
       for (let i = 0; i < argv.length; i++) {
         if (argv[i] === '--next') args.next = argv[++i];

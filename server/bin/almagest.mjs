@@ -98,7 +98,8 @@ export async function doctor(repoRoot, configPath, deps = {}) {
   });
   advise('git hooks', () => {
     // The pre-commit audit and the reference-transaction guard on main only
-    // run when git is pointed at tools/hooks by an absolute path.
+    // run once `almagest hooks install` has copied main's hooks into the git
+    // dir; a hook that differs from main's is outdated until it is re-run.
     const hooks = hooksInstalled(repoRoot);
     if (!hooks.ok) throw new Error(hooks.problems.join('; '));
     return hooks.hooksPath;

@@ -8,9 +8,13 @@
  *   B2c stored approval roles outlived a demotion → counted with current roles
  */
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
+import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
+import { AGENT_ENV_VARS } from '../../../tools/lib/git-hooks.mjs';
+import { SERVICE_ROOT } from '../helpers.mjs';
 import { parseLogins, registerAuthProvider, resolveLogins, parseTokens } from '../../src/core/auth.mjs';
 import { commands } from '../../src/governance/index.mjs';
 import { capRoles, evaluate } from '../../src/governance/policy.mjs';
@@ -24,6 +28,7 @@ const ENV = {
   ALMAGEST_LOGINS: 'ada:ada-signin-1;bob:bob-signin-2',
   T_SLACK_SECRET: 'slack-signing',
 };
+const CLI = path.join(SERVICE_ROOT, 'bin', 'almagest.mjs');
 const saved = {};
 const apps = [];
 before(() => { for (const [k, v] of Object.entries(ENV)) { saved[k] = process.env[k]; process.env[k] = v; } });
@@ -184,10 +189,33 @@ describe('B1 · almagest login links', () => {
     const write = process.stdout.write;
     process.stdout.write = (s) => { out.push(String(s)); return true; };
     let code;
-    try { code = await commands.login.run(['ada'], { repoRoot: r }); } finally { process.stdout.write = write; }
+    // The test runner may itself run inside an agent session, where login refuses (below).
+    const markers = Object.fromEntries(AGENT_ENV_VARS.map((k) => [k, process.env[k]]));
+    for (const k of AGENT_ENV_VARS) delete process.env[k];
+    try { code = await commands.login.run(['ada'], { repoRoot: r }); } finally {
+      process.stdout.write = write;
+      for (const [k, v] of Object.entries(markers)) if (v !== undefined) process.env[k] = v;
+    }
     assert.equal(code, 0);
     assert.match(out.join(''), /Sign-in link for ada\. It works once/);
     assert.match(out.join(''), /\/inbox\/login\/link\//);
+  });
+
+  it('the CLI refuses to mint a link from an agent environment', () => {
+    const r = repo();
+    const env = { ...process.env, ...ENV };
+    for (const k of AGENT_ENV_VARS) delete env[k];
+    const cli = (extra) => spawnSync(process.execPath, [CLI, 'login', 'ada', '--repo', r], { env: { ...env, ...extra }, encoding: 'utf-8' });
+
+    for (const marker of ['CLAUDECODE', 'CODEX_SANDBOX', 'ALMAGEST_RUNNER']) {
+      const res = cli({ [marker]: '1' });
+      assert.equal(res.status, 1, `${marker}: ${res.stdout}${res.stderr}`);
+      assert.match(res.stderr, /refused — this is an agent environment.*run by that person in their own terminal/);
+      assert.doesNotMatch(res.stdout, /inbox\/login\/link/, 'no link is printed');
+    }
+    const person = cli({});
+    assert.equal(person.status, 0, person.stderr);
+    assert.match(person.stdout, /\/inbox\/login\/link\//);
   });
 });
 
