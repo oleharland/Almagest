@@ -102,13 +102,20 @@ One code path, three profiles — `service.profile` in `brain.config.yaml`:
 
 ```bash
 npm install
-export ALMAGEST_SECRET_KEY=$(openssl rand -hex 32)
-export TOKEN=$(openssl rand -hex 16) && echo "API token, for chats: $TOKEN"
-export LOGIN=$(openssl rand -hex 16) && echo "inbox sign-in secret: $LOGIN"
-git config core.hooksPath "$PWD/tools/hooks"
-ALMAGEST_TOKENS="me:owner:$TOKEN" ALMAGEST_LOGINS="me:$LOGIN" npm run serve
+node server/bin/almagest.mjs hooks install    # main's git hooks, into .git/ where no checkout can swap them
+mkdir -p ~/.config/almagest && (umask 077; cat > ~/.config/almagest/env <<EOF
+ALMAGEST_SECRET_KEY=$(openssl rand -hex 32)
+ALMAGEST_TOKENS=me:owner:$(openssl rand -hex 16)
+ALMAGEST_LOGINS=me:$(openssl rand -hex 16)
+EOF
+)
+cat ~/.config/almagest/env    # API token for chats: after me:owner: · inbox sign-in secret: after me: in LOGINS
+# In a terminal you never start an agent from:
+(set -a; . ~/.config/almagest/env; set +a; npm run serve)
 # inbox:  http://127.0.0.1:4747/inbox     MCP:  http://127.0.0.1:4747/mcp     or:  node server/bin/almagest.mjs mcp
 ```
+
+The secrets live in a file outside the repo, mode 600, and only the service process reads them. Don't `export` them in your shell: an agent session started from that shell inherits them, and with the secret key an agent can mint itself a sign-in link and approve. Always-on, `deploy/launchd/` and `deploy/systemd/` start the service with them the same way.
 
 Containers: `deploy/docker/` (the image clones your brain at start). Always-on on a laptop: `deploy/launchd/`, `deploy/systemd/`. The design and every contract between the parts: [docs/v2/spec.md](docs/v2/spec.md).
 

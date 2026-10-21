@@ -154,7 +154,13 @@ secret, and neither works in the other's place:
 Or skip the second secret: on the machine that runs the service,
 `almagest login [name] [--next /inbox/p/…] [--minutes 10]` prints a one-time
 sign-in link, signed with `ALMAGEST_SECRET_KEY` (the CLI must see the
-service's key). Opening it shows "Continue as …"; pressing Continue signs in.
+service's key). It refuses to run in an agent environment (any of the
+variables in `tools/lib/git-hooks.mjs` → `AGENT_ENV_VARS`, such as
+`CLAUDECODE`), and `guard-git` blocks it in Claude Code: a link signs in as
+someone who can approve, so the person runs it in their own terminal, with the
+key loaded from `~/.config/almagest/env` rather than exported into a shell an
+agent could inherit ([getting started](../getting-started.md) step 8).
+Opening it shows "Continue as …"; pressing Continue signs in.
 It works once and expires after 10 minutes by default (60 at most). Solo
 setup is therefore `ALMAGEST_TOKENS="me:owner:<api token>"` plus either
 `ALMAGEST_LOGINS="me:<sign-in secret>"` or `almagest login`.

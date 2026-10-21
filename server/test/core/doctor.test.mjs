@@ -4,7 +4,8 @@ import path from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import { doctor } from '../../bin/almagest.mjs';
-import { git, makeTempRepo, rmrf } from '../helpers.mjs';
+import { installHooks } from '../../../tools/lib/git-hooks.mjs';
+import { git, makeTempRepo, REPO_ROOT, rmrf } from '../helpers.mjs';
 
 const repos = [];
 after(() => repos.forEach(rmrf));
@@ -30,16 +31,25 @@ describe('doctor', () => {
     const r = repo();
     const unset = await run(r);
     assert.equal(unset.code, 0, unset.lines.join('\n'));
-    assert.match(unset.line('git hooks'), /^! git hooks: core\.hooksPath is not set .*git config core\.hooksPath ".*tools\/hooks"/);
+    assert.match(unset.line('git hooks'), /^! git hooks: core\.hooksPath is not set — run `node server\/bin\/almagest\.mjs hooks install`/);
     assert.match(unset.line('main branch'), /^✓ main branch: main/);
 
-    const hooks = path.join(r, 'tools', 'hooks');
-    fs.mkdirSync(hooks, { recursive: true });
-    for (const h of ['pre-commit', 'reference-transaction']) fs.writeFileSync(path.join(hooks, h), '#!/bin/sh\n', { mode: 0o755 });
-    git(r, 'config', 'core.hooksPath', 'tools/hooks');
-    assert.match((await run(r)).line('git hooks'), /^! git hooks: core\.hooksPath is relative/);
-    git(r, 'config', 'core.hooksPath', hooks);
-    assert.match((await run(r)).line('git hooks'), /^✓ git hooks: /);
+    // Pointing git at the working tree's tools/hooks — the old instruction — is not installed:
+    // a checkout replaces those files.
+    fs.cpSync(path.join(REPO_ROOT, 'tools', 'hooks'), path.join(r, 'tools', 'hooks'), { recursive: true });
+    git(r, 'add', '-A');
+    git(r, 'commit', '-qm', 'hooks', '--no-verify');
+    git(r, 'config', 'core.hooksPath', path.join(fs.realpathSync(r), 'tools', 'hooks'));
+    assert.match((await run(r)).line('git hooks'), /^! git hooks: core\.hooksPath is .*tools\/hooks, not .*\.git\/almagest\/hooks — run `node server\/bin\/almagest\.mjs hooks install`/);
+
+    installHooks(r);
+    assert.match((await run(r)).line('git hooks'), /^✓ git hooks: .*\.git\/almagest\/hooks$/);
+
+    fs.appendFileSync(path.join(r, 'tools', 'hooks', 'pre-commit'), '# changed on main\n');
+    git(r, 'commit', '-qam', 'hook change', '--no-verify');
+    const outdated = await run(r);
+    assert.equal(outdated.code, 0, 'a warning, not a failure');
+    assert.match(outdated.line('git hooks'), /^! git hooks: pre-commit is outdated .*hooks install/);
   });
 
   it('does not count API tokens as sign-ins', async () => {

@@ -15,10 +15,36 @@
 # dir — not the working tree, so what is checked is exactly what would be
 # committed: an unstaged fix cannot pass a staged mistake.
 #
-# Install once per clone — absolute, so the reference-transaction hook next to
-# this one also runs for a push into the repository (git runs those from .git/):
+# Install once per clone, in your own terminal:
 #
-#   git config core.hooksPath "$(git rev-parse --show-toplevel)/tools/hooks"
+#   node server/bin/almagest.mjs hooks install
+#
+# That copies this file as committed on main into <git-common-dir>/almagest/hooks/,
+# next to reference-transaction, and points core.hooksPath there. It never runs
+# from tools/hooks/: a checkout rewrites that directory, so a hook taken from
+# the working tree is whichever one the checked-out branch ships. The main
+# branch name and brain_dir are baked in at install time from main's committed
+# brain.config.yaml (MAIN_BRANCH / BRAIN_DIR below).
+#
+# The one thing it takes from the working tree is the audit: `tools/audit.mjs`
+# and the node_modules it imports. That is a deliberate choice, and sound only
+# because of what this hook is NOT relied on for:
+#
+#   - It gates commits on the branch it runs on. An audit the branch weakened
+#     only lets that branch's own commits through; the branch still reaches
+#     main by review, and the service re-audits with its own code before it
+#     merges (server/src/governance/merge.mjs).
+#   - It does not protect main. reference-transaction does, and that hook runs
+#     no Node and reads nothing from the working tree.
+#   - Taking the audit from main instead would not remove the branch's code
+#     either: the audit imports node_modules/, which is gitignored, and git
+#     overwrites ignored files on checkout, so a branch can ship that too.
+#
+# What remains: code a branch ships runs here, as it does under `npm run check`
+# or `node tools/audit.mjs`. Code that clears the agent variables before
+# calling git, or writes .git/ itself, gets past every hook — only separating
+# the agent from the repository at the OS level closes that (docs/v2/security.md,
+# Known limit 1).
 #
 # `git commit --no-verify` skips it, as it skips every git hook. That is git's
 # own escape hatch, it is visible in the history of whoever uses it, and it is
@@ -32,12 +58,11 @@ export LC_ALL=C
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-# brain_dir and the main branch name, read from brain.config.yaml without a
-# YAML parser: both are plain top-level / one-level scalars.
-BRAIN="$(awk -F: '/^brain_dir:/ { v=$2; gsub(/[ "\047]/, "", v); print v; exit }' brain.config.yaml 2>/dev/null || true)"
-BRAIN="${BRAIN:-brain}"
-MAIN="$(awk '/^service:/ { s=1; next } s && /^[^ #]/ { s=0 } s && /^ +main:/ { v=$2; gsub(/["\047]/, "", v); print v; exit }' brain.config.yaml 2>/dev/null || true)"
-MAIN="${MAIN:-main}"
+# Baked in by `almagest hooks install` from main's committed brain.config.yaml.
+MAIN_BRANCH="main"
+BRAIN_DIR="brain"
+MAIN="$MAIN_BRANCH"
+BRAIN="$BRAIN_DIR"
 
 BRANCH="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
 STAGED="$(git diff --cached --name-only --diff-filter=ACDMRT)"

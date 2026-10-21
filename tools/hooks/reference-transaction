@@ -27,15 +27,24 @@
 # .git/refs/heads/main itself — see "Residual risk" in docs/v2/ingest.md. Only
 # separating the agent from the repository at the OS level closes that.
 #
-# The branch name and brain_dir are read from brain.config.yaml in the working
-# tree AND as committed on HEAD and on both sides of the update, so editing the
-# working-tree config does not unprotect main.
+# Install once per clone, in your own terminal (git 2.28+ runs this hook):
 #
-# Install once per clone (git 2.28+ runs this hook). Use the absolute path: git
-# runs the hooks of a push into this repository (`git push . x:main`) from
-# .git/, where a relative `tools/hooks` names nothing and this hook is skipped.
+#   node server/bin/almagest.mjs hooks install
 #
-#   git config core.hooksPath "$(git rev-parse --show-toplevel)/tools/hooks"
+# That copies this file AS COMMITTED ON MAIN into <git-common-dir>/almagest/hooks/
+# and points core.hooksPath there by absolute path, so a push into this
+# repository (`git push . x:main`, whose hooks git runs from .git/) is seen too.
+# It never runs from tools/hooks/: a checkout rewrites that directory, and a
+# hook that any branch can replace protects nothing.
+#
+# The installed copy reads nothing a branch controls. The main branch name and
+# brain_dir are baked in at install time from main's committed
+# brain.config.yaml (the MAIN_BRANCH and BRAIN_DIR lines below; `main` is
+# always protected as well), and the agent-variable list is this file's own.
+# Besides the baked brain_dir it compares the brain_dir that each side of the
+# update commits to — that can only add directories to check, never remove
+# one. When main's tools/hooks/ or brain_dir changes, `almagest doctor` reports
+# the installed hook outdated until the install is run again.
 #
 # Dependencies: bash, git, awk, find.
 
@@ -45,6 +54,10 @@ export GIT_NO_REPLACE_OBJECTS=1   # compare the real trees, not `git replace` st
 
 INPUT="$(cat)"
 [ "${1:-}" = prepared ] || exit 0
+
+# Baked in by `almagest hooks install` from main's committed brain.config.yaml.
+MAIN_BRANCH="main"
+BRAIN_DIR="brain"
 
 # Keep in step with AGENT_ENV_VARS in tools/lib/git-hooks.mjs.
 AGENT_VARS="CLAUDECODE CLAUDE_CODE_ENTRYPOINT CODEX_SANDBOX CODEX_SANDBOX_NETWORK_DISABLED CODEX_MANAGED_BY_NPM CODEX_THREAD_ID GEMINI_CLI CURSOR_AGENT OPENCODE AI_AGENT ALMAGEST_RUNNER ALMAGEST_AGENT"
@@ -58,16 +71,10 @@ done
 case "$INPUT" in *" refs/heads/"*) ;; *) exit 0 ;; esac
 
 ZERO="0000000000000000000000000000000000000000"
-cfg_main()  { awk '/^service:/ { s=1; next } s && /^[^ #]/ { s=0 } s && /^ +main:/ { v=$2; gsub(/["\047]/, "", v); print v; exit }'; }
 cfg_brain() { awk -F: '/^brain_dir:/ { v=$2; gsub(/[ "\047]/, "", v); sub(/\/+$/, "", v); print v; exit }'; }
 committed() { [ -n "$1" ] && [ "$1" != "$ZERO" ] && git cat-file -p "$1:brain.config.yaml" 2>/dev/null; }
 
-TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-WT_CONFIG=""
-[ -n "$TOP" ] && [ -f "$TOP/brain.config.yaml" ] && WT_CONFIG="$(cat "$TOP/brain.config.yaml")"
-HEAD_SHA="$(git rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null || true)"
-
-MAINS="main $(printf '%s\n' "$WT_CONFIG" | cfg_main) $(committed "$HEAD_SHA" | cfg_main)"
+MAINS="main $MAIN_BRANCH"
 
 red() { printf '\033[31m%s\033[0m\n' "$*" >&2; }
 
@@ -99,7 +106,7 @@ while read -r _old NEW REF; do
     if [ "$NEW" = "$ZERO" ]; then
         WHY="it deletes $REF"
     else
-        BRAINS="brain $(printf '%s\n' "$WT_CONFIG" | cfg_brain) $(committed "$CUR" | cfg_brain) $(committed "$NEW" | cfg_brain)"
+        BRAINS="brain $BRAIN_DIR $(committed "$CUR" | cfg_brain) $(committed "$NEW" | cfg_brain)"
         for b in $BRAINS; do
             if [ "$(wiki_tree "$CUR" "$b")" != "$(wiki_tree "$NEW" "$b")" ]; then
                 WHY="it changes $b/wiki/ on ${REF#refs/heads/}"

