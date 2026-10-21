@@ -77,7 +77,9 @@ intact. Requirements 8-10 are optional and each degrades in a stated way.
    ripgrep is worth it for speed on a large brain, but nothing requires it.
 7. **Node 22+ on `PATH`** — `tools/audit.mjs` runs on it. This is a hard
    dependency, and a new one: `shasum` used to be the only tool Almagest
-   required.
+   required. The optional v2 service in `server/` needs 22.13+, because it
+   uses the built-in `node:sqlite`; `almagest doctor` checks that. The audit
+   itself needs only 22+.
 
    The trade, stated plainly. The audit needs to parse frontmatter and
    wikilinks exactly the way the site does, or it certifies pages the site then

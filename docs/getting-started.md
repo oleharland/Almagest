@@ -138,16 +138,24 @@ See [Upstream Updates](upstream-updates.md) for details.
 Steps 1–7 are the whole framework with nothing but an agent session and git. The
 v2 service adds background ingest, any MCP server as an input, a review inbox
 for people who don't read diffs, the brain as an MCP server for your chats, and
-request tracking:
+request tracking. It needs Node 22.13+ (it uses the built-in `node:sqlite`);
+the audit and the site need only Node 22+.
 
 ```bash
 npm install
 export ALMAGEST_SECRET_KEY=$(openssl rand -hex 32)
 export TOKEN=$(openssl rand -hex 16) && echo "your inbox token: $TOKEN"
+export ALMAGEST_TOKENS="me:owner:$TOKEN"
 git config core.hooksPath tools/hooks
-node server/bin/almagest.mjs doctor
-ALMAGEST_TOKENS="me:owner:$TOKEN" npm run serve      # inbox: http://127.0.0.1:4747/inbox
+node server/bin/almagest.mjs doctor                  # ✓ passed, ✗ failed, ! warning only
+npm run serve                                        # inbox: http://127.0.0.1:4747/inbox
 ```
+
+`doctor` checks the environment that `serve` relies on, so set the variables
+first. A `✗` line names what is missing and how to fix it. Ingest branches off
+your local `main`, so a clone of another branch fails the `main branch` check.
+Create the branch with `git branch main origin/main`. Neither `doctor` nor
+`serve` creates or moves `main` for you.
 
 Pick a profile (`service.profile: solo | team | enterprise`) in
 `brain.config.yaml`, then read the guide for each part in [docs/v2/](v2/spec.md)

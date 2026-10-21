@@ -4,11 +4,12 @@ import path from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import { agentActor, assertCanApprove, humanActor, parseTokens, serviceActor } from '../../src/core/auth.mjs';
-import { deepMerge, expandEnv, loadServiceConfig } from '../../src/core/config.mjs';
+import { configErrors, deepMerge, expandEnv, loadServiceConfig } from '../../src/core/config.mjs';
 import { createGit } from '../../src/core/git.mjs';
 import { createRouter } from '../../src/core/http.mjs';
 import { ingestBranch, newId, seal, unseal, validateRunReport } from '../../src/core/schemas.mjs';
-import { makeApp, makeTempRepo, rmrf } from '../helpers.mjs';
+import { computeRequirements, decisionRoles } from '../../src/governance/policy.mjs';
+import { git, makeApp, makeTempRepo, rmrf } from '../helpers.mjs';
 
 const repos = [];
 after(() => repos.forEach(rmrf));
@@ -30,6 +31,64 @@ describe('config', () => {
   it('expands ${VAR:-default} and replaces arrays when merging', () => {
     assert.equal(expandEnv('${NOPE:-fallback}/${HOME_X}', { HOME_X: 'h' }), 'fallback/h');
     assert.deepEqual(deepMerge({ a: [1, 2], b: { c: 1 } }, { a: [3], b: { d: 2 } }), { a: [3], b: { c: 1, d: 2 } });
+  });
+
+  it('adds configured approval rules to the profile rules instead of replacing them', () => {
+    const r = repo();
+    const legal = { when: { label: 'legal' }, require: { approvals: 2, distinct_teams: 2 } };
+    const ent = loadServiceConfig(r, {
+      overrides: { service: { profile: 'enterprise' }, governance: { rules: [legal] } },
+      env: { DATABASE_URL: 'x' },
+    });
+    assert.equal(ent.governance.rules.length, 3);
+    assert.deepEqual(ent.governance.rules.at(-1), legal);
+    assert.deepEqual(ent.warnings, []);
+    // The profile's hot-page and canonical_conflict rules still bite.
+    const hot = computeRequirements({ changes: [{ slug: 'a', tier: 'curated', action: 'update', hot: true, owner: 'eng' }], decisions: [], rules: ent.governance.rules });
+    assert.equal(hot.pages.a.approvals, 2);
+    assert.equal(hot.pages.a.ownerTeam, true);
+    assert.deepEqual(decisionRoles('canonical_conflict', ent.governance.rules), ['owner']);
+    // No configured rules: just the profile's.
+    assert.equal(loadServiceConfig(r, { overrides: { service: { profile: 'enterprise' } }, env: { DATABASE_URL: 'x' } }).governance.rules.length, 2);
+  });
+
+  it('drops the profile rules only on inherit_profile_rules: false, and says which', () => {
+    const r = repo();
+    const legal = { when: { label: 'legal' }, require: { approvals: 2 } };
+    const ent = loadServiceConfig(r, {
+      overrides: { service: { profile: 'enterprise' }, governance: { inherit_profile_rules: false, rules: [legal] } },
+      env: { DATABASE_URL: 'x' },
+    });
+    assert.deepEqual(ent.governance.rules, [legal]);
+    assert.equal(ent.warnings.length, 1);
+    assert.match(ent.warnings[0], /inherit_profile_rules is false — the enterprise profile's rules are dropped/);
+    assert.match(ent.warnings[0], /"hot":true/);
+    assert.match(ent.warnings[0], /canonical_conflict/);
+  });
+
+  it('refuses enterprise without OIDC', () => {
+    const r = repo();
+    const opts = { overrides: { service: { profile: 'enterprise', auth: { provider: 'token' } } }, env: { DATABASE_URL: 'x' } };
+    assert.throws(() => loadServiceConfig(r, opts), /enterprise requires service\.auth\.provider: oidc \(got "token"\)/);
+    const loose = loadServiceConfig(r, { ...opts, validate: false });
+    assert.equal(configErrors(loose).length, 1);
+    assert.doesNotThrow(() => loadServiceConfig(r, { overrides: { service: { profile: 'team', auth: { provider: 'token' } } } }));
+  });
+
+  it('warns on the singular oidc default_role', () => {
+    const c = loadServiceConfig(repo(), { overrides: { service: { auth: { oidc: { default_role: 'reviewer' } } } } });
+    assert.match(c.warnings.join('\n'), /default_role is deprecated — write default_roles: \[reviewer\]/);
+  });
+
+  it('createApp fails fast when the local main branch is missing, and logs config warnings', async () => {
+    const r = repo();
+    git(r, 'branch', '-m', 'main', 'trunk');
+    await assert.rejects(() => makeApp({ repoRoot: r }), /no local branch "main".*git branch main origin\/main/);
+    git(r, 'branch', '-m', 'trunk', 'main');
+    const app = await makeApp({ repoRoot: r, overrides: { service: { auth: { oidc: { default_role: 'viewer' } } } } });
+    try {
+      assert.ok(app.log.lines.some((l) => l.level === 'warn' && /default_role is deprecated/.test(l.warning)));
+    } finally { await app.stop(); }
   });
 
   it('maps v1 sources.remote onto connectors', () => {

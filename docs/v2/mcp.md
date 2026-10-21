@@ -115,7 +115,7 @@ service:
     #   roles_claim: realm_access.roles                 # dotted path; array or space/comma-separated string
     #   teams_claim: groups                             # filtered to owner_teams when that list is set
     #   role_map: { brain-reviewers: reviewer, brain-owners: owner }
-    #   default_role: viewer
+    #   default_roles: [viewer]
     #   jwks_uri: …                                     # optional — skips discovery
     #   clock_skew_seconds: 60
   git:

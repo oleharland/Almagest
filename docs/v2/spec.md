@@ -55,7 +55,10 @@ defaults; every individual key can still be overridden.
 
 An entrepreneur runs `solo` on a laptop or a single container. An enterprise runs
 `enterprise` in its own VPC with Postgres and SSO. Nothing in the code branches on
-the profile name — the profile only fills defaults (`core/config.mjs`).
+the profile name — the profile only fills defaults (`core/config.mjs`) — with
+one exception, marked "required" above: `enterprise` with any
+`service.auth.provider` other than `oidc` is a config error, and the service
+refuses to start (`configErrors` in `core/config.mjs`; `doctor` reports it).
 
 ## Repository layout
 
@@ -426,9 +429,10 @@ governance:
     # - kind: github-pr { repo: acme/brain, token_env: GITHUB_TOKEN }
   separation_of_duties: false      # profile default
   require_sso_for_approval: false  # enterprise: email/Slack links still demand an SSO session
+  inherit_profile_rules: true      # the profile's rules come first, these are appended; false drops them (startup warning)
   rules:                           # every matching rule adds requirements; they combine by max / union
-    - when: { hot: true }
-      require: { approvals: 1, per_page: true }
+    - when: { label: legal }
+      require: { approvals: 2, distinct_teams: 2 }
     - when: { decision: canonical_conflict }
       require: { roles: [owner] }
 
@@ -542,7 +546,9 @@ and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
 - **Proposal builder** — diff `baseSha..headSha` over `brain/wiki/`, parse both
   sides with `wiki-core`, compute claim-level changes and source excerpts, attach
   demand from `ctx.demand`, compute `required` from policy.
-- **Policy engine** — profile defaults + `governance.rules`. Built-in, not
+- **Policy engine** — the profile's rules plus `governance.rules` (appended, not
+  replaced: rules only add, so appending can never weaken the profile;
+  `inherit_profile_rules: false` is the logged opt-out). Built-in, not
   configurable: `approvals >= 1` from a human at the current `headSha`; agents
   cannot approve; every review action needs a browser session + CSRF (or a
   signed Slack / GitHub request) — bearer tokens are read-only; one person

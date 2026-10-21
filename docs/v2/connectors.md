@@ -333,7 +333,7 @@ matches.
 | `linear` | Linear's hosted MCP (`list_issues`, `get_issue`) | one issue | partial |
 | `notion` | Notion's hosted MCP (`notion-search`, `notion-fetch`) | one page | no |
 | `slack` | the reference Slack MCP server | one channel's history, a row per message | no |
-| `web-fetch` | the reference `fetch` server | one URL from `select.urls` | no |
+| `web-fetch` | the reference `fetch` server (`uvx mcp-server-fetch`, tool `fetch`) | one URL from `select.urls` (no lister), converted to markdown; no `version`, so every sync re-fetches and the snapshot's sha256 decides whether it changed | no |
 
 Overriding part of a shipped recipe needs no fork: `list:`, `fetch:` and
 `resolve:` on the connector merge over the recipe. Two common ones:

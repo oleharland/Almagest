@@ -67,7 +67,7 @@ almagest/
 
 ### The v2 service (optional — `server/`, `docs/v2/`)
 
-Everything above works with an agent session alone. `npx almagest serve` adds a long-running service around the same repo and the same rules — it holds no second copy of the knowledge:
+Everything above works with an agent session alone. `npx almagest serve` (Node 22.13+, for the built-in `node:sqlite`) adds a long-running service around the same repo and the same rules — it holds no second copy of the knowledge:
 
 1. **Background ingest** — files dropped in `brain/raw/`, scheduled connector syncs, and chat submissions queue jobs. Each job runs a headless agent in its own git worktree on an `ingest/<source-slug>-<sha7>` branch, with no git, network or MCP access; the service runs the audit and commits
 2. **Connectors** — any MCP server is an input (`brain.config.yaml` → `sources.connectors`). The service fetches, snapshots and fingerprints each item; the agent cites the committed snapshot
@@ -100,7 +100,7 @@ One grammar, frozen so it can be checked by machine:
 
 ## The audit
 
-`tools/audit.mjs` (Node 22+) checks the wiki mechanically — schema, links, citation grammar, citation targets, provenance against `manifest.yaml`, staleness. Findings have stable IDs (`CITE-002`, `LINK-001`, …) that the rule files reference. `tools/audit.mjs index` regenerates `brain/.index/`; `--check-index` verifies it is current. Exit `0` clean, `1` violations, `2` tool error. An exit `1` blocks the commit.
+`tools/audit.mjs` (Node 22+; the optional v2 service needs 22.13+) checks the wiki mechanically — schema, links, citation grammar, citation targets, provenance against `manifest.yaml`, staleness. Findings have stable IDs (`CITE-002`, `LINK-001`, …) that the rule files reference. `tools/audit.mjs index` regenerates `brain/.index/`; `--check-index` verifies it is current. Exit `0` clean, `1` violations, `2` tool error. An exit `1` blocks the commit.
 
 ## Capability tiers
 
@@ -147,4 +147,4 @@ There is no path-scoped rule loading here — this file is all you get. The rout
 
 ## Harness contract
 
-`agent/contract.md` states what a harness must provide to run Almagest at all. Requirement 5 is a reviewer who merges: the agent commits to an `ingest/<source-slug>-<sha7>` branch and `main` moves only when a human merges a reviewed diff. Unattended ingest onto a branch is supported; an unattended merge to `main` is forbidden and there is no flag for it. Requirement 7 is Node 22+ for `tools/audit.mjs`, whose exit code gates the commit.
+`agent/contract.md` states what a harness must provide to run Almagest at all. Requirement 5 is a reviewer who merges: the agent commits to an `ingest/<source-slug>-<sha7>` branch and `main` moves only when a human merges a reviewed diff. Unattended ingest onto a branch is supported; an unattended merge to `main` is forbidden and there is no flag for it. Requirement 7 is Node 22+ for `tools/audit.mjs`, whose exit code gates the commit; the optional v2 service needs 22.13+.

@@ -4,6 +4,7 @@
  * (docs/v2/spec.md → Cross-module service objects), never through imports of
  * each other's internals.
  */
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,6 +31,24 @@ export const DEFAULT_REPO_ROOT = path.resolve(HERE, '..', '..');
 export const MODULES = { telemetry, connectors, ingest, governance, mcp };
 
 /**
+ * Ingest branches off the local main, merges land on it and the MCP snapshot
+ * reads it, so a clone of another branch with no local `main` would start and
+ * then fail on every job with a bare git error. Say so up front instead. This
+ * never creates or moves the branch: which commit is main is the operator's call.
+ * @returns {string} '' when the branch exists, otherwise what is wrong and the fix
+ */
+export function mainBranchProblem(repoRoot, gitConfig = {}) {
+  const main = gitConfig.main || 'main';
+  try {
+    execFileSync('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${main}^{commit}`], { cwd: repoRoot, stdio: 'ignore' });
+    return '';
+  } catch {
+    const remote = gitConfig.remote || 'origin';
+    return `no local branch "${main}" in ${repoRoot} (service.git.main) — create it from the remote with: git branch ${main} ${remote}/${main}`;
+  }
+}
+
+/**
  * @param {object} [options]
  * @param {string} [options.repoRoot]
  * @param {string} [options.configPath]
@@ -41,6 +60,9 @@ export async function createApp(options = {}) {
   const repoRoot = path.resolve(options.repoRoot || process.env.ALMAGEST_REPO || DEFAULT_REPO_ROOT);
   const config = loadServiceConfig(repoRoot, { configPath: options.configPath, overrides: options.overrides });
   const log = options.log || createLogger();
+  for (const warning of config.warnings) log.warn('config', { warning });
+  const noMain = mainBranchProblem(repoRoot, config.service.git);
+  if (noMain) throw new Error(noMain);
 
   const ctx = { repoRoot, config, log };
   ctx.store = options.store || (await createStore(config));

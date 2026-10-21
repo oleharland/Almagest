@@ -13,9 +13,11 @@
  * milliseconds and must work when the service is not running.
  */
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-import { createApp, DEFAULT_REPO_ROOT, MODULES } from '../src/app.mjs';
-import { loadServiceConfig } from '../src/core/config.mjs';
+import { createApp, DEFAULT_REPO_ROOT, mainBranchProblem, MODULES } from '../src/app.mjs';
+import { configErrors, loadServiceConfig } from '../src/core/config.mjs';
 
 const USAGE = `Usage: almagest <command> [options]
 
@@ -51,46 +53,88 @@ function moduleCommands() {
   return all;
 }
 
-async function doctor(repoRoot, configPath) {
+/**
+ * Exported for tests; `deps` swaps the environment, the output and the `pg`
+ * import so each check can be driven both ways.
+ * @returns {Promise<number>} 0 when nothing failed (warnings do not fail)
+ */
+export async function doctor(repoRoot, configPath, deps = {}) {
+  const { env = process.env, out = console.log, importPg = () => import('pg') } = deps;
   let ok = true;
-  const check = (label, fn) => {
-    try { console.log(`✓ ${label}: ${fn()}`); }
-    catch (err) { ok = false; console.log(`✗ ${label}: ${err.message}`); }
+  const check = async (label, fn) => {
+    try { out(`✓ ${label}: ${await fn()}`); }
+    catch (err) { ok = false; out(`✗ ${label}: ${err.message}`); }
   };
-  check('node', () => {
+  /** Like check, but a problem is printed as a warning and does not fail the run. */
+  const advise = (label, fn) => {
+    try { out(`✓ ${label}: ${fn()}`); }
+    catch (err) { out(`! ${label}: ${err.message}`); }
+  };
+  await check('node', () => {
     const [maj, min] = process.versions.node.split('.').map(Number);
     if (maj < 22 || (maj === 22 && min < 13)) throw new Error(`${process.versions.node} — need 22.13+ for node:sqlite`);
     return process.versions.node;
   });
-  check('git', () => {
+  await check('git', () => {
     const v = execFileSync('git', ['--version'], { encoding: 'utf-8' }).trim();
     const [maj, min] = (v.match(/(\d+)\.(\d+)/) || []).slice(1).map(Number);
     if (maj < 2 || (maj === 2 && min < 38)) throw new Error(`${v} — need 2.38+ for merge-tree --write-tree`);
     return v;
   });
   let config = null;
-  check('config', () => {
-    config = loadServiceConfig(repoRoot, { configPath });
+  await check('config', () => {
+    // validate: false so a profile/auth mismatch is reported below as its own
+    // line instead of hiding every check that needs the config.
+    config = loadServiceConfig(repoRoot, { configPath, env, validate: false });
     return `profile ${config.profile}, store ${config.service.store.driver}, ${config.sources.connectors.length} connector(s)`;
   });
+  for (const warning of config?.warnings || []) out(`! config: ${warning}`);
+  await check('main branch', () => {
+    const problem = mainBranchProblem(repoRoot, config?.service.git);
+    if (problem) throw new Error(problem);
+    return config?.service.git.main || 'main';
+  });
+  advise('git hooks', () => {
+    // The pre-commit audit gate only runs when git is pointed at tools/hooks.
+    let hooksPath = '';
+    try { hooksPath = execFileSync('git', ['config', 'core.hooksPath'], { cwd: repoRoot, encoding: 'utf-8' }).trim(); }
+    catch { /* unset: git config exits 1 */ }
+    if (hooksPath !== 'tools/hooks') {
+      throw new Error(`core.hooksPath is ${hooksPath ? `"${hooksPath}"` : 'not set'} — the audit hooks will not run; fix: git config core.hooksPath tools/hooks`);
+    }
+    return 'tools/hooks';
+  });
   if (config) {
+    await check('profile', () => {
+      const errors = configErrors(config);
+      if (errors.length) throw new Error(errors.join('; '));
+      return `${config.profile}, auth ${config.service.auth.provider}`;
+    });
+    await check('store', async () => {
+      const { driver } = config.service.store;
+      if (driver !== 'postgres') return driver;
+      try { await importPg(); }
+      catch { throw new Error('store.driver: postgres needs the optional `pg` dependency, which cannot be imported — run `npm install` in server/'); }
+      if (!config.service.store.url) throw new Error('store.driver: postgres needs service.store.url (or DATABASE_URL)');
+      return 'postgres, pg installed';
+    });
     // What `serve` needs to be usable, not just to start: without these it
     // boots, and then nobody can sign in or no connector token can be stored.
-    check('secret key', () => {
-      if (!process.env.ALMAGEST_SECRET_KEY) throw new Error('ALMAGEST_SECRET_KEY is not set — sessions, links and connector tokens need it');
+    await check('secret key', () => {
+      if (!env.ALMAGEST_SECRET_KEY) throw new Error('ALMAGEST_SECRET_KEY is not set — sessions, links and connector tokens need it');
       return 'set';
     });
-    check('sign-in', () => {
+    await check('sign-in', () => {
       const { provider, tokens_env: tokensEnv = 'ALMAGEST_TOKENS', oidc = {} } = config.service.auth;
       if (provider === 'oidc') {
         if (!oidc.issuer || !oidc.client_id) throw new Error('service.auth.oidc needs issuer and client_id');
         return `oidc ${oidc.issuer}`;
       }
-      const n = String(process.env[tokensEnv] || '').split(';').filter((e) => e.trim()).length;
+      const n = String(env[tokensEnv] || '').split(';').filter((e) => e.trim()).length;
       if (!n) throw new Error(`${tokensEnv} is empty — nobody can sign in to the inbox`);
       return `${n} token(s) in ${tokensEnv}`;
     });
-    check('ingest driver', () => {
+    await check('ingest driver', () => {
       const driver = config.ingest.driver;
       if (driver !== 'claude-code') return driver;
       const cli = config.ingest.cli || 'claude';
@@ -142,7 +186,12 @@ async function main() {
   return cmd.run(rest, env);
 }
 
-main().then(
-  (code) => { if (typeof code === 'number') process.exitCode = code; },
-  (err) => { process.stderr.write(`almagest: ${err.stack || err.message}\n`); process.exitCode = 2; },
-);
+// Run only as the CLI (directly or through the npm bin symlink), not when a
+// test imports doctor().
+const invoked = (() => { try { return fs.realpathSync(process.argv[1] || ''); } catch { return ''; } })();
+if (invoked === fileURLToPath(import.meta.url)) {
+  main().then(
+    (code) => { if (typeof code === 'number') process.exitCode = code; },
+    (err) => { process.stderr.write(`almagest: ${err.stack || err.message}\n`); process.exitCode = 2; },
+  );
+}

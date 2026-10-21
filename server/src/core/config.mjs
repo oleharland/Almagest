@@ -36,6 +36,7 @@ const BASE = {
     channels: [{ kind: 'web' }, { kind: 'mcp' }],
     separation_of_duties: false,
     require_sso_for_approval: false,
+    inherit_profile_rules: true,
     rules: [],
   },
   telemetry: {
@@ -81,7 +82,11 @@ function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
-/** Deep merge for config objects. Arrays replace, they do not concatenate — a rules list is a whole. */
+/**
+ * Deep merge for config objects. Arrays replace, they do not concatenate.
+ * `governance.rules` is the one exception, and loadServiceConfig handles it
+ * after the merge: see effectiveRules.
+ */
 export function deepMerge(...layers) {
   const out = {};
   for (const layer of layers) {
@@ -128,15 +133,53 @@ function remoteAsConnectors(remote) {
   }));
 }
 
+function describeRule(rule) {
+  return `when ${JSON.stringify(rule.when || {})} require ${JSON.stringify(rule.require || {})}`;
+}
+
+/**
+ * The profile's rules plus the configured ones. Rules only ever add — they
+ * combine by max and union (governance/policy.mjs) — so appending can never
+ * weaken the profile, while replacing silently would: an enterprise that adds
+ * one `label: legal` rule would otherwise lose the hot-page and
+ * canonical_conflict rules. `inherit_profile_rules: false` is the explicit way
+ * to drop them, and it is announced in `warnings`.
+ */
+function effectiveRules(profile, configured, merged, warnings) {
+  const own = configured == null ? [] : merged.rules;   // a bare `rules:` in YAML is null
+  if (!Array.isArray(own)) return own;   // governance/policy.mjs rejects it with a message
+  const fromProfile = structuredClone(PROFILE_DEFAULTS[profile].governance?.rules || []);
+  if (merged.inherit_profile_rules !== false) return [...fromProfile, ...own];
+  if (fromProfile.length) {
+    warnings.push(`governance.inherit_profile_rules is false — the ${profile} profile's rules are dropped: ${fromProfile.map(describeRule).join('; ')}`);
+  }
+  return own;
+}
+
+/**
+ * Settings that contradict what the profile promises. The spec says
+ * enterprise *requires* OIDC, not that it defaults to it.
+ * @returns {string[]}
+ */
+export function configErrors(config) {
+  const errors = [];
+  const provider = config.service.auth?.provider;
+  if (config.profile === 'enterprise' && provider !== 'oidc') {
+    errors.push(`service.profile: enterprise requires service.auth.provider: oidc (got "${provider}") — set up OIDC, or use profile team`);
+  }
+  return errors;
+}
+
 /**
  * @param {string} repoRoot
  * @param {object} [options]
  * @param {string} [options.configPath]
  * @param {object} [options.overrides]  merged last — tests and CLI flags
  * @param {object} [options.env]
+ * @param {boolean} [options.validate]  false: return a config that fails configErrors() instead of throwing (doctor)
  */
 export function loadServiceConfig(repoRoot, options = {}) {
-  const { configPath, overrides = {}, env = process.env } = options;
+  const { configPath, overrides = {}, env = process.env, validate = true } = options;
   const v1 = loadV1Config(repoRoot, configPath);
   const raw = v1.raw;
 
@@ -155,6 +198,12 @@ export function loadServiceConfig(repoRoot, options = {}) {
     env,
   );
   merged.service.profile = profile;
+  const warnings = [];
+  merged.governance.rules = effectiveRules(profile, overrides.governance?.rules ?? raw.governance?.rules, merged.governance, warnings);
+  if (merged.service.auth?.oidc?.default_role !== undefined) {
+    // auth-oidc.mjs still reads the singular; the plural is the documented key.
+    warnings.push(`service.auth.oidc.default_role is deprecated — write default_roles: [${merged.service.auth.oidc.default_role}]`);
+  }
   // Container platforms hand the listen address over in the environment (PORT
   // on Fly, Railway, Cloud Run); it wins over the committed config.
   if (env.ALMAGEST_HTTP_HOST) merged.service.http.host = env.ALMAGEST_HTTP_HOST;
@@ -173,7 +222,7 @@ export function loadServiceConfig(repoRoot, options = {}) {
 
   const resolve = (p) => (p ? path.resolve(repoRoot, p) : '');
 
-  return {
+  const config = {
     repoRoot,
     v1,
     profile,
@@ -192,7 +241,12 @@ export function loadServiceConfig(repoRoot, options = {}) {
       demand: resolve('.almagest/demand.tsv'),
       mcpJson: resolve('.mcp.json'),
     },
+    /** Startup notices, logged by app.mjs and printed by doctor. */
+    warnings,
   };
+  const errors = validate ? configErrors(config) : [];
+  if (errors.length) throw new Error(errors.join('\n'));
+  return config;
 }
 
 /** The model a capability tier maps to on the configured harness, or '' when unmapped. */
