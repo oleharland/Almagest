@@ -559,7 +559,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
    *
    * Any refusal leaves main where it was and marks the proposal
    * `merged_unaccepted` with the reason (`merge.reason`: policy · head ·
-   * paths · audit · shape · checkout · busy · error), logged as a policy
+   * paths · content · audit · shape · checkout · busy · error), logged as a policy
    * violation — never as a normal merge. A person reconciles it by hand.
    */
   async function recordExternalMerge(prpId, actor, { sha = '', headSha = '', channel = 'github-pr', fetch = null } = {}) {
