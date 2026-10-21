@@ -502,15 +502,29 @@ to accept a commit, not an order to move main. In this order:
    never the remote's tip.
 3. Its parents must be exactly **(local main, reviewed head)**. A squash or
    rebase merge has no such parents and cannot be checked.
-4. It must pass the **same path check and audit re-run** as an inbox merge
+4. It must change only the knowledge base's writable files (the path check).
+5. **Its content must equal the merge of the reviewed head**: the commit's
+   tree must be exactly what `git merge-tree --write-tree <local main>
+   <reviewed head>` produces. Correct parents say nothing about content — a
+   hand-made merge commit can carry any edit — so a merge commit that changes,
+   adds or removes anything beyond that merge is refused (reason `content`,
+   naming the files), and so is a head that does not merge cleanly onto main,
+   since how GitHub settled the clash was never reviewed. GitHub's merge
+   button writes no log row and resolves no bookkeeping, so a plain merge of
+   a clean PR passes. The one tolerance is the derived index
+   (`brain/.index/`): its files may differ from the plain merge, because step
+   6 rebuilds them from the commit's pages and refuses the commit unless they
+   are exactly current. Index files may only be changed there, never added or
+   removed.
+6. It must pass the **same path check and audit re-run** as an inbox merge
    (`merge.mjs` → `verifyCandidate`), unchanged — a stale derived index fails
    rather than being rebuilt.
-5. Local main moves to it by compare-and-swap; the proposal is `merged`.
+7. Local main moves to it by compare-and-swap; the proposal is `merged`.
 
 If any step fails, local main does not move. The proposal becomes
 **`merged_unaccepted`** — "Merged on GitHub, not accepted here" in the inbox —
 with `merge.accepted: false` and `merge.reason` (`policy` · `head` · `paths` ·
-`audit` · `shape` · `checkout` · `busy` · `error`) plus a message, and a
+`content` · `audit` · `shape` · `checkout` · `busy` · `error`) plus a message, and a
 **policy violation** in the activity log. An administrator reconciles it by
 hand (bring the change in through a new proposal, or revert it on GitHub).
 GitHub's **branch protection** is defence in depth: turn it on and mirror your

@@ -48,7 +48,12 @@ export class WorktreeTamperedError extends Error {
  */
 const KEEP_GIT_ENV = new Set(['GIT_SSH', 'GIT_SSH_COMMAND', 'GIT_SSH_VARIANT', 'GIT_ASKPASS', 'GIT_SSL_CAINFO', 'GIT_SSL_CAPATH', 'GIT_PROXY_COMMAND', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM']);
 
-function childEnv(extra) {
+/**
+ * process.env for a git child, without the inherited GIT_* that would
+ * redirect it; every other variable (agent markers included) is kept. Also
+ * used by modules that spawn git themselves (governance/merge.mjs).
+ */
+export function childEnv(extra) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (!k.startsWith('GIT_') || KEEP_GIT_ENV.has(k)) env[k] = v;
