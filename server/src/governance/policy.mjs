@@ -24,6 +24,9 @@
  *   - people are counted by who they are (personKey: email when known, else
  *     id), not by how many ids they appear under
  *   - an approval names the version (headSha) the reviewer looked at
+ *   - an approval counts with the approver's roles as they are now, never
+ *     more than they had when they gave it (capRoles) — demoting someone
+ *     takes their pending approvals' weight away
  *   - a proposal that changes anything outside the knowledge base's writable
  *     files (paths.mjs) can never be approved
  */
@@ -302,6 +305,18 @@ export const STATUS_WORDS = {
 
 // ── evaluation ───────────────────────────────────────────────────────────────
 
+/**
+ * The roles an approval counts with: what the approver had when they gave it,
+ * cut down to what they have now. Never more than either — a promotion after
+ * the fact does not upgrade an old approval, a demotion voids it.
+ */
+export function capRoles(stored = [], current = []) {
+  const now = new Set(current);
+  if (now.has('admin')) return [...stored];
+  if (stored.includes('admin')) return [...current];
+  return stored.filter((r) => now.has(r));
+}
+
 function isCountable(a, headSha, submitterKeys, separationOfDuties, keysOfApproval) {
   if (a.headSha !== headSha) return false;                         // pinned to the diff they saw
   if (a.kind !== 'human') return false;                            // belt and braces: never an agent
@@ -382,18 +397,22 @@ function gaps(req, who, { forPage = null } = {}) {
  * @param {object} input
  * @param {object} input.proposal    the Proposal (headSha, status, audit, changes, approvals, required)
  * @param {Array}  [input.decisions] its Decision records
- * @param {object} [input.options]   { separationOfDuties }
+ * @param {object} [input.options]   { separationOfDuties, keyring, submitterKeys, allowed,
+ *                                     currentRoles: Map actorId → roles now (identity.mjs) }
  * @returns {{ ready: boolean, blockers: Array<{code,message}>, missing: Array<{code,message,slug?}>,
  *             approvers: Array, explanation: string }}
  */
 export function evaluate({ proposal, decisions = [], options = {} }) {
-  const { separationOfDuties = false, keyring = null, submitterKeys = null, allowed = null } = options;
+  const { separationOfDuties = false, keyring = null, submitterKeys = null, allowed = null, currentRoles = null } = options;
   const required = proposal.required || computeRequirements({ changes: proposal.changes });
   const subKeys = submitterKeysOf(proposal, submitterKeys);
   // One person is one approver, whichever ids and channels they used.
   const keysOfApproval = (a) => keyring?.get(a.actorId)?.keys || keysFor(a.actorId, a.email);
   const personOf = (a) => keyring?.get(a.actorId)?.personKey || (a.email ? `email:${String(a.email).toLowerCase()}` : `id:${a.actorId}`);
+  // Roles as they stand now: an approval from someone since demoted stops counting.
+  const rolesNow = (a) => (currentRoles?.has(a.actorId) ? capRoles(a.roles || [], currentRoles.get(a.actorId)) : a.roles || []);
   const counted = (proposal.approvals || [])
+    .map((a) => ({ ...a, roles: rolesNow(a) }))
     .filter((a) => isCountable(a, proposal.headSha, subKeys, separationOfDuties, keysOfApproval))
     .map((a) => ({ ...a, personKey: personOf(a) }));
   const active = (proposal.changes || []).filter((c) => c.pageStatus !== 'rejected');

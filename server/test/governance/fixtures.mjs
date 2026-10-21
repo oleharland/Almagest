@@ -15,10 +15,23 @@ export const repos = [];
 export function repo(opts) { const r = makeTempRepo(opts); repos.push(r); return r; }
 export function cleanup() { repos.splice(0).forEach(rmrf); }
 
-/** A person as a signed-in browser session would present them (trust.mjs). */
-export function sess(actor) {
-  return vouch({ ...actor, session: { sid: `test-${actor.id}` } }, 'session');
+/**
+ * A person as a signed-in browser session would present them (trust.mjs),
+ * roles just confirmed. `rolesAt` sets when they were (service.mjs refuses
+ * review actions on old ones).
+ */
+export function sess(actor, { rolesAt = new Date().toISOString() } = {}) {
+  return vouch({ ...actor, session: { sid: `test-${actor.id}`, rolesAt } }, 'session');
 }
+
+/**
+ * The people above, as ALMAGEST_TOKENS lists them under token sign-in. The
+ * service counts an approval with the approver's roles as listed there now,
+ * so tests that approve as them need them listed. A test file that sets its
+ * own ALMAGEST_TOKENS replaces this.
+ */
+export const PEOPLE_TOKENS = 'ada:owner:ada-api-0;bob:reviewer:bob-api-0;vic:viewer:vic-api-0';
+process.env.ALMAGEST_TOKENS ??= PEOPLE_TOKENS;
 
 export const ada = sess(humanActor({ id: 'usr_ada', display: 'Ada', email: 'ada@acme.test', roles: ['owner'], teams: ['engineering'] }));
 export const bob = sess(humanActor({ id: 'usr_bob', display: 'Bob', email: 'bob@acme.test', roles: ['reviewer'], teams: ['product'] }));
@@ -162,11 +175,16 @@ Delta relies on the Alpha overview. [source: alpha-pdf, p.1]`,
 
 export { git };
 
-/** fetch with a cookie jar and no redirect following. */
+/**
+ * fetch with a cookie jar and no redirect following. POSTs carry
+ * `Origin: <base>` like a browser's same-origin form; pass `origin: null` in
+ * `headers` to send none, as a script would.
+ */
 export function client(base) {
   const jar = new Map();
   async function req(method, p, { form, json, headers = {} } = {}) {
-    const h = { ...headers };
+    const h = { ...(method === 'POST' ? { origin: new URL(base).origin } : {}), ...headers };
+    for (const k of Object.keys(h)) if (h[k] == null) delete h[k];
     if (jar.size) h.cookie = [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
     let body;
     if (form) { h['content-type'] = 'application/x-www-form-urlencoded'; body = new URLSearchParams(form).toString(); }

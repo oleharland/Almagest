@@ -69,8 +69,11 @@ an OIDC access token and the built-in OAuth tokens let a client read the
 brain, submit sources and *ask* for an approval. The approval itself happens
 only in the person's signed-in browser (or a verified Slack / GitHub path):
 the service refuses every review action that arrives with a bearer token,
-whoever owns it. See [governance.md](governance.md) → *What cannot be
-configured away*.
+whoever owns it. Nor can a token be turned into a browser session: the inbox
+sign-in takes a separate sign-in secret (`ALMAGEST_LOGINS`) or a one-time
+`almagest login` link, and refuses API tokens. So the token in a chat's MCP
+config is no way into the inbox. See [governance.md](governance.md) →
+*Sign-in* and *What cannot be configured away*.
 
 ## Configuration
 
@@ -108,7 +111,8 @@ service:
                                             # WWW-Authenticate, the resource metadata and the OAuth issuer
   auth:
     provider: token                         # token | oidc
-    tokens_env: ALMAGEST_TOKENS             # "ada:owner:<secret>;sam:viewer:<secret>"
+    tokens_env: ALMAGEST_TOKENS             # API tokens: "ada:owner:<secret>;sam:viewer:<secret>"
+    logins_env: ALMAGEST_LOGINS             # inbox sign-in only, never a bearer: "ada:<secret>"
     # oidc:
     #   issuer: https://login.acme.com/realms/brain     # exact `iss`; discovery at <issuer>/.well-known/openid-configuration
     #   audience: almagest                              # required `aud` (defaults to client_id)
@@ -209,9 +213,10 @@ the URL, exactly as for claude.ai below.
 2. **Settings → Connectors → Add custom connector.** Name: `Almagest`. URL:
    `https://brain.example.com/mcp`.
 3. Click **Connect**. claude.ai discovers the OAuth server, registers itself,
-   and opens the consent page. Paste your Almagest token (from
-   `ALMAGEST_TOKENS`) and allow the connection. This only connects the chat —
-   it can then ask for approvals, never give them.
+   and opens the consent page. Paste your Almagest API token (from
+   `ALMAGEST_TOKENS`, not your inbox sign-in secret) and allow the
+   connection. This only connects the chat. It can then ask for approvals but
+   never give them, and the token cannot sign in to the inbox.
 4. Under `oidc`, the same flow lands on your IdP's login instead. If your IdP
    does not allow dynamic client registration, create a client for claude.ai
    (redirect URI `https://claude.ai/api/mcp/auth_callback`) and enter its id

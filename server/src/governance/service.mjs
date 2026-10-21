@@ -13,12 +13,15 @@
  * Defence in depth: every review action also checks HOW the actor got here
  * (trust.mjs → assertMayAct). Only a signed-in browser session, or the
  * verified Slack / GitHub paths, may act — never a bearer token, whatever
- * HTTP route or in-process caller passed it in.
+ * HTTP route or in-process caller passed it in. A browser session must also
+ * have had its roles confirmed recently (`governance.session_roles_max_age_minutes`,
+ * default 60): one whose roles were last checked earlier is sent to sign in
+ * again rather than acting on roles the person may no longer have.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { assertCanApprove, ForbiddenError, hasRole, serviceActor } from '../core/auth.mjs';
+import { assertCanApprove, AuthError, ForbiddenError, hasRole, parseTokens, serviceActor } from '../core/auth.mjs';
 import { gitIdentity } from '../core/git.mjs';
 import { HttpError } from '../core/http.mjs';
 import { newId, nowIso } from '../core/schemas.mjs';
@@ -28,7 +31,7 @@ import { appendChallenge, challengeFrom, challengeRow } from './challenges.mjs';
 import { normalizeAudit, runAudit } from './merge.mjs';
 import { listChanges, outsideFiles } from './paths.mjs';
 import * as policy from './policy.mjs';
-import { assertMayAct } from './trust.mjs';
+import { assertMayAct, vouchedAs } from './trust.mjs';
 import { describe, titleFor } from './summary.mjs';
 
 /** canonical_conflict has exactly one non-dismiss effect (spec → Decision). Enforced by construction. */
@@ -41,6 +44,8 @@ const NOOP_EFFECT = /^\s*(none|no-?op|nothing)?\s*$/i;
 
 /** Automatic "redo it on top of main" revisions per proposal before a person must step in. */
 export const MAX_CONFLICT_REVISES = 2;
+
+export const DEFAULT_SESSION_ROLES_MAX_AGE_MINUTES = 60;
 
 function submittersFromJob(job) {
   const ids = [job.requestedBy, job.onBehalfOf?.id ?? job.onBehalfOf, job.requestedFor, job.source?.submittedBy];
@@ -61,6 +66,9 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
   const rules = policy.validateRules(gov.rules || []);
   const options = { separationOfDuties: Boolean(gov.separation_of_duties) };
   const requireSso = Boolean(gov.require_sso_for_approval);
+  const rolesMaxAgeMs = Number(gov.session_roles_max_age_minutes ?? DEFAULT_SESSION_ROLES_MAX_AGE_MINUTES) * 60 * 1000;
+  const mode = config.service.auth.provider;
+  const tokens = () => parseTokens(process.env[config.service.auth.tokens_env || 'ALMAGEST_TOKENS'] || '');
   const wikiDir = `${config.v1.brainDir}/wiki`;
   const svc = serviceActor('governance');
 
@@ -91,7 +99,31 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     const keyring = await identities.keyring([...approvals.map((a) => a.actorId), ...subs, actor?.id], hints);
     const submitterKeys = new Set(subs.flatMap((id) => [...(keyring.get(id)?.keys || [`id:${id}`])]));
     const actorKeys = actor ? keyring.get(actor.id)?.keys : null;
-    return { ...options, keyring, submitterKeys, actorKeys, allowed };
+    const currentRoles = await identities.currentRoles(approvals.map((a) => a.actorId), { mode, tokens: mode === 'oidc' ? [] : tokens() });
+    return { ...options, keyring, submitterKeys, actorKeys, allowed, currentRoles };
+  }
+
+  /**
+   * A browser session acts on roles confirmed within the last
+   * session_roles_max_age_minutes. Sessions re-checked on every request
+   * (token sign-in) always pass; a single sign-on session past the limit gets
+   * `code: 'reauth'`, which the inbox turns into "sign in again".
+   */
+  function assertRolesFresh(actor) {
+    if (vouchedAs(actor) !== 'session') return;
+    const at = Date.parse(actor.session?.rolesAt || '');
+    if (Date.now() - at <= rolesMaxAgeMs) return;
+    const mins = Math.round(rolesMaxAgeMs / 60000);
+    const err = new AuthError(`Please sign in again. Approving or turning something down needs your roles checked within the last ${mins >= 120 ? `${Math.round(mins / 60)} hours` : `${mins} minutes`}, and this sign-in is older than that.`);
+    err.code = 'reauth';
+    throw err;
+  }
+
+  /** The first lines of every review action: who, how they got here, and how recently their roles were checked. */
+  function assertReviewer(actor, channel) {
+    assertCanApprove(actor);
+    assertMayAct(actor, channel);
+    assertRolesFresh(actor);
   }
 
   async function load(id) {
@@ -338,8 +370,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
   // ── actions ────────────────────────────────────────────────────────────────
 
   async function approve(prpId, actor, { scope = 'all', channel = 'web', headSha } = {}) {
-    assertCanApprove(actor);
-    assertMayAct(actor, channel);
+    assertReviewer(actor, channel);
     return lock(async () => {
       let p = await load(prpId);
       policy.assertMayApprove(p, actor, { ...(await policyOptions(p, actor)), requireSso, scope, channel, headSha, requireHead: true });
@@ -354,8 +385,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
   }
 
   async function retryMerge(prpId, actor, { channel = 'web' } = {}) {
-    assertCanApprove(actor);
-    assertMayAct(actor, channel);
+    assertReviewer(actor, channel);
     return lock(async () => {
       const p = await load(prpId);
       if (!policy.APPROVABLE.includes(p.status)) throw new HttpError(409, `This proposal is ${policy.STATUS_WORDS[p.status] || p.status}.`);
@@ -365,8 +395,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
   }
 
   async function reject(prpId, actor, { reason = '', channel = 'web' } = {}) {
-    assertCanApprove(actor);
-    assertMayAct(actor, channel);
+    assertReviewer(actor, channel);
     return lock(async () => {
       const p = await load(prpId);
       assertLive(p);
@@ -382,8 +411,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
   }
 
   async function rejectPage(prpId, slug, actor, { channel = 'web', reason = '' } = {}) {
-    assertCanApprove(actor);
-    assertMayAct(actor, channel);
+    assertReviewer(actor, channel);
     return lock(async () => {
       const p = await load(prpId);
       assertLive(p);
@@ -406,8 +434,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
   }
 
   async function requestChanges(prpId, actor, { feedback = '', channel = 'web' } = {}) {
-    assertCanApprove(actor);
-    assertMayAct(actor, channel);
+    assertReviewer(actor, channel);
     const text = String(feedback || '').trim().slice(0, 5000);
     if (!text) throw new HttpError(400, 'Say what should change, so the agent knows what to do.');
     return lock(async () => {
@@ -450,8 +477,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
   }
 
   async function resolveDecision(decId, actor, { optionId, note = '', channel = 'web', headSha } = {}) {
-    assertCanApprove(actor);
-    assertMayAct(actor, channel);
+    assertReviewer(actor, channel);
     return lock(async () => {
       const d = await store.decisions.get(decId);
       if (!d) throw new NotFoundError('decision', decId);

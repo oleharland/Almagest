@@ -10,13 +10,14 @@
  *   commands    → CLI subcommands
  */
 import { parseTokens } from '../core/auth.mjs';
+import { loadServiceConfig } from '../core/config.mjs';
 import { createChannels } from './channels/index.mjs';
 import { createConfirmations } from './confirmations.mjs';
-import { createIdentities } from './identity.mjs';
+import { createIdentities, DEFAULT_CHANNEL_ROLES_MAX_AGE_HOURS } from './identity.mjs';
 import { createMerger, createMutex } from './merge.mjs';
 import { writableMatcher } from './paths.mjs';
 import { createService } from './service.mjs';
-import { createSessions } from './sessions.mjs';
+import { createSessions, LOGIN_LINK_MINUTES, loginLink } from './sessions.mjs';
 import { secretKey } from './signing.mjs';
 import { describe } from './summary.mjs';
 
@@ -33,7 +34,10 @@ export async function create(ctx) {
     lock: createMutex(),
   });
 
-  const identities = createIdentities({ store: ctx.store, log });
+  const identities = createIdentities({
+    store: ctx.store, log,
+    rolesMaxAgeMs: Number(config.governance.channel_roles_max_age_hours ?? DEFAULT_CHANNEL_ROLES_MAX_AGE_HOURS) * 3600 * 1000,
+  });
   const sessions = createSessions(ctx, { secret, identities, ttlHours: Number(config.service.auth.session_hours || 12) });
   ctx.auth.use(sessions.provider);
   sessions.routes(ctx.http);
@@ -69,6 +73,27 @@ export async function create(ctx) {
 }
 
 export const commands = {
+  login: {
+    summary: 'Print a one-time inbox sign-in link: login [name] [--next <path>] [--minutes 10]',
+    needsApp: false,
+    async run(argv, { repoRoot, configPath }) {
+      const args = { name: '', next: '/inbox', minutes: LOGIN_LINK_MINUTES };
+      for (let i = 0; i < argv.length; i++) {
+        if (argv[i] === '--next') args.next = argv[++i];
+        else if (argv[i] === '--minutes') args.minutes = argv[++i];
+        else if (!args.name) args.name = argv[i];
+      }
+      let out;
+      try {
+        out = loginLink(loadServiceConfig(repoRoot, { configPath }), args);
+      } catch (err) {
+        process.stderr.write(`almagest login: ${err.message}\n`);
+        return 1;
+      }
+      process.stdout.write(`Sign-in link for ${out.actor.display}. It works once, until ${out.expiresAt}:\n${out.url}\n`);
+      return 0;
+    },
+  },
   proposals: {
     summary: 'List proposals waiting for review',
     needsApp: true,

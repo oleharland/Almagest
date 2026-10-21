@@ -24,10 +24,11 @@ const FIXTURE_INDEX = fs.readFileSync(path.join(FIXTURES, 'clean/brain/index.md'
 
 const saved = {};
 const apps = [];
-before(() => { saved.t = process.env.ALMAGEST_TOKENS; process.env.ALMAGEST_TOKENS = 'ada:owner:a-1'; process.env.ALMAGEST_SECRET_KEY = 'k'; });
+before(() => { saved.t = process.env.ALMAGEST_TOKENS; process.env.ALMAGEST_TOKENS = 'ada:owner:a-1'; process.env.ALMAGEST_LOGINS = 'ada:ada-signin-1'; process.env.ALMAGEST_SECRET_KEY = 'k'; });
 after(async () => {
   for (const a of apps) await a.stop().catch(() => {});
   process.env.ALMAGEST_TOKENS = saved.t;
+  delete process.env.ALMAGEST_LOGINS;
   cleanup();
 });
 async function app(r, overrides = {}, modules = {}) {
@@ -181,7 +182,7 @@ describe('F2 · gaps page with the real telemetry shape', () => {
     const base = `http://127.0.0.1:${server.address().port}`;
     const c = client(base);
     const lp = await c.get('/inbox/login');
-    await c.post('/inbox/login', { form: { csrf: c.csrfFrom(lp.text), token: 'a-1' } });
+    await c.post('/inbox/login', { form: { csrf: c.csrfFrom(lp.text), secret: 'ada-signin-1' } });
     const res = await c.get('/inbox/gaps');
     assert.ok(!res.text.includes('[object Object]'));
     assert.ok(!res.text.includes('gap_0123456789ab'));
@@ -256,7 +257,7 @@ describe('F8, F9 and UX', () => {
       runReport: { blocked: [{ kind: 'contradiction', slug: 'alpha', question: '30 or 45?', claimA: '30 s', sourceA: 'alpha-pdf, p.3', claimB: '45 s', sourceB: 'alpha-pdf, p.1', options: [{ id: 'x', label: 'Use 45', effect: 'e' }] }] } });
     const c = client(base);
     const lp = await c.get('/inbox/login');
-    await c.post('/inbox/login', { form: { csrf: c.csrfFrom(lp.text), token: 'a-1' } });
+    await c.post('/inbox/login', { form: { csrf: c.csrfFrom(lp.text), secret: 'ada-signin-1' } });
     let res = await c.get(`/inbox/p/${p.id}`);
     assert.match(res.text, /Source: Alpha System Overview, page 3/);
     assert.ok(!res.text.includes('Source: alpha-pdf, p.3'));

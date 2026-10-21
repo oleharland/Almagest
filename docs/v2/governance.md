@@ -109,8 +109,9 @@ overridden.
 service:
   http: { base_url: https://brain.acme.com }   # links in Slack/email/PRs use this; https → Secure cookies
   auth:
-    provider: token            # token: paste a token at /inbox/login
-    tokens_env: ALMAGEST_TOKENS  # "ada:owner:<secret>;bob:reviewer:<secret>"
+    provider: token            # token: a sign-in secret at /inbox/login, or `almagest login`
+    tokens_env: ALMAGEST_TOKENS  # people, roles, API tokens: "ada:owner:<api token>;bob:reviewer:<api token>"
+    logins_env: ALMAGEST_LOGINS  # inbox sign-in secrets: "ada:<sign-in secret>;bob:<sign-in secret>"
     session_hours: 12
     # provider: oidc
     # oidc:
@@ -125,15 +126,80 @@ service:
     #   redirect_path: /inbox/auth/callback        # register base_url + this at the IdP
 ```
 
-`ALMAGEST_SECRET_KEY` signs sessions, CSRF tokens and email links. Set it in
-production; without it a temporary key is used and everyone is signed out on
-restart.
+`ALMAGEST_SECRET_KEY` signs sessions, CSRF tokens, email links and sign-in
+links. Set it in production; without it a temporary key is used, everyone is
+signed out on restart, and `almagest login` cannot make links.
+
+**API tokens never sign in.** Under `provider: token` there are two kinds of
+secret, and neither works in the other's place:
+
+- `ALMAGEST_TOKENS` lists the people, their roles and their **API tokens**.
+  An API token is what a chat or script uses (bearer header, MCP config, the
+  MCP OAuth consent page). It reads and submits; it is refused at
+  `/inbox/login`. It sits in configs an agent can read, so it must not be
+  able to open a browser session.
+- `ALMAGEST_LOGINS` gives a person in `ALMAGEST_TOKENS` a **sign-in secret**
+  (`name:secret`) for `/inbox/login`. It is never accepted as a bearer token.
+  A sign-in secret that equals an API token is ignored, with a warning.
+
+Or skip the second secret: on the machine that runs the service,
+`almagest login [name] [--next /inbox/p/…] [--minutes 10]` prints a one-time
+sign-in link, signed with `ALMAGEST_SECRET_KEY` (the CLI must see the
+service's key). Opening it shows "Continue as …"; pressing Continue signs in.
+It works once and expires after 10 minutes by default (60 at most). Solo
+setup is therefore `ALMAGEST_TOKENS="me:owner:<api token>"` plus either
+`ALMAGEST_LOGINS="me:<sign-in secret>"` or `almagest login`.
+
+Upgrading: existing `ALMAGEST_TOKENS` entries keep working as API tokens and
+stop working for sign-in. Sessions opened with an API token before the
+upgrade end. Until `ALMAGEST_LOGINS` is set, the service logs at startup that
+nobody can sign in, and the sign-in page says how to set it up.
+
+The sign-in forms (`/inbox/login`, sign-in links and email links) are posted
+before there is a session, so besides the CSRF token they need the browser's
+same-origin signal: `Sec-Fetch-Site: same-origin`, or an `Origin` naming this
+service (its `Host`, or `base_url`). A request with neither is refused, as is
+one naming another site. Ten failed attempts from one address lock sign-in
+for ten minutes.
 
 Sessions are server-side records behind an HMAC-signed, HttpOnly,
-SameSite=Lax cookie. Signing out revokes the record; removing someone's token
-from `ALMAGEST_TOKENS` ends their sessions at once. OIDC sign-in is the
-authorization-code flow with PKCE, a `state` check and an ID-token `nonce`;
-the ID token's signature is checked against the issuer's JWKS.
+SameSite=Lax cookie. Signing out revokes the record. Under tokens a session's
+person and roles are re-read from `ALMAGEST_TOKENS` on every request:
+removing someone ends their sessions at once and a role change applies at
+once. Changing or removing someone's sign-in secret ends the sessions it
+opened. OIDC sign-in is the authorization-code flow with PKCE, a `state`
+check and an ID-token `nonce`; the ID token's signature is checked against
+the issuer's JWKS.
+
+**Roles go stale, so they are re-checked.** The IdP is only asked at
+sign-in, so:
+
+```yaml
+governance:
+  session_roles_max_age_minutes: 60   # a session's roles must be this recent to act
+  channel_roles_max_age_hours: 24     # Slack / GitHub: roles cached at the last inbox sign-in
+```
+
+- A single sign-on session uses the roles from its own sign-in, or from the
+  person's latest sign-in anywhere if that is newer. Approving, accepting a
+  page, turning down, taking a page out, answering a question, asking for
+  changes and retrying a merge need those roles confirmed within
+  `session_roles_max_age_minutes`. An older session is sent to the sign-in
+  page ("Please sign in again …") and comes back to the proposal afterwards.
+  Reading needs no fresh sign-in. Token sessions are re-read on every request,
+  so they always pass. An email-link session under single sign-on carries the
+  cached roles' age, not its own.
+- Slack and GitHub actions under single sign-on use the roles from the
+  person's last inbox sign-in. Older than `channel_roles_max_age_hours`, the
+  person cannot approve through them until they sign in to the inbox again.
+  Notifications are unaffected.
+- When the policy is evaluated (on every approval and before a merge), each
+  approval counts with the approver's roles **as they are now**: from
+  `ALMAGEST_TOKENS` under tokens (someone no longer listed has none), from the
+  latest confirmed sign-in under single sign-on. It never counts for more
+  than the roles recorded when it was given. Demoting someone removes their
+  pending approvals' weight. Under single sign-on, a demotion is known once
+  the person signs in again; the IdP is not asked in between.
 
 Roles: `viewer` (look only), `contributor`, `reviewer`, `owner`, `admin`. Only
 `reviewer`, `owner` and `admin` approve. Teams come from `owner_teams`.
@@ -215,10 +281,13 @@ These are code, not config. No rule, profile or flag changes them.
    all require a signed-in browser session with its CSRF token — on the inbox
    forms and on the JSON API alike — or the signed Slack / GitHub webhook
    path. Bearer tokens (`ALMAGEST_TOKENS`, OIDC access tokens, MCP OAuth
-   tokens) can read proposals and nothing more. This is checked at the HTTP
-   layer and again inside the service (`trust.mjs`): the module that verified
-   the request vouches for the actor object it built, and copies or
-   hand-built actors carry no vouch.
+   tokens) can read proposals and nothing more, and an API token cannot sign
+   in to the inbox to get a session either (*Sign-in*). This is checked at the
+   HTTP layer and again inside the service (`trust.mjs`): the module that
+   verified the request vouches for the actor object it built, and copies or
+   hand-built actors carry no vouch. A session also needs recently confirmed
+   roles to act, and approvals count with the approver's current roles
+   (*Sign-in* → *Roles go stale*).
 9. **An approval names the version it is for.** `approve` and
    `resolveDecision` take the `headSha` the person was shown and refuse (409,
    "this proposal changed since you opened it") when it is not the current
@@ -324,8 +393,9 @@ in, not from the mapping:
 - Under single sign-on (`service.auth.provider: oidc`) a mapping needs an
   `email` and resolves to the person who signed in to the inbox with that
   email. Someone who has never signed in is refused ("sign in to the review
-  inbox once to link this account"). The mapping's `id`, `roles` and `teams`
-  are ignored.
+  inbox once to link this account"), and so is someone whose last sign-in is
+  older than `channel_roles_max_age_hours` ("sign in there again … to refresh
+  them"). The mapping's `id`, `roles` and `teams` are ignored.
 - Under tokens, `id` must name someone in `ALMAGEST_TOKENS`; their roles apply.
   Add `email` to tie the account to that person across channels.
 - When counting people matters — `separation_of_duties`, or any rule with
