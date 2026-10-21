@@ -8,9 +8,10 @@ import { sign, verify } from '../../src/governance/signing.mjs';
 import { ALPHA_V2, CLEAN_AUDIT, cleanup, client, DELTA, govApp, job, page, proposalBranch, repo } from './fixtures.mjs';
 
 const TOKENS = 'ada:owner:ada-secret-1;bob:reviewer:bob-secret-2;vic:viewer:vic-secret-3';
+const LOGINS = 'ada:ada-signin-1;bob:bob-signin-2;vic:vic-signin-3';
 let saved;
 const live = [];
-before(() => { saved = process.env.ALMAGEST_TOKENS; process.env.ALMAGEST_TOKENS = TOKENS; process.env.ALMAGEST_SECRET_KEY = 'test-secret'; });
+before(() => { saved = process.env.ALMAGEST_TOKENS; process.env.ALMAGEST_TOKENS = TOKENS; process.env.ALMAGEST_LOGINS = LOGINS; process.env.ALMAGEST_SECRET_KEY = 'test-secret'; });
 after(async () => {
   for (const a of live) await a.stop().catch(() => {});
   process.env.ALMAGEST_TOKENS = saved;
@@ -33,10 +34,10 @@ async function serve(files, overrides = {}) {
   return { app, base, p, r };
 }
 
-async function login(base, token = 'ada-secret-1') {
+async function login(base, secret = 'ada-signin-1') {
   const c = client(base);
   const page1 = await c.get('/inbox/login');
-  const res = await c.post('/inbox/login', { form: { csrf: c.csrfFrom(page1.text), token, next: '/inbox' } });
+  const res = await c.post('/inbox/login', { form: { csrf: c.csrfFrom(page1.text), secret, next: '/inbox' } });
   return { c, res };
 }
 
@@ -63,7 +64,7 @@ describe('html escaping', () => {
 });
 
 describe('inbox: sign-in, CSRF, rendering', () => {
-  it('redirects to sign-in, logs in with a token, and logs out for real', async () => {
+  it('redirects to sign-in, logs in with a sign-in secret, and logs out for real', async () => {
     const { app, base } = await serve();
     const anon = client(base);
     const r1 = await anon.get('/inbox');
@@ -72,7 +73,7 @@ describe('inbox: sign-in, CSRF, rendering', () => {
 
     const bad = client(base);
     const lp = await bad.get('/inbox/login');
-    const wrong = await bad.post('/inbox/login', { form: { csrf: bad.csrfFrom(lp.text), token: 'nope' } });
+    const wrong = await bad.post('/inbox/login', { form: { csrf: bad.csrfFrom(lp.text), secret: 'nope' } });
     assert.equal(wrong.status, 401);
     assert.match(wrong.text, /didn&#39;t work/);
 
@@ -154,7 +155,7 @@ describe('inbox: sign-in, CSRF, rendering', () => {
 
   it('viewers can look but not act', async () => {
     const { app, base, p } = await serve();
-    const { c } = await login(base, 'vic-secret-3');
+    const { c } = await login(base, 'vic-signin-3');
     const res = await c.get(`/inbox/p/${p.id}`);
     assert.equal(res.status, 200);
     assert.ok(!res.text.includes('Approve all'));
@@ -228,7 +229,7 @@ describe('chat confirmations', () => {
     const path = new URL(conf.url).pathname;
     assert.equal((await client(base).get(path)).status, 303, 'signed-out → sign in first');
 
-    const { c } = await login(base, 'bob-secret-2');
+    const { c } = await login(base, 'bob-signin-2');
     const hop = await c.get(path);
     assert.equal(hop.status, 303);
     assert.equal(hop.location, `/inbox/p/${p.id}?confirm=${encodeURIComponent(conf.code)}`);

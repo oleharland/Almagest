@@ -157,6 +157,8 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
       redirect(res, `${backTo}${backTo.includes('?') ? '&' : '?'}m=${encodeURIComponent(key)}`);
       return undefined;
     } catch (err) {
+      // The session's roles are too old to act on (service.mjs): sign in again, then come back here.
+      if (err.code === 'reauth') { redirect(res, `/inbox/login?m=reauth&next=${encodeURIComponent(backTo)}`); return undefined; }
       if ((err.status || 500) >= 500) log.error('inbox action failed', { path: url.pathname, error: err.stack || err.message });
       const id = backTo.match(/^\/inbox\/p\/([^/?#]+)/)?.[1];
       if (id) {

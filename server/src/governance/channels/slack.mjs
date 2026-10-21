@@ -15,8 +15,10 @@
  * before, and refuses Slack users that are not in `users`. "Approve" calls
  * ctx.governance.approve as the mapped person — resolved by email to the one
  * canonical person (identity.mjs), never trusted as an id — and only for the
- * version (headSha) the message showed. Everything else links to the
- * inbox. With `require_sso_for_approval`, there is no Approve button at all —
+ * version (headSha) the message showed. Under single sign-on the person's
+ * roles are the ones from their last inbox sign-in, and only while younger
+ * than `governance.channel_roles_max_age_hours`; after that the button tells
+ * them to sign in again. Everything else links to the inbox. With `require_sso_for_approval`, there is no Approve button at all —
  * only a link into the inbox, where sign-in happens.
  */
 import { HttpError } from '../../core/http.mjs';
