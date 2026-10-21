@@ -295,6 +295,7 @@ export const STATUS_WORDS = {
   changes_requested: 'being revised',
   approved: 'approved and still landing',
   merged: 'already added to the knowledge base',
+  merged_unaccepted: 'merged on GitHub but not accepted into the knowledge base',
   rejected: 'turned down',
   superseded: 'replaced by a newer version',
   conflicted: 'clashing with recent changes and being revised',

@@ -130,7 +130,7 @@ service:
 | `GET /.well-known/oauth-protected-resource` (and `…/mcp`) | RFC 9728 metadata: `resource`, `authorization_servers` (the IdP issuer under `oidc`; this server under `token` + `builtin_oauth`). |
 | `GET /.well-known/oauth-authorization-server` | RFC 8414 metadata for the built-in OAuth server (token mode only). |
 | `POST /oauth/register` · `GET/POST /oauth/authorize` · `POST /oauth/token` · `POST /oauth/revoke` | Built-in OAuth 2.1 (token mode only). |
-| `POST /hooks/git` | Push webhook → `ctx.snapshot.refresh({ fetch: true })`. GitHub `X-Hub-Signature-256`, generic `X-Almagest-Signature` (same `sha256=<hmac>` format) or GitLab `X-Gitlab-Token`. 404 until the secret env var is set. |
+| `POST /hooks/git` | Push webhook → `ctx.snapshot.refresh({ fetch: true })`: re-pins local main, warns if the remote main differs (never pins it). GitHub `X-Hub-Signature-256`, generic `X-Almagest-Signature` (same `sha256=<hmac>` format) or GitLab `X-Gitlab-Token`. 404 until the secret env var is set. |
 
 A request to `/mcp` without valid credentials gets `401` and
 `WWW-Authenticate: Bearer resource_metadata="<base_url>/.well-known/oauth-protected-resource"`
@@ -236,11 +236,17 @@ speaks stdio can reach a remote brain through a bridge such as
 
 ## Remote deployments
 
-With `service.git.remote` set, the snapshot follows `<remote>/<main>`: the
-service fetches every `mcp.refresh_seconds` and on every signed
+The snapshot always follows the **local** `main`, the one only reviewed merges
+move. It never follows `<remote>/<main>`: commits pushed straight to the
+remote, or merged there without passing the service's checks, have not been
+reviewed here, and chats must not cite them. With `service.git.remote` set,
+the service re-pins local main every `mcp.refresh_seconds` and on every signed
 `POST /hooks/git` (point your forge's push webhook at it, secret in
-`ALMAGEST_GIT_WEBHOOK_SECRET`). Without a remote, it re-checks the local `main`
-ref every `mcp.local_refresh_seconds` and on every merge the service performs.
+`ALMAGEST_GIT_WEBHOOK_SECRET`), and at those moments asks the remote where its
+main is: when that differs from local main it logs a warning (once per pair of
+commits) and keeps serving local main. Without a remote, it re-checks the
+local `main` ref every `mcp.local_refresh_seconds`. Either way it re-pins on
+every merge the service performs.
 
 ## Security notes
 

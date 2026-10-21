@@ -21,6 +21,10 @@
  *   7. move main by compare-and-swap: `merge --ff-only` inside the worktree
  *      that has main checked out, else `update-ref main <new> <old>`
  *
+ * Steps 5 and 6 are verifyCandidate(). acceptExternal() runs the same gate on
+ * a merge commit made elsewhere (a merged GitHub PR) before main may move to
+ * it — Almagest stays the gate for its own main.
+ *
  * Merges are serialised by the caller's mutex; the CAS covers everyone else.
  */
 import { execFile } from 'node:child_process';
@@ -204,8 +208,10 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
   /**
    * Check out `commit` detached in a temp dir, regenerate the derived index if
    * the brain has one, and audit it. Returns the (possibly re-made) commit.
+   * With `regenerate: false` the commit must be final as it is: a derived
+   * index that is not current fails the check instead of being rebuilt.
    */
-  async function verify(commit, { parents, message, author }) {
+  async function verify(commit, { parents, message, author, regenerate = true }) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-merge-'));
     let final = commit;
     try {
@@ -217,6 +223,9 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
         const status = (await git.run(['status', '--porcelain'], { cwd: dir })).split('\n').filter(Boolean);
         const stray = status.filter((l) => !l.slice(3).startsWith(`${indexDir}/`));
         if (stray.length) throw new Error(`regenerating ${indexDir} touched other files: ${stray.join(', ')}`);
+        if (status.length && !regenerate) {
+          return { commit, audit: { exit: 1, errors: 1, warnings: 0, findings: [], error: `${indexDir} is not current for this commit` } };
+        }
         if (status.length) {
           await git.run(['add', '-A', '--', indexDir], { cwd: dir });
           const tree = (await git.run(['write-tree'], { cwd: dir })).trim();
@@ -230,6 +239,44 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
       fs.rmSync(dir, { recursive: true, force: true });
       await git.tryRun(['worktree', 'prune']);
     }
+  }
+
+  /** Files outside the knowledge base in what the reviewer saw (base..head) or in what main would become. */
+  async function outsideOfCandidate(commit, { mainSha, base, head }) {
+    return outsideFiles([
+      ...(await listChanges(git, base, head)),
+      ...(await listChanges(git, mainSha, commit)),
+    ], allowed);
+  }
+
+  /**
+   * The gate every new main passes, whoever made the commit: only the
+   * knowledge base's writable files change, and the result passes the
+   * service's own audit. The path check runs first, so a commit that touches
+   * anything else is never even checked out for the audit.
+   *
+   * @returns {Promise<{ ok: true, commit, audit } | { ok: false, reason: 'paths'|'audit', message, files?, audit? }>}
+   */
+  async function verifyCandidate(commit, { mainSha, base, head, parents, message, author, regenerate = true, proposalId = '' }) {
+    const refuse = (outside) => {
+      log?.error('merge refused: files outside the knowledge base', { proposal: proposalId, files: outside.map((o) => o.path) });
+      return { ok: false, reason: 'paths', files: outside, message: describeOutside(outside) };
+    };
+    let outside = await outsideOfCandidate(commit, { mainSha, base, head });
+    if (outside.length) return refuse(outside);
+    const { commit: final, audit } = await verify(commit, { parents, message, author, regenerate });
+    if (audit.exit !== 0) {
+      return {
+        ok: false, reason: 'audit', audit,
+        message: `Combined with the current knowledge base, this fails the automatic checks (${audit.errors || 'unknown'} problem${audit.errors === 1 ? '' : 's'}).`,
+      };
+    }
+    // Last gate before main moves: a regenerated index is a new commit — check it too.
+    if (final !== commit) {
+      outside = await outsideOfCandidate(final, { mainSha, base, head });
+      if (outside.length) return refuse(outside);
+    }
+    return { ok: true, commit: final, audit };
   }
 
   /**
@@ -317,23 +364,11 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
       ].join('\n');
       const parents = [mainSha, head];
       const candidate = await commitTree(mergedTree, parents, message, author);
-      const { commit, audit } = await verify(candidate, { parents, message, author });
-      if (audit.exit !== 0) {
-        return {
-          ok: false, reason: 'audit', audit,
-          message: `Combined with the current knowledge base, this fails the automatic checks (${audit.errors || 'unknown'} problem${audit.errors === 1 ? '' : 's'}). The agent has been asked to fix it.`,
-        };
+      const checked = await verifyCandidate(candidate, { mainSha, base, head, parents, message, author, proposalId: proposal.id });
+      if (!checked.ok) {
+        return checked.reason === 'audit' ? { ...checked, message: `${checked.message} The agent has been asked to fix it.` } : checked;
       }
-
-      // Last gate before main moves: what the reviewer approved, and what main would become.
-      const outside = outsideFiles([
-        ...(await listChanges(git, base, head)),
-        ...(await listChanges(git, mainSha, commit)),
-      ], allowed);
-      if (outside.length) {
-        log?.error('merge refused: files outside the knowledge base', { proposal: proposal.id, files: outside.map((o) => o.path) });
-        return { ok: false, reason: 'paths', files: outside, message: describeOutside(outside) };
-      }
+      const { commit, audit } = checked;
 
       const moved = await moveMain(mainSha, commit, `almagest: merge ${proposal.id}`);
       if (moved.ok) {
@@ -353,5 +388,40 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
     return { ok: false, reason: 'busy', message: 'The knowledge base kept changing while this was being added. Press "Try again".' };
   }
 
-  return { merge, moveMain, mergeTree };
+  /**
+   * Accept a merge commit made elsewhere (a pull request merged on GitHub) as
+   * the new main — only if it is provably "the reviewed head on top of this
+   * main": parents exactly (local main, proposal.headSha), and the commit
+   * passes verifyCandidate() unchanged. A squash or rebase merge has no such
+   * parents and cannot be checked, so it is refused like any other mismatch.
+   * The caller holds the governance lock and has already decided the policy.
+   *
+   * @param {object} proposal
+   * @param {string} sha   the merge commit; must already be in the local object store
+   * @returns {Promise<{ ok: true, sha, audit, method } | { ok: false, reason, message, files?, audit? }>}
+   */
+  async function acceptExternal(proposal, sha) {
+    const commit = /^([0-9a-f]{40}|[0-9a-f]{64})$/.test(String(sha)) ? (await git.tryRun(['rev-parse', '--verify', '--quiet', `${sha}^{commit}`]))?.trim() : '';
+    if (!commit) return { ok: false, reason: 'shape', message: `The merge commit ${String(sha).slice(0, 7) || '(none given)'} is not available here, so it cannot be checked.` };
+    const mainSha = await git.revParse(main);
+    const [, ...parents] = (await git.run(['rev-list', '--parents', '-n', '1', commit])).trim().split(/\s+/);
+    if (parents.length !== 2) {
+      return { ok: false, reason: 'shape', message: 'It was squashed or rebased, so Almagest cannot check that the result is exactly the reviewed version on top of the current knowledge base. Use a merge commit, or bring it in by hand.' };
+    }
+    if (parents[1] !== proposal.headSha) {
+      return { ok: false, reason: 'head', message: `The merged branch is at ${parents[1].slice(0, 7)}, but the reviewed version is ${String(proposal.headSha).slice(0, 7)}.` };
+    }
+    if (parents[0] !== mainSha) {
+      return { ok: false, reason: 'shape', message: `It was merged onto ${parents[0].slice(0, 7)}, which is not this knowledge base's main (${mainSha.slice(0, 7)}).` };
+    }
+    const base = await git.mergeBase(mainSha, proposal.headSha);
+    const checked = await verifyCandidate(commit, { mainSha, base, head: proposal.headSha, parents, regenerate: false, proposalId: proposal.id });
+    if (!checked.ok) return checked;
+    const moved = await moveMain(mainSha, commit, `almagest: accept merged pull request for ${proposal.id}`);
+    if (!moved.ok) return { ok: false, reason: moved.reason === 'checkout' ? 'checkout' : 'busy', message: moved.message || 'The knowledge base changed while this was being checked.' };
+    await cleanup(proposal.branch);
+    return { ok: true, sha: commit, audit: checked.audit, method: moved.method };
+  }
+
+  return { merge, acceptExternal, verifyCandidate, moveMain, mergeTree };
 }

@@ -91,11 +91,12 @@ describe('2 · approvals are pinned to the version shown', () => {
     const a = await app({ service: { http: { port: 0 } }, governance: { channels: [{ kind: 'web' }, { kind: 'github-pr', repo: 'x/y', webhook_secret_env: 'T_GH', users: { octo: { id: 'usr_ada', email: 'ada@acme.test' } } }] } });
     const server = await a.start();
     const p = await open(a);
-    const body = JSON.stringify({ action: 'closed', pull_request: { merged: true, merge_commit_sha: 'f'.repeat(40), head: { ref: p.branch, sha: 'c'.repeat(40) }, merged_by: { login: 'octo' } } });
+    const body = JSON.stringify({ action: 'closed', pull_request: { merged: true, merge_commit_sha: 'f'.repeat(40), head: { ref: p.branch, sha: 'c'.repeat(40), repo: { full_name: 'x/y' } }, base: { ref: 'main' }, merged_by: { login: 'octo' } } });
     const sig = `sha256=${crypto.createHmac('sha256', 'gh').update(body).digest('hex')}`;
     const res = await fetch(`http://127.0.0.1:${server.address().port}/channels/github/webhook`, { method: 'POST', headers: { 'x-github-event': 'pull_request', 'x-hub-signature-256': sig, 'x-github-delivery': 'd-1' }, body });
     const out = await res.json();
     assert.equal(out.policyMet, false);
+    assert.equal(out.status, 'merged_unaccepted');
     const after1 = await a.ctx.governance.getProposal(p.id);
     assert.equal(after1.approvals.length, 0, 'no approval recorded for a version nobody reviewed');
     const [v] = await a.ctx.store.audit.list({ action: 'policy.violation' });

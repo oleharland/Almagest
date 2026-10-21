@@ -48,7 +48,7 @@ export function publicView(value, roots) {
   }
   return value;
 }
-const DONE = ['merged', 'rejected', 'superseded'];
+const DONE = ['merged', 'merged_unaccepted', 'rejected', 'superseded'];
 
 export function create(ctx, cfg, { governance, sessions, confirmations }) {
   const { store, log } = ctx;

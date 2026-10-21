@@ -11,8 +11,12 @@
  *   ctx.snapshot.load()    → { sha, dir, pages, byId, known }  (cached per sha)
  *   ctx.snapshot.refresh() → re-pins to main's current sha when it moved
  *
- * It refreshes itself on `proposal.merged`. Remote deployments additionally
- * call `refresh({ fetch: true })` from a git webhook or an interval.
+ * It always pins the LOCAL main, the one only reviewed merges move — never
+ * the remote's, which may hold commits nobody reviewed here, so chats must
+ * not cite it. It refreshes itself on `proposal.merged`. Remote deployments
+ * additionally call `refresh({ fetch: true })` from a git webhook or an
+ * interval: that re-pins local main too, and asks the remote where its main
+ * is only to log a warning when the two differ.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,6 +30,7 @@ export function createSnapshot({ git, config, bus, log, wikiDirs = WIKI_DIRS }) 
   let pinned = '';
   let cache = null;
   let inflight = null;
+  let warned = '';
 
   async function pin(sha) {
     const existing = (await git.worktrees()).find((w) => fs.existsSync(dir) && sameDir(w.path, dir));
@@ -41,13 +46,24 @@ export function createSnapshot({ git, config, bus, log, wikiDirs = WIKI_DIRS }) 
     cache = null;
   }
 
+  /** Where the remote's main is — asked, never fetched into a ref. Warns once per pair of shas when it is not local main. */
+  async function checkRemote(sha) {
+    const remote = config.service.git.remote;
+    const out = await git.tryRun(['ls-remote', '--quiet', remote, `refs/heads/${config.service.git.main}`]);
+    if (out === null) { log?.warn('snapshot: could not ask the remote where its main is', { remote }); return; }
+    const theirs = out.trim().split(/\s+/)[0] || '';
+    const pair = `${theirs}..${sha}`;
+    if (theirs && theirs !== sha && pair !== warned) {
+      warned = pair;
+      log?.warn("the remote's main differs from local main — chats keep reading the reviewed local main", { remote, remoteSha: theirs.slice(0, 7), localSha: sha.slice(0, 7) });
+    }
+  }
+
   async function refresh({ fetch = false } = {}) {
     if (inflight) return inflight;
     inflight = (async () => {
-      const remote = config.service.git.remote;
-      if (fetch && remote) await git.run(['fetch', '--quiet', remote, config.service.git.main]);
-      const ref = fetch && remote ? `${remote}/${config.service.git.main}` : config.service.git.main;
-      const sha = await git.revParse(ref);
+      const sha = await git.revParse(config.service.git.main);
+      if (fetch && config.service.git.remote) await checkRemote(sha);
       if (sha !== pinned || !fs.existsSync(dir)) {
         await pin(sha);
         log?.debug('snapshot pinned', { sha: sha.slice(0, 7) });
