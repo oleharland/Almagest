@@ -185,6 +185,7 @@ sources:
 | `paths` | yes | Globs within the repo to ingest |
 | `branch` | no | Defaults to the repo's default branch |
 | `label` | no | Tag applied to wiki pages derived from this source |
+| `lookup` | no | `true` lets live lookup search this repository when no page answers. Off unless set. See [live lookup](v2/live-lookup.md) |
 
 ## Usage
 
