@@ -61,6 +61,17 @@ describe('gaps: the recorder keeps the lookup summary', () => {
     assert.ok(!stored.includes('secret text') && !stored.includes('Board deck'));
   });
 
+  it('keeps the ids of the connectors asked, and the gap names them', async () => {
+    const ctx = makeCtx();
+    ctx.telemetry.record({
+      tool: 'ask', query: 'grid fee', answered: false, results: [], sessionId: 's1', ts: daysAgo(1),
+      lookup: lookup({ connectors: ['team-drive', 'wiki'], queued: ['job_1'] }),
+    });
+    const [g] = await ctx.telemetry.gaps();
+    assert.deepEqual(g.lookup.connectors, ['team-drive', 'wiki']);
+    assert.match(g.suggestion, /Served 1 time from team-drive, wiki;/);
+  });
+
   it('prints lookup in the CLI table, the suggestion and --json', async () => {
     const ctx = makeCtx();
     ctx.telemetry.record({ tool: 'ask', query: 'grid fee', answered: false, results: [], sessionId: 's1', ts: daysAgo(1), lookup: lookup({ queued: ['job_1'] }) });

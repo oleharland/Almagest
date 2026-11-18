@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import { buildSnapshot } from '../../src/connectors/snapshot-file.mjs';
 import { markerFor } from '../../src/mcp/citations.mjs';
-import { buildPassageIndex, locatorFor, packPassages, searchPassages, splitPassages } from '../../src/mcp/passages.mjs';
+import { buildPassageIndex, locatorFor, PACK_MAX_DOCS, PACK_MIN_SHARE, packPassages, searchPassages, splitPassages } from '../../src/mcp/passages.mjs';
 import { estimateTokens } from '../../src/mcp/search.mjs';
 
 describe('splitPassages', () => {
@@ -125,7 +125,7 @@ describe('packPassages', () => {
 
   it('groups by document, documents by best passage, passages in document order', () => {
     const results = [mk('x', 3, 1, 'x3'), mk('y', 1, 5, 'y1'), mk('x', 1, 3, 'x1'), mk('y', 0, 2, 'y0')];
-    const packed = packPassages(results, 1000);
+    const packed = packPassages(results, 1000, { minShare: 0 });
     assert.deepEqual(packed.items.map((i) => i.doc.key), ['y', 'x']);
     assert.deepEqual(packed.items[0].passages.map((p) => p.text), ['y0', 'y1']);
     assert.deepEqual(packed.items[1].passages.map((p) => p.text), ['x1', 'x3']);
@@ -154,6 +154,21 @@ describe('packPassages', () => {
     const results = [mk('a', 0, 5, big)];
     packPassages(results, 200);
     assert.equal(results[0].passage.text, big);
+  });
+
+  it('drops passages scoring under a share of the best, and caps the documents', () => {
+    const results = [mk('a', 0, 10, 'best'), mk('a', 1, 4, 'marginal'), mk('b', 0, 6, 'second doc'), mk('c', 0, 5.5, 'third doc'), mk('d', 0, 5.4, 'fourth doc')];
+    const defaults = packPassages(results, 1000);
+    assert.deepEqual(defaults.items.map((i) => i.doc.key), ['a', 'b', 'c', 'd']);
+    assert.deepEqual(defaults.items[0].passages.map((p) => p.text), ['best', 'marginal']);
+    assert.equal(packPassages([mk('a', 0, 10, 'best'), mk('a', 1, 1, 'weak')], 1000).items[0].passages.length, 1, 'a weak passage is dropped by default');
+    const strict = packPassages(results, 1000, { minShare: 0.5, maxDocs: 2 });
+    assert.deepEqual(strict.items.map((i) => i.doc.key), ['a', 'b']);
+    assert.deepEqual(strict.items[0].passages.map((p) => p.text), ['best']);
+    const all = packPassages(results, 1000, { minShare: 0, maxDocs: 99 });
+    assert.equal(all.items.length, 4);
+    assert.equal(all.items[0].passages.length, 2);
+    assert.ok(PACK_MIN_SHARE > 0 && PACK_MIN_SHARE < 1 && PACK_MAX_DOCS >= 1);
   });
 
   it('returns nothing for no results', () => {

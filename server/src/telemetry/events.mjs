@@ -101,6 +101,7 @@ function cleanLookup(l) {
     step: LOOKUP_STEPS.includes(l.step) ? l.step : null,
     steps: strings(l.steps).filter((s) => LOOKUP_STEPS.includes(s)),
     connectorsAsked: Array.isArray(l.connectorsAsked) ? strings(l.connectorsAsked) : count(l.connectorsAsked),
+    connectors: strings(l.connectors),
     fetched: count(l.fetched),
     cacheHits: count(l.cacheHits),
     latencyMs: count(l.latencyMs),

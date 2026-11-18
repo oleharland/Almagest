@@ -8,14 +8,13 @@
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /**
- * The question behind a proposal that live lookup queued. The lookup writes it
- * into the job's instructions as `Asked: "<question>". Fetched by live
- * lookup.` and only when queries are stored plain; otherwise there is none.
+ * The question behind a proposal that live lookup queued. The lookup keeps it
+ * in the job's own `lookupQuestion` field, only when queries are stored plain;
+ * otherwise there is none. It is never part of the job's instructions.
  */
 export function lookupQuestionOf(job) {
   if (job?.trigger !== 'lookup') return '';
-  const m = /^Asked: "([\s\S]*)"\. Fetched by live lookup\.$/.exec(String(job.instructions || ''));
-  return m ? m[1] : '';
+  return String(job.lookupQuestion || '').replace(/\s+/g, ' ').trim().slice(0, 500);
 }
 
 /** One plain sentence for a proposal that exists because someone asked a question the brain could not answer; '' for any other. */

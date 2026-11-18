@@ -40,6 +40,14 @@ export const MCP_DEFAULTS = {
   },
 };
 
+/**
+ * How one `ask` budget (`ask.token_budget`, or the caller's max_tokens) is
+ * shared when live lookup answers. The context sections `ask` returns for one
+ * question (canonical pages, weak page matches, passages) together stay within
+ * it. Passages get what the other two leave: 1 - canonical - weak (0.6 here).
+ */
+export const LOOKUP_BUDGET_SPLIT = { canonical: 0.25, weak: 0.15 };
+
 export function mcpConfig(config) {
   return deepMerge(MCP_DEFAULTS, config.mcp || {});
 }

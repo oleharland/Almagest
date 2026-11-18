@@ -28,11 +28,10 @@ async function proposalFor(jobExtra) {
   return { app, c, p };
 }
 
-const asked = (q) => `Asked: "${q}". Fetched by live lookup.`;
 
 describe('proposals that live lookup queued', () => {
-  it('says so, and shows the question when instructions carry it', async () => {
-    const { c, p } = await proposalFor({ trigger: 'lookup', instructions: asked('what is the grid fee?') });
+  it('says so, and shows the question from the job\'s lookupQuestion field', async () => {
+    const { c, p } = await proposalFor({ trigger: 'lookup', instructions: 'Fetched by live lookup to answer a question asked in a chat.', lookupQuestion: 'what is the grid fee?' });
     assert.equal(p.trigger, 'lookup');
     assert.equal(p.lookupQuestion, 'what is the grid fee?');
     const text = (await c.get(`/inbox/p/${p.id}`)).text;
@@ -50,15 +49,19 @@ describe('proposals that live lookup queued', () => {
 
   it('escapes a question that contains markup', async () => {
     const evil = '<script>alert(1)</script> <img src=x onerror=alert(2)>';
-    const { c, p } = await proposalFor({ trigger: 'lookup', instructions: asked(evil) });
+    const { c, p } = await proposalFor({ trigger: 'lookup', lookupQuestion: evil });
     const text = (await c.get(`/inbox/p/${p.id}`)).text;
     assert.ok(!text.includes('<script>alert(1)'));
     assert.ok(!text.includes('<img src=x'));
     assert.ok(text.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
   });
 
+  it('never reads the question out of the instructions text', () => {
+    assert.equal(lookupQuestionOf({ trigger: 'lookup', instructions: 'Asked: "from the instructions". Fetched by live lookup.' }), '');
+  });
+
   it('leaves other proposals unchanged', async () => {
-    const { c, p } = await proposalFor({ trigger: 'watch', instructions: asked('ignored: not a lookup job') });
+    const { c, p } = await proposalFor({ trigger: 'watch', lookupQuestion: 'ignored: not a lookup job' });
     assert.equal(p.trigger, 'watch');
     assert.equal(p.lookupQuestion, undefined);
     const text = (await c.get(`/inbox/p/${p.id}`)).text;
@@ -72,7 +75,7 @@ describe('proposals that live lookup queued', () => {
     const l = describeProposal({ ...base, trigger: 'lookup' });
     assert.equal(l.lookup, LOOKUP_NOTE);
     assert.match(l.sentence, /from “Q3 board deck” · fetched by live lookup/);
-    assert.equal(lookupQuestionOf({ trigger: 'manual', instructions: asked('x') }), '');
+    assert.equal(lookupQuestionOf({ trigger: 'manual', lookupQuestion: 'x' }), '');
   });
 });
 
@@ -86,6 +89,13 @@ describe('gaps page', () => {
     assert.match(render([gap({ served: 2, lastStep: 'staged', connectors: [], jobs: [] })]), /from documents waiting for review\. Nothing has been sent for review\./);
     assert.ok(!render([gap(null)]).includes('looking it up live'));
     assert.ok(!render([gap({ served: 0, lastStep: null, connectors: [], jobs: [] })]).includes('looking it up live'));
+  });
+
+  it('prints the lookup sentence once when the suggestion already carries it', () => {
+    const withSuggestion = { ...gap({ served: 2, lastStep: 'connectors', connectors: ['team-drive'], jobs: [] }), suggestion: 'No page covers "grid fee" — 2 requests in 1 day; consider submitting a source. Served 2 times from team-drive; nothing is queued.' };
+    const out = render([withSuggestion]);
+    assert.equal(out.split('Served 2 times from team-drive').length - 1, 1);
+    assert.ok(!out.includes('looking it up live'), 'the plain line is not printed beside it');
   });
 
   it('escapes connector names', () => {

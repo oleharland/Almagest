@@ -205,26 +205,42 @@ export function searchPassages(index, query, { limit = 8, minScore = 0.2, minCov
   return { terms, answered, results };
 }
 
+/** After the best passage, a passage is packed only when its score is at least this share of the best score. */
+export const PACK_MIN_SHARE = 0.35;
+/** At most this many documents contribute passages to one packing. */
+export const PACK_MAX_DOCS = 4;
+
 /**
  * Greedy by score inside a token budget (`estimateTokens`, plus 12 a passage
  * for its label, as `packSections` does). A passage that does not fit is cut to
  * the room left when at least 200 characters remain, else skipped; either way
- * `truncated` is true.
+ * `truncated` is true. Relevance cutoff: after the best passage, one is packed
+ * only when its score is at least `minShare` of the best score, and only from
+ * the `maxDocs` documents the best passages come from, so the budget is not
+ * filled with marginal text.
  * @param {Array} results  from `searchPassages`
  * @param {number} budget  tokens
+ * @param {object} [opts]
+ * @param {number} [opts.minShare]  default PACK_MIN_SHARE; 0 packs everything that fits
+ * @param {number} [opts.maxDocs]   default PACK_MAX_DOCS
  * @returns {{ items: Array<{ doc: object, passages: Array<{ marker: string, locator: string, text: string, part: number }> }>, tokens: number, truncated: boolean }}
  *   documents ordered by their best passage, passages in document order.
  */
-export function packPassages(results, budget) {
+export function packPassages(results, budget, { minShare = PACK_MIN_SHARE, maxDocs = PACK_MAX_DOCS } = {}) {
   const ranked = [...(results || [])]
     .map((r, i) => ({ r, i }))
     .sort((a, b) => b.r.score - a.r.score || a.i - b.i)
     .map((x) => x.r);
 
   const chosen = [];
+  const docKeys = new Set();
+  const best = ranked[0]?.score || 0;
   let tokens = 0;
   let truncated = false;
   for (const r of ranked) {
+    if (chosen.length && r.score < best * minShare) continue;
+    const key = r.doc.key ?? r.doc;
+    if (!docKeys.has(key) && docKeys.size >= maxDocs) continue;
     let text = r.passage.text;
     if (tokens + estimateTokens(text) + 12 > budget) {
       const room = (budget - tokens - 12) * 4 - 8;
@@ -233,6 +249,7 @@ export function packPassages(results, budget) {
       text = text.slice(0, room).trimEnd() + ' […]';
     }
     tokens += estimateTokens(text) + 12;
+    docKeys.add(key);
     chosen.push({ doc: r.doc, passage: { ...r.passage, text } });
   }
 

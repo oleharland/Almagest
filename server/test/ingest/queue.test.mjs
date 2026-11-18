@@ -53,6 +53,21 @@ describe('queue: enqueue', () => {
     await t.stop();
   });
 
+  it('marks a job returned by dedup, and keeps a lookup question only on a lookup job', async () => {
+    const t = await setup();
+    const ref = { kind: 'connector', id: 'drive-spec', connector: 'drive', ref: 'f9', sha256: 'd'.repeat(64) };
+    const first = await t.ctx.ingest.enqueue({ kind: 'ingest', source: ref, trigger: 'lookup', requestedBy: 'svc:lookup', instructions: 'Fetched by live lookup.', lookupQuestion: 'what is the fee?' });
+    assert.notEqual(first.deduplicated, true);
+    assert.equal(first.lookupQuestion, 'what is the fee?');
+    const again = await t.ctx.ingest.enqueue({ kind: 'ingest', source: { ...ref }, trigger: 'lookup', requestedBy: 'svc:lookup' });
+    assert.equal(again.id, first.id);
+    assert.equal(again.deduplicated, true);
+    const manual = await t.ctx.ingest.enqueue({ kind: 'ingest', source: { ...ref, id: 'other', sha256: 'e'.repeat(64) }, trigger: 'manual', requestedBy: 'svc:ingest', lookupQuestion: 'ignored' });
+    assert.equal(manual.lookupQuestion, undefined);
+    assert.equal((await t.ctx.ingest.list({ status: 'queued' })).length, 2);
+    await t.stop();
+  });
+
   it('coalesces a queued revise for the same proposal; dedups drop-page on (proposal, slug)', async () => {
     const t = await setup();
     const r1 = await t.ctx.ingest.enqueue({ kind: 'revise', proposalId: 'prp_1', instructions: 'Replace the claim.', trigger: 'decision' });
