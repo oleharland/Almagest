@@ -24,7 +24,9 @@ almagest/
 │   ├── contract.md        ← the minimum harness contract
 │   ├── routing.md         ← which rule file applies to which paths
 │   └── rules/             ← read.md · ingest.md · wiki.md
-├── tools/                 ← agent-shims.sh (pointer files) · audit.mjs (the checker)
+├── tools/                 ← agent-shims.sh (pointer files) · audit.mjs (the checker) · hooks/pre-commit
+├── server/                ← v2 service: background ingest, connectors, review inbox, MCP server, telemetry
+├── deploy/                ← Docker image + compose, launchd and systemd units for the service
 ├── site/                  ← Astro frontend (reads from brain/wiki/)
 │   ├── src/
 │   │   ├── lib/wiki.ts    ← typed wrapper over tools/lib/wiki-core.mjs
@@ -37,7 +39,7 @@ almagest/
 ├── benchmarks/            ← benchmark harness (fixtures, questions, runner)
 ├── docs/                  ← framework documentation
 ├── brain.config.yaml      ← instance configuration (page types, sources, etc.)
-├── .mcp.json              ← MCP server config (GitHub + GitLab)
+├── .mcp.json              ← MCP servers the connectors read from (GitHub, GitLab, any other)
 ├── LICENSE                ← MIT
 └── .gitignore
 ```
@@ -63,6 +65,18 @@ almagest/
 4. Source reference logged in `index.md` and `manifest.yaml` (provider, repo, path, commit SHA, date) — no local copy. The recorded commit SHA is what makes the next run incremental
 5. Same branch, audit, and merge flow as local ingest. This is the one path that can run unattended end to end: a scheduled sync ingests onto a branch and leaves you a diff
 
+### The v2 service (optional — `server/`, `docs/v2/`)
+
+Everything above works with an agent session alone. `npx almagest serve` (Node 22.13+, for the built-in `node:sqlite`) adds a long-running service around the same repo and the same rules — it holds no second copy of the knowledge:
+
+1. **Background ingest** — files dropped in `brain/raw/`, scheduled connector syncs, and chat submissions queue jobs. Each job runs a headless agent in its own git worktree on an `ingest/<source-slug>-<sha7>` branch, with no git, network or MCP access; the service runs the audit and commits
+2. **Connectors** — any MCP server is an input (`brain.config.yaml` → `sources.connectors`). The service fetches, snapshots and fingerprints each item; the agent cites the committed snapshot
+3. **Review inbox** — each branch becomes a proposal: every new or changed fact next to the source passage it cites, blocking cases as decision cards. A human approves in the web inbox, from chat via a confirmation link, in Slack, by email, or by merging a GitHub PR. Approval is pinned to the exact version shown; the service re-audits and merges. Agents never approve
+4. **Almagest as an MCP server** — `almagest mcp` (stdio) or `/mcp` over HTTP lets any chat search and cite the brain without a clone
+5. **Demand** — every request is recorded; frequently read pages get stricter approval and a re-verify queue, unanswered questions become a gap list
+
+Profiles (`service.profile`: `solo` · `team` · `enterprise`) set the defaults. Contract: `docs/v2/spec.md`.
+
 ## Wiki page types
 
 Defined in `brain.config.yaml` → `page_types`. Configure this file to match your domain before starting ingest.
@@ -86,7 +100,7 @@ One grammar, frozen so it can be checked by machine:
 
 ## The audit
 
-`tools/audit.mjs` (Node 22+) checks the wiki mechanically — schema, links, citation grammar, citation targets, provenance against `manifest.yaml`, staleness. Findings have stable IDs (`CITE-002`, `LINK-001`, …) that the rule files reference. `tools/audit.mjs index` regenerates `brain/.index/`; `--check-index` verifies it is current. Exit `0` clean, `1` violations, `2` tool error. An exit `1` blocks the commit.
+`tools/audit.mjs` (Node 22+; the optional v2 service needs 22.13+) checks the wiki mechanically — schema, links, citation grammar, citation targets, provenance against `manifest.yaml`, staleness. Findings have stable IDs (`CITE-002`, `LINK-001`, …) that the rule files reference. `tools/audit.mjs index` regenerates `brain/.index/`; `--check-index` verifies it is current. Exit `0` clean, `1` violations, `2` tool error. An exit `1` blocks the commit.
 
 ## Capability tiers
 
@@ -102,7 +116,7 @@ harness cannot switch models, run the whole session on it.
 
 These hold across every operation, on every harness. Everything else is in the rule files named by the routing table below.
 
-1. **No unreviewed writes.** The agent never writes to `brain/wiki/` on `main`. Ingest works on an `ingest/<source-slug>-<sha7>` branch and commits there; reaching `main` is a human merging a reviewed diff. Contradictions, canonical conflicts, deletions, merges, renames, and `confidence: low` curated pages block for an in-session decision even on the branch.
+1. **No unreviewed writes.** The agent never writes to `brain/wiki/` on `main`. Ingest works on an `ingest/<source-slug>-<sha7>` branch and commits there; reaching `main` is a human merging a reviewed diff. With the v2 service that merge may happen through the review inbox or any configured approval channel — a human with an approver role approves the exact version (headSha) they were shown, and the service merges under their identity after re-running the audit; agents can never approve, and no setting changes that. Contradictions, canonical conflicts, deletions, merges, renames, and `confidence: low` curated pages block for an in-session decision even on the branch.
 2. **No unsourced claims.** On an `origin: source` page every factual claim carries an inline `[source: <id>, <locator>]` whose `<id>` is an entry in that page's `sources`. If it can't be cited, mark it `[source: unknown]` and add it to `## Open questions`. An `origin: self` page carries no inline citations and must carry a `## Basis` section of wikilinks instead.
 3. **Surface contradictions, never overwrite them.** Quote both claims with their sources, propose a resolution, wait.
 4. **Canonical pages are guardrails.** The agent cannot propose changes to them. Data that contradicts canonical is logged to `brain/canonical-challenges.md` as out of scope, not merged.
@@ -123,6 +137,8 @@ The rules live in `agent/rules/`. Each file opens with a "Load this when" line s
 | write to `brain/canonical-challenges.md` | `agent/rules/wiki.md` → Canonical |
 | regenerate `brain/.index/` | `docs/audit.md` — run `tools/audit.mjs index`, never hand-edit the files |
 | print a run summary to the terminal | `agent/rules/ingest.md`, `docs/terminal-output.md` |
+| run as the service's headless ingest agent | `agent/rules/ingest.md` → Runner mode |
+| change or run the v2 service in `server/` | `docs/v2/spec.md`, then the `docs/v2/` page for that module |
 | anything at all | `brain.config.yaml`, `brain/.index/pages.tsv`, `brain/index.md`, `brain/manifest.yaml` |
 
 ## Loading on Claude Code
@@ -131,4 +147,4 @@ Path-scoped rules load on their own: `brain/raw/**` pulls in `.claude/rules/brai
 
 ## Harness contract
 
-`agent/contract.md` states what a harness must provide to run Almagest at all. Requirement 5 is a reviewer who merges: the agent commits to an `ingest/<source-slug>-<sha7>` branch and `main` moves only when a human merges a reviewed diff. Unattended ingest onto a branch is supported; an unattended merge to `main` is forbidden and there is no flag for it. Requirement 7 is Node 22+ for `tools/audit.mjs`, whose exit code gates the commit.
+`agent/contract.md` states what a harness must provide to run Almagest at all. Requirement 5 is a reviewer who merges: the agent commits to an `ingest/<source-slug>-<sha7>` branch and `main` moves only when a human merges a reviewed diff. Unattended ingest onto a branch is supported; an unattended merge to `main` is forbidden and there is no flag for it. Requirement 7 is Node 22+ for `tools/audit.mjs`, whose exit code gates the commit; the optional v2 service needs 22.13+.

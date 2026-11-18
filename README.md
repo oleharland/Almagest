@@ -22,6 +22,13 @@ Fork it, point it at your domain, and drop in source material. Your agent reads 
 
 It runs on Claude Code, Codex, Cursor, Gemini CLI, Antigravity, or any agent that meets the [harness contract](agent/contract.md).
 
+There are two ways to run it, on the same repo and the same rules:
+
+- **As a framework** — an agent session plus git. You drop in files, the agent writes pages on a branch, you merge the diff.
+- **As a service** ([`server/`](#the-service), optional) — it ingests in the background from files and any MCP source (Drive, Granola, Linear, Slack, …), puts every proposed fact next to the passage it cites in a review inbox you can use from your phone, serves the brain to any chat over MCP, and tracks what gets asked so the most-read pages get the most scrutiny.
+
+In both, nothing reaches `main` until a human approves the exact change.
+
 ## About that tagline
 
 It used to be a promise. It is now a program you can run.
@@ -70,25 +77,69 @@ The line worth holding onto: the audit makes provenance *plumbing* mechanical, s
   <img src="docs/diagrams/ingest-flow.png" alt="Swimlane of one ingest. You drop a source into brain/raw/. The agent fingerprints it against the manifest (unchanged sources are skipped), extracts a page-marked text sidecar, and drafts pages on an ingest branch, stopping to ask you about contradictions, canonical conflicts, deletions, merges, renames and low-confidence pages. tools/audit.mjs checks every page before the commit; exit 1 sends it back to the agent, exit 0 lets it commit to the branch. You review the diff and merge, which is the only way anything reaches the cited wiki pages on main.">
 </picture>
 
+## The service
+
+The flow above needs nothing but an agent session and git. `server/` adds an optional long-running service around the same repo and the same rules — for when the brain should keep itself current, be reviewed by people who don't read diffs, and be asked from any chat.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/service-flow-dark.png">
+  <img src="docs/diagrams/service-flow.png" alt="Swimlane of the service loop around the same repo. Files dropped in brain/raw/, connectors that sync any MCP server (Drive, Granola, Linear, Slack…) on a schedule, and a chat's submit_source become jobs; each source is fingerprinted with sha256 and unchanged ones are skipped. A headless agent ingests each job in its own worktree on an ingest/&lt;source&gt;-&lt;sha7&gt; branch, with no git, network or MCP access. The service then runs its own copy of tools/audit.mjs; exit 1 means no commit, otherwise it commits to the branch. The branch becomes a proposal in the review inbox, with each new or changed fact beside the passage it cites and questions as decision cards. Only a person can approve, through the web inbox, a chat confirmation link, Slack, email or a GitHub PR; the approval is pinned to the version they saw, and an agent can never give one. The service re-audits and merges into the cited wiki pages in brain/wiki/ on main, which any chat (Claude, Cursor, …) searches and cites through the Almagest MCP server. Every request is recorded as demand: hot pages get stricter approval and are re-verified sooner, unanswered questions become a gap list, and both feed back into review.">
+</picture>
+
+| | What it does | Guide |
+|---|---|---|
+| **Background ingest** | Files dropped in `brain/raw/`, scheduled connector syncs and chat submissions become jobs. A headless agent ingests each one in its own worktree with no git, network or MCP access; the service runs the audit and commits to the branch | [Ingest](docs/v2/ingest.md) |
+| **Any MCP as input** | Google Drive, Granola, Linear, Notion, Slack, GitHub, GitLab, or any server that exposes resources. The service fetches, snapshots and fingerprints each item, so citations stay checkable | [Connectors](docs/v2/connectors.md) |
+| **Review inbox** | Each branch becomes a proposal: every new or changed fact next to the source passage it cites, questions as decision cards. Approve in the web inbox, from chat via a confirmation link, in Slack, by email, or keep GitHub PRs. Approval is pinned to the version you saw; agents can never approve | [Governance](docs/v2/governance.md) |
+| **Brain as MCP server** | Search, ask and cite the brain from Claude, Cursor or any MCP client — over stdio from a clone, or over HTTP from anywhere, with OIDC or built-in OAuth | [MCP](docs/v2/mcp.md) |
+| **Demand** | Every request is recorded. Frequently read pages need stricter approval and get re-verified sooner; questions the brain couldn't answer become a gap list | [Telemetry](docs/v2/telemetry.md) |
+
+One code path, three profiles — `service.profile` in `brain.config.yaml`:
+
+- **solo** — your laptop or one small container. SQLite, a sign-in secret kept apart from the API token your chats use, approve from your phone (a chat can hand you the link, never approve for you).
+- **team** — SSO sign-in, the person who submitted can't approve their own proposal, hot pages need two approvals.
+- **enterprise** — Postgres, SSO required to approve, owner-team sign-off on hot pages, Slack and GitHub-PR channels, remote MCP behind your IdP.
+
+```bash
+npm install
+node server/bin/almagest.mjs hooks install    # main's git hooks, into .git/ where no checkout can swap them
+mkdir -p ~/.config/almagest && (umask 077; cat > ~/.config/almagest/env <<EOF
+ALMAGEST_SECRET_KEY=$(openssl rand -hex 32)
+ALMAGEST_TOKENS=me:owner:$(openssl rand -hex 16)
+ALMAGEST_LOGINS=me:$(openssl rand -hex 16)
+EOF
+)
+cat ~/.config/almagest/env    # API token for chats: after me:owner: · inbox sign-in secret: after me: in LOGINS
+# In a terminal you never start an agent from:
+(set -a; . ~/.config/almagest/env; set +a; npm run serve)
+# inbox:  http://127.0.0.1:4747/inbox     MCP:  http://127.0.0.1:4747/mcp     or:  node server/bin/almagest.mjs mcp
+```
+
+The secrets live in a file outside the repo, mode 600, and only the service process reads them. Don't `export` them in your shell: an agent session started from that shell inherits them, and with the secret key an agent can mint itself a sign-in link and approve. Always-on, `deploy/launchd/` and `deploy/systemd/` start the service with them the same way.
+
+Containers: `deploy/docker/` (the image clones your brain at start). Always-on on a laptop: `deploy/launchd/`, `deploy/systemd/`. The design and every contract between the parts: [docs/v2/spec.md](docs/v2/spec.md).
+
+> **Before you expose it:** read [docs/v2/security.md](docs/v2/security.md). Every known approval bypass is closed in all three profiles, with a regression test for each. What remains is the limit of any single machine: an agent with an unrestricted shell can reach `.git` and your secrets file, so run unattended ingest as its own OS user or in a container, and protect `main` on your git host.
+
 ## Where it sits
 
 Almagest optimises for one thing — **trust in what the notes say** — and pays for it everywhere else. Named comparisons, so you can tell whether the trade is one you want:
 
 | | Obsidian + plugins | Logseq / Roam | NotebookLM | RAG over a vault (Khoj, Onyx) | Agent memory (mem0, Letta) | **Almagest** |
 |---|---|---|---|---|---|---|
-| Capture speed | **excellent** | **excellent** | good | n/a — reads what you have | **automatic** | **poor** — ingest is a deliberate, reviewed operation |
-| Mobile capture | **yes** | **yes** | **yes** | varies | **yes** | **no** — it is a git repo and a coding agent |
-| Scale | 100k+ notes | 100k+ notes | ~50 sources per notebook | **millions of chunks** | unbounded | thousands of pages; grep and a flat wiki, not a vector store |
-| Answers with citations | plugin-dependent | no | **yes**, to the uploaded source | **yes**, to the chunk | rarely | **yes**, to source + locator, and the citation is checked |
+| Capture speed | **excellent** | **excellent** | good | n/a — reads what you have | **automatic** | **good** with the service — connectors pull on their own, any chat submits a source in one message, a dropped file starts ingesting with no session open. It counts only once reviewed. By hand: poor, ingest is a deliberate session |
+| Mobile capture | **yes** | **yes** | **yes** | varies | **yes** — the service too: one process or container | **partial** — no capture app; with the service, any chat can submit a source, and review and approval work from a phone |
+| Scale | 100k+ notes | 100k+ notes | ~50 sources per notebook | **millions of chunks** | unbounded | thousands of pages; a flat wiki with keyword search — grep for the agent, ranked search over MCP — not a vector store |
+| Answers with citations | plugin-dependent | no | **yes**, to the uploaded source | **yes**, to the chunk | rarely | **yes**, to source + locator, and the citation is checked — from any MCP chat with the service |
 | Citation integrity checked by a program | no | no | no | no | no | **yes** — `tools/audit.mjs`, in CI |
-| Conflicting sources | newest note wins | newest block wins | both summarised, conflict unmarked | both retrieved, conflict unmarked | silently overwritten | **stops and asks**, both claims quoted |
+| Conflicting sources | newest note wins | newest block wins | both summarised, conflict unmarked | both retrieved, conflict unmarked | silently overwritten | **stops and asks**, both claims quoted — with the service, as a question card in the inbox; the page waits unwritten |
 | Locked, agent-proof definitions | no | no | no | no | no | **yes** — canonical tier |
-| Where the truth lives | your files | your files | **their servers** | index + your files | **their store** | **your files, in git** |
-| Review surface for AI writes | none | none | none | n/a | none | **a git diff** |
+| Where the truth lives | your files | your files | **their servers** | index + your files | **their store** | **your files, in git** — the service's database holds only the review queue and request log, never knowledge |
+| Review surface for AI writes | none | none | none | n/a | none | **a git diff** — or, with the service, each fact beside its source in a review inbox |
 | Re-ingesting an edited source | manual | manual | re-upload | re-index | n/a | **content fingerprint → targeted diff** |
 | Runs offline / self-hosted | **yes** | **yes** | no | yes | varies | **yes** |
 
-**Where Almagest loses, plainly.** If you want to capture a thought on a train, use Obsidian — Almagest has no mobile story and no inbox worth the name; a capture here means opening a terminal. If you have 40,000 PDFs, use a real RAG system — this is grep over a flat directory, and it will not embed its way out of that. If you want to ask questions of a document you read once and will never think about again, NotebookLM will do it in ninety seconds with no repo, no config, and no agent. If you want an assistant that quietly remembers things about you, mem0 and Letta are built for exactly that, and Almagest's entire design is a refusal to remember anything quietly.
+**Where Almagest loses, plainly.** If you want to capture a thought on a train, use Obsidian — Almagest has no capture app; even with the service, getting a thought in means a chat submission or a file drop, followed by a review. If you have 40,000 PDFs, use a real RAG system — this is grep over a flat directory, and it will not embed its way out of that. If you want to ask questions of a document you read once and will never think about again, NotebookLM will do it in ninety seconds with no repo, no config, and no agent. If you want an assistant that quietly remembers things about you, mem0 and Letta are built for exactly that, and Almagest's entire design is a refusal to remember anything quietly.
 
 **Where it wins.** When the cost of a confidently wrong note is high — when someone will make a decision on it months from now, when several people share the base, when you will be asked "where did that number come from" — the other tools have no answer and Almagest has a file path, a page number, a fingerprint, and a diff with your merge on it.
 
@@ -125,7 +176,9 @@ What that looks like in practice:
 
 ## What makes it different
 
-- **Nothing unreviewed lands.** The agent works on an `ingest/<source>-<sha>` branch and commits there; `main` moves only when you merge a diff you have read. The gate is a diff, not a summary box — because the failure that matters is not the agent writing without permission, it is the agent writing something plausible and wrong while you skim a box at 11pm and type `y`.
+- **Nothing unreviewed lands.** The agent works on an `ingest/<source>-<sha>` branch and commits there; `main` moves only when you merge a diff you have read — or, with the service, approve that exact version in the review inbox. The gate is a diff, not a summary box — because the failure that matters is not the agent writing without permission, it is the agent writing something plausible and wrong while you skim a box at 11pm and type `y`.
+- **Review without git, if you want it.** With the service, a proposal shows each new or changed fact beside the passage it cites, and the questions the agent could not settle as cards with options. Approve in the browser, from a chat link, in Slack, by email, or keep GitHub PRs. The approval is pinned to the version you saw, and no agent can give one.
+- **Scrutiny follows use.** The service records what gets asked. Frequently read pages need stricter approval and are re-verified sooner; questions the brain could not answer become a gap list of what to ingest next.
 - **Blocking cases still stop mid-run.** Contradictions, anything touching a canonical page, deletions, merges, renames, and low-confidence curated pages are not written to the branch at all. Those are the cases a diff review is a bad place to first encounter.
 - **Every claim cites its source** — down to the section, page, row, slide, or timestamp — in one frozen grammar that a program can parse. A page with no sources is a build failure, not a style note.
 - **Citations point at text you can actually open.** Binary sources get a committed sidecar in `brain/raw/extracted/` with `=== page 12 ===` markers, so `p.12` resolves to a real line in a file in the repo. The PDF stays gitignored; the text it produced does not.
@@ -152,6 +205,15 @@ What that looks like in practice:
 - **Harness portability** — one set of rules in `agent/rules/`, projected into each agent's own format (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/`, `GEMINI.md`) by a single generator. One source of truth, no drift. Claude Code is the reference harness.
 - **Upstream updates** — pull framework improvements with `git merge`. Your content and customisation live in files upstream never touches.
 
+With the [service](#the-service):
+
+- **Background ingest** — a job queue fed by the drop folder, connector schedules and chat submissions; each job runs a locked-down headless agent in its own git worktree, gated by the audit. [Ingest](docs/v2/ingest.md)
+- **Any MCP server as an input** — shipped recipes for Drive, Granola, Linear, Notion, Slack, GitHub, GitLab and web pages; zero config for servers that expose resources; snapshots are fingerprinted so citations stay checkable. [Connectors](docs/v2/connectors.md)
+- **Review inbox and approval channels** — claim-level proposals with source excerpts, decision cards, policy (separation of duties, two-person rule, owner teams), and approval from web, chat link, Slack, email or GitHub PR. [Governance](docs/v2/governance.md)
+- **Almagest as an MCP server** — `search`, `ask`, `get_page` with resolved citations, and `submit_source`, over stdio or HTTP with OIDC or built-in OAuth for claude.ai. [MCP](docs/v2/mcp.md)
+- **Demand tracking** — every request recorded with configurable privacy; demand scores, a re-verify queue, a gap list, and `DEMAND-*` audit warnings. [Telemetry](docs/v2/telemetry.md)
+- **Profiles** — `solo`, `team`, `enterprise` set the defaults (SQLite or Postgres, token or SSO, how strict approval is); none of them can turn approval off. [Security](docs/v2/security.md)
+
 ## Quick start
 
 ```bash
@@ -163,6 +225,7 @@ git clone <this-repo> my-brain && cd my-brain
 3. **Start your agent** in the repo root — `claude`, `codex`, `cursor-agent`, `gemini`, `agy`, whichever you use. It picks up the rules from the repo, branches, and starts writing pages. Per-harness setup in [Agent Harnesses](docs/agent-harnesses.md).
 4. **Review and merge** — `git diff main...ingest/<branch>`, then merge. That is the gate.
 5. **Read it** — `cd site && npm install && npm run dev`.
+6. **Or let it run itself** — start the [service](#the-service) and review in the inbox instead of in git.
 
 Full walkthrough in [Getting Started](docs/getting-started.md).
 
@@ -178,6 +241,9 @@ Full walkthrough in [Getting Started](docs/getting-started.md).
 - [Benchmarks](docs/benchmarks.md) — measuring whether the wiki actually helps
 - [Multi-Brain](docs/multi-brain.md) — running several knowledge domains side by side
 - [Upstream Updates](docs/upstream-updates.md) — pulling framework improvements
+- [v2 service](docs/v2/spec.md) — [ingest](docs/v2/ingest.md) · [connectors](docs/v2/connectors.md) · [governance](docs/v2/governance.md) · [MCP](docs/v2/mcp.md) · [telemetry](docs/v2/telemetry.md) · [security](docs/v2/security.md)
+- [Contributing](CONTRIBUTING.md) — setup, the checks CI runs, and the invariants to keep
+- [Security](SECURITY.md) — how to report a vulnerability, and what is already known
 
 ## Structure
 
@@ -199,6 +265,8 @@ Two things exist exactly once, and everything else is generated from them or cal
 | `brain/canonical-challenges.md` | Data that contradicts a canonical page — logged, never merged |
 | `brain/log.md` | Audit trail of every action |
 | `site/` | Astro frontend, reads from `brain/wiki/` |
+| `server/` | The v2 service — background ingest, connectors, review inbox, MCP server, telemetry |
+| `deploy/` | Docker image and compose, launchd and systemd units for the service |
 | `agent/contract.md` | The minimum capabilities a harness must have to run Almagest |
 | `agent/rules/` | The agent rules — read, ingest, wiki write. One copy, every harness |
 | `tools/audit.mjs` | The audit — schema, links, citations, provenance. Gates every commit and CI run |
@@ -210,13 +278,14 @@ Two things exist exactly once, and everything else is generated from them or cal
 | `benchmarks/drivers/` | One driver per harness — how the benchmark invokes an agent |
 | `docs/` | Framework documentation |
 | `brain.config.yaml` | Instance configuration |
-| `.mcp.json` | MCP servers for remote sources |
+| `.mcp.json` | MCP servers the connectors read from |
 
 ## Requirements
 
 - **An AI coding agent** meeting [`agent/contract.md`](agent/contract.md). Known-good: [Claude Code](https://claude.com/claude-code) (the reference harness), Codex, Cursor, Gemini CLI, Antigravity, Copilot. Setup per harness in [Agent Harnesses](docs/agent-harnesses.md).
-- **Git, and a human who merges.** The agent commits to a branch; `main` moves only when a person merges a reviewed diff. Nothing else enforces that, and there is no auto-merge mode.
-- **Node.js 22+** — for `tools/audit.mjs` and for the site (the site needs 22.22+, Astro 7's floor). This is a hard dependency now, not a site-only one: the audit and the site call the same parser (`tools/lib/wiki-core.mjs`) rather than keeping two that would drift apart, and Node cannot import the site's TypeScript, so the shared file is plain ESM. The site still builds from `cd site && npm install && npm run build` on a fresh clone with no root install — the core imports no packages, by design.
+- **Git, and a human who merges.** The agent commits to a branch; `main` moves only when a person merges a reviewed diff — or, with the service, approves the exact version in the review inbox and the service merges for them. There is no auto-merge mode in either.
+- **For the service only:** Node.js 22.13+ (it uses the built-in `node:sqlite`) and git 2.38+ (`merge-tree --write-tree`). `node server/bin/almagest.mjs doctor` checks both.
+- **Node.js 22+** — for `tools/audit.mjs` and for the site (the site needs a recent 22.x: Astro sets the floor, currently 22.23.4, recorded in `site/package.json` → `engines`). This is a hard dependency now, not a site-only one: the audit and the site call the same parser (`tools/lib/wiki-core.mjs`) rather than keeping two that would drift apart, and Node cannot import the site's TypeScript, so the shared file is plain ESM. The site still builds from `cd site && npm install && npm run build` on a fresh clone with no root install — the core imports no packages, by design.
 - `shasum -a 256` or `sha256sum` — for source fingerprinting.
 - Bash and coreutils — for `tools/agent-shims.sh` and the benchmark harness, which deliberately need no language runtime at all.
 

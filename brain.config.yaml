@@ -268,6 +268,8 @@ audit:
       - PROV-005         # page exists with no index.md row
       - CANON-001        # outstanding entries in canonical-challenges.md
       - STALE-001        # last_verified past threshold
+      - DEMAND-001       # hot page past telemetry.stale_after_days_hot  (only with --demand)
+      - DEMAND-002       # hot page with confidence: low | unknown        (only with --demand)
 
   # PROV-004 and PROV-005 are the two directions of the same drift and are
   # deliberately NOT the same severity. An index.md row naming a page that does
@@ -320,3 +322,67 @@ sources:
     #     - "**/*.md"
     #   branch: main
     #   label: design-system
+
+  # Any MCP server as an input — Drive, Granola, Linear, Notion, Slack, your own.
+  # Read by the v2 service (server/), which fetches, snapshots and fingerprints
+  # each item, then hands it to background ingest. The `remote` entries above
+  # keep working: they run through the github / gitlab recipes.
+  # Full reference: docs/v2/connectors.md
+  connectors: []
+    # - id: meeting-notes
+    #   mcp: granola               # key in .mcp.json → mcpServers, a URL, or an inline object
+    #   recipe: granola            # shipped recipe · mcp-resources (zero config) · custom
+    #   schedule: "0 * * * *"      # cron; omit for manual sync only
+    #   label: meetings
+    #   tier: evidence
+
+
+# ══ v2 service ═══════════════════════════════════════════════════════════════
+# Everything below is read only by the v2 service (`npx almagest serve`, see
+# docs/v2/spec.md). A v1 workflow — an agent session plus tools/audit.mjs —
+# ignores it entirely.
+#
+# A profile fills every default; set a key below only to change it. Nothing can
+# configure away the human approval: agents never approve, and nothing merges
+# to main without a human approving the exact version they were shown.
+#
+#   solo        one person, sqlite, a pasted token, approve in the web inbox or from chat
+#   team        OIDC sign-in, submitter ≠ approver, hot pages need two approvals
+#   enterprise  Postgres, SSO required to approve, owner-team approval on hot pages
+
+service:
+  profile: solo                    # solo | team | enterprise
+  # http: { host: 127.0.0.1, port: 4747, base_url: https://brain.example.com }
+  # auth: { provider: token, tokens_env: ALMAGEST_TOKENS }      # or provider: oidc
+  # git:  { remote: origin, push: false }
+
+# Background ingest — docs/v2/ingest.md
+ingest:
+  driver: claude-code              # claude-code | shell | fake
+  watch_raw: true                  # ingest files dropped into brain/raw/ on their own
+  # budget_usd_per_job: 5
+  # extra_tools: ["Bash(pdftotext:*)"]
+
+# Approvals — docs/v2/governance.md
+governance:
+  channels:
+    - kind: web                    # the review inbox at /inbox — always on
+    - kind: mcp                    # ask for an approval link from any chat
+    # - kind: slack      { webhook_env: SLACK_WEBHOOK_URL, signing_secret_env: SLACK_SIGNING_SECRET }
+    # - kind: email      { from: "Almagest <brain@example.com>", transport: http, http: { url: https://api.resend.com/emails, token_env: RESEND_API_KEY } }
+    # - kind: github-pr  { repo: acme/brain, token_env: GITHUB_TOKEN, webhook_secret_env: GITHUB_WEBHOOK_SECRET }
+  # rules:
+  #   - when: { hot: true }
+  #     require: { approvals: 2, per_page: true }
+
+# Almagest as an MCP server for your chats — docs/v2/mcp.md
+mcp:
+  allow_url_fetch: false           # let chats submit URLs for ingest
+  builtin_oauth: true              # token mode: the OAuth front door claude.ai needs
+
+# Request tracking and demand — docs/v2/telemetry.md
+telemetry:
+  enabled: true
+  # store_queries: hashed          # plain | hashed | none
+  # retention_days: 90
+  # stale_after_days_hot: 30       # frequently-read pages are re-verified this often

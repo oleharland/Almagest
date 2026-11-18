@@ -9,6 +9,7 @@
  * returns findings. Nothing here writes to disk — the audit reports, it does
  * not fix.
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -86,9 +87,10 @@ class Findings {
   }
 
   add(id, message, opts = {}) {
-    // `opts.severity` is the only per-finding override, and it exists for one
-    // case: PROV-001 on an `extracted: none` source, where the file is
-    // legitimately absent from a fresh clone. See checkProvenance.
+    // `opts.severity` is the only per-finding override, and it exists for two
+    // cases of one fact: PROV-001 on an `extracted: none` source or an
+    // ephemeral connector snapshot, where the file is legitimately absent from
+    // a fresh clone. See checkProvenance.
     const severity = opts.severity
       ? opts.severity
       : this.config.severityWarnings.has(id)
@@ -296,7 +298,20 @@ function checkLinks(pages, known, config, out) {
 
 // ── CITE ─────────────────────────────────────────────────────────────────────
 
-function checkCitations(pages, config, manifest, out) {
+/**
+ * A `kind: connector` snapshot's digest as it sits on disk, or '' when the
+ * file is absent. Memoised per run — many pages cite one snapshot.
+ */
+function snapshotDigest(repoRoot, rel, cache) {
+  if (cache.has(rel)) return cache.get(rel);
+  const file = path.resolve(repoRoot, rel);
+  const digest = fs.existsSync(file) ? crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex') : '';
+  cache.set(rel, digest);
+  return digest;
+}
+
+function checkCitations(pages, config, manifest, repoRoot, out) {
+  const digests = new Map();
   for (const page of pages) {
     const where = { page: page.id, file: page.relFile };
     const ids = new Set(page.sources.map((s) => s.id).filter(Boolean));
@@ -385,6 +400,23 @@ function checkCitations(pages, config, manifest, out) {
           null;
         if (!entry) continue;
         const expected = entry.extractedSha256 || entry.sha256;
+
+        // A connector snapshot was fingerprinted by the service, not by
+        // whoever committed it. If the committed bytes no longer hash to that
+        // digest, the file was edited after capture — and every citation into
+        // it points at text the source never said. The page/manifest
+        // comparison below cannot see this: both would still agree.
+        if (entry.kind === 'connector' && expected && entry.extracted && entry.snapshot !== 'ephemeral') {
+          const onDisk = snapshotDigest(repoRoot, entry.extracted, digests);
+          if (onDisk && onDisk !== expected) {
+            out.add(
+              'CITE-005',
+              `connector snapshot \`${entry.extracted}\` hashes to ${short(onDisk)}, but the service fingerprinted it as ${short(expected)}`,
+              { ...where, hint: 'the snapshot was edited after it was captured — restore it, or re-sync the connector and re-ingest' }
+            );
+          }
+        }
+
         if (!expected || expected === source.sha256) continue;
         out.add(
           'CITE-005',
@@ -460,6 +492,21 @@ function checkProvenance(pages, config, manifest, index, repoRoot, out) {
         continue;
       }
 
+      // `kind: connector` — the entry must say where the snapshot came from,
+      // or nobody can re-sync it. The snapshot itself is a committed sidecar,
+      // so the ordinary on-disk check below applies to it unchanged. (Pages
+      // find connector entries by path: a `<connector>:<ref>` manifest id is
+      // never a valid citation id.)
+      if (entry && entry.kind === 'connector') {
+        const lacking = ['connector', 'ref', 'extracted'].filter((k) => !entry[k]);
+        if (lacking.length) {
+          out.add('PROV-003', `connector entry \`${entry.id}\` is missing ${lacking.map((k) => `\`${k}\``).join(', ')}`, {
+            ...where,
+            hint: 'connector entries record connector, server, ref, version, extracted and extracted_sha256',
+          });
+        }
+      }
+
       // Repo-root relative is the schema. `raw/…` relative to brain_dir is the
       // v1 spelling and still resolves, so PROV-001 does not double-report what
       // SCHEMA-001 already flags as legacy.
@@ -469,7 +516,15 @@ function checkProvenance(pages, config, manifest, index, repoRoot, out) {
         // with no OCR, an untranscribed recording. The page then cites the
         // gitignored original, which is absent on every fresh clone. That is a
         // fact worth reporting and not a build failure, so it is a warning.
-        if (entry && entry.extracted === 'none') {
+        if (entry && entry.kind === 'connector' && entry.snapshot === 'ephemeral') {
+          // `snapshot: ephemeral` — the connector was configured not to commit
+          // its snapshots. Same honesty as `extracted: none`: reported, not fatal.
+          out.add('PROV-001', `\`${source.path}\` is an ephemeral connector snapshot — not committed, so the citation cannot be machine-verified`, {
+            ...where,
+            severity: 'warning',
+            hint: 'set `snapshot: commit` on the connector to make these citations checkable',
+          });
+        } else if (entry && entry.extracted === 'none') {
           out.add('PROV-001', `\`${source.path}\` is unextractable and gitignored — the citation cannot be machine-verified`, {
             ...where,
             severity: 'warning',
@@ -601,7 +656,7 @@ export function runChecks({ pages, known, config, manifest, index, challenges, r
   const out = new Findings(config);
   checkSchema(pages, config, out);
   checkLinks(pages, known, config, out);
-  checkCitations(pages, config, manifest, out);
+  checkCitations(pages, config, manifest, repoRoot, out);
   checkProvenance(pages, config, manifest, index, repoRoot, out);
   checkCanonical(challenges, config, repoRoot, out);
   checkStale(pages, config, today, out);

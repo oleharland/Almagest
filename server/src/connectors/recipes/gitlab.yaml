@@ -1,0 +1,55 @@
+# Recipe: gitlab — files in a GitLab project (gitlab.com or self-hosted).
+#
+# This is also what v1 `sources.remote` entries with `provider: gitlab` run
+# through: `select` is filled from the remote entry (repo, paths, branch).
+#
+# verified: no — written against the tool names of the widely used community
+# server (@zereight/mcp-gitlab: list_commits, get_repository_tree,
+# get_file_contents) and GitLab's REST shapes those tools wrap. GitLab's own
+# built-in endpoint (`/api/v4/mcp`, the `gitlab` entry in .mcp.json) exposes
+# issues / merge requests / search and, as of writing, no file reading — point
+# this connector's `mcp` at a server that has these tools, or override `list:`
+# and `fetch:` in config.
+#
+# select:
+#   repo:   namespace/project      (required; used as the project id)
+#   paths:  ["**/*.md"]            globs within the project; empty = every file
+#   branch: main                   default: the project's default branch
+name: gitlab
+description: Files in a GitLab project at the head of a branch.
+resolve:
+  - tool: list_commits
+    args:
+      project_id: "{{select.repo}}"
+      ref_name: "{{select.branch}}"
+      per_page: 1
+    set:
+      commit: "[0].id | [0].sha | commits[0].id"
+list:
+  tool: get_repository_tree
+  args:
+    project_id: "{{select.repo}}"
+    ref: "{{vars.commit}}"
+    recursive: true
+    per_page: 100
+    page_token: "{{cursor}}"
+  items: "$[*] | tree[*] | items[*]"
+  ref: path
+  version: id
+  title: "{{select.repo}}/{{raw.path}}"
+  commit: "{{vars.commit}}"
+  mime: "{{raw.path | mime}}"
+  next_cursor: "next_page_token | nextPageToken"
+  where:
+    - path: type
+      equals: blob
+    - field: ref
+      glob: "{{select.paths}}"
+fetch:
+  tool: get_file_contents
+  args:
+    project_id: "{{select.repo}}"
+    file_path: "{{item.ref}}"
+    ref: "{{item.commit}}"
+  text: "content | text | $"
+  render: auto

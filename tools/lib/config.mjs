@@ -129,6 +129,18 @@ export function loadManifest(repoRoot, manifestPath) {
       extracted: entry.extracted == null ? '' : String(entry.extracted),
       extractedSha256: entry.extracted_sha256 == null ? '' : String(entry.extracted_sha256).toLowerCase(),
       commit: entry.commit == null ? '' : String(entry.commit),
+      provider: entry.provider == null ? '' : String(entry.provider),
+      repo: entry.repo == null ? '' : String(entry.repo),
+      // `kind: connector` (v2) — an item fetched over MCP by the service. The
+      // snapshot it was rendered to is both `path` and `extracted`: there is no
+      // other original on disk. `snapshot: ephemeral` means the snapshot was
+      // deliberately not committed, so its citations cannot be resolved.
+      connector: entry.connector == null ? '' : String(entry.connector),
+      server: entry.server == null ? '' : String(entry.server),
+      ref: entry.ref == null ? '' : String(entry.ref),
+      version: entry.version == null ? '' : String(entry.version),
+      snapshot: entry.snapshot == null ? '' : String(entry.snapshot),
+      label: entry.label == null ? '' : String(entry.label),
       status: entry.status == null ? '' : String(entry.status),
       pages: Array.isArray(entry.pages) ? entry.pages.map(String) : [],
       previousPaths: Array.isArray(entry.previous_paths) ? entry.previous_paths.map(String) : [],

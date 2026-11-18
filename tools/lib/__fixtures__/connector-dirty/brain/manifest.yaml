@@ -1,0 +1,103 @@
+version: 1
+
+# Fixture — every connector-specific provenance finding, once each.
+sources:
+  # The committed snapshot was edited after capture (a line was appended):
+  # it no longer hashes to extracted_sha256, although page and manifest still
+  # agree with each other — CITE-005 on release-policy.
+  - id: "product-drive:1AbCdEfGhIjK"
+    kind: connector
+    connector: product-drive
+    server: google-drive
+    ref: 1AbCdEfGhIjK
+    version: "2026-01-04T09:00:00Z"
+    path: brain/raw/extracted/product-drive/1abcdefghijk-a24224a1.txt
+    sha256: ac4e1a1a82cbda5cd119a77100ffd01aaa046bedfe855e512169979e0fb2aec2
+    extracted: brain/raw/extracted/product-drive/1abcdefghijk-a24224a1.txt
+    extracted_sha256: ac4e1a1a82cbda5cd119a77100ffd01aaa046bedfe855e512169979e0fb2aec2
+    snapshot: commit
+    bytes: 427
+    first_ingested: 2026-01-05
+    last_ingested: 2026-01-05
+    pages:
+      - release-policy
+    status: ingested
+
+  # Intact. release-cadence carries an older digest for it — CITE-005.
+  - id: "team-calls:not_Abc123Def456Gh"
+    kind: connector
+    connector: team-calls
+    server: granola
+    ref: not_Abc123Def456Gh
+    version: "2026-01-04T15:30:00Z"
+    path: brain/raw/extracted/team-calls/not-abc123def456gh-6eeedaeb.txt
+    sha256: 7c7be2da5871b5b92e087ab6c7ea744e33149422f859efec2448d88997f30a64
+    extracted: brain/raw/extracted/team-calls/not-abc123def456gh-6eeedaeb.txt
+    extracted_sha256: 7c7be2da5871b5b92e087ab6c7ea744e33149422f859efec2448d88997f30a64
+    snapshot: commit
+    bytes: 368
+    first_ingested: 2026-01-05
+    last_ingested: 2026-01-05
+    pages:
+      - release-policy
+      - release-cadence
+    status: ingested
+
+  # No `ref` — nobody can re-sync it — PROV-003 on connector-drift.
+  - id: "wiki-export:owners"
+    kind: connector
+    connector: wiki-export
+    server: confluence
+    version: "1"
+    path: brain/raw/extracted/wiki-export/owners-1a2b3c4d.txt
+    sha256: be71ff064d6c5a6a43e631dddd034942f0dae5723217ef63f0e2083a895437cc
+    extracted: brain/raw/extracted/wiki-export/owners-1a2b3c4d.txt
+    extracted_sha256: be71ff064d6c5a6a43e631dddd034942f0dae5723217ef63f0e2083a895437cc
+    snapshot: commit
+    bytes: 260
+    first_ingested: 2026-01-05
+    last_ingested: 2026-01-05
+    pages:
+      - connector-drift
+    status: ingested
+
+  # Configured `snapshot: ephemeral` — never committed. PROV-001 as a warning.
+  - id: "slack-eng:C024BE91L"
+    kind: connector
+    connector: slack-eng
+    server: slack
+    ref: C024BE91L
+    version: ""
+    path: brain/raw/extracted/slack-eng/c024be91l-0badc0de.txt
+    sha256: "1111111111111111111111111111111111111111111111111111111111111111"
+    extracted: brain/raw/extracted/slack-eng/c024be91l-0badc0de.txt
+    extracted_sha256: "1111111111111111111111111111111111111111111111111111111111111111"
+    snapshot: ephemeral
+    bytes: 900
+    first_ingested: 2026-01-05
+    last_ingested: 2026-01-05
+    pages:
+      - connector-drift
+    status: ingested
+
+  # `snapshot: commit`, but the snapshot is not in the repo — PROV-001 error.
+  - id: "linear-eng:ENG-42"
+    kind: connector
+    connector: linear-eng
+    server: linear
+    ref: ENG-42
+    version: "2026-01-03T00:00:00Z"
+    path: brain/raw/extracted/linear-eng/eng-42-deadbeef.txt
+    sha256: "2222222222222222222222222222222222222222222222222222222222222222"
+    extracted: brain/raw/extracted/linear-eng/eng-42-deadbeef.txt
+    extracted_sha256: "2222222222222222222222222222222222222222222222222222222222222222"
+    snapshot: commit
+    bytes: 500
+    first_ingested: 2026-01-05
+    last_ingested: 2026-01-05
+    pages:
+      - connector-drift
+    status: ingested
+
+  # (brain/raw/extracted/notion-wiki/orphan-5e6f7a8b.txt is cited by
+  # connector-drift and recorded nowhere — PROV-003.)

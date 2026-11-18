@@ -136,8 +136,9 @@ Scope, so the constraint is not over-read:
 | Component | Runtime | Installs |
 |-----------|---------|----------|
 | `tools/audit.mjs`, CI | **Node 22+** | root `npm ci` |
-| `site/` | Node 22.22+ (Astro 7's floor) | `site/` `npm ci` only — see below |
+| `site/` | Node 22.23.4+ (Astro's floor — see `site/package.json` → `engines`) | `site/` `npm ci` only — see below |
 | `tools/lib/wiki-core.mjs` | Node 22+ | **nothing.** Node builtins only |
+| `server/` (the optional v2 service) | **Node 22.13+** (built-in `node:sqlite`; `almagest doctor` checks it) | root `npm ci` (a workspace) |
 | `tools/agent-shims.sh` | bash + coreutils, unchanged | nothing |
 | `benchmarks/` | bash + coreutils — the no-language-runtime constraint still holds there, deliberately | nothing |
 

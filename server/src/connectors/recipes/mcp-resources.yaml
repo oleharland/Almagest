@@ -1,0 +1,40 @@
+# Recipe: mcp-resources — the generic one. Works with zero config on ANY MCP
+# server that exposes resources, because it uses only protocol methods every
+# such server implements: `resources/list` (paginated by `nextCursor`) and
+# `resources/read`.
+#
+# verified: yes — exercised by server/test/connectors against an SDK server,
+# including pagination, text and blob contents, and JSON / markdown mime types.
+#
+# select (all optional):
+#   include: ["file:///docs/**"]   globs over the resource URI; empty = everything
+#   exclude: ["**/*.png"]          globs over the resource URI to leave out
+#   mime:    ["text/markdown"]     only these mime types
+name: mcp-resources
+description: Every resource a server lists, read with resources/read.
+list:
+  method: resources/list
+  args:
+    cursor: "{{cursor}}"
+  items: "resources[*]"
+  ref: uri
+  title: "title | name | uri"
+  # Resources carry no revision in the core protocol. Some servers set
+  # annotations.lastModified; when they do, unchanged items skip the read.
+  version: "annotations.lastModified"
+  mime: mimeType
+  next_cursor: nextCursor
+  where:
+    - field: ref
+      glob: "{{select.include}}"
+    - field: ref
+      not_glob: "{{select.exclude}}"
+    - path: mimeType
+      in: "{{select.mime}}"
+fetch:
+  method: resources/read
+  args:
+    uri: "{{item.ref}}"
+  text: "contents[*]"
+  mime: "contents[0].mimeType"
+  render: auto
