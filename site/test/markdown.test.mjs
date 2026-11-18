@@ -9,14 +9,13 @@ import path from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import matter from 'gray-matter';
-import { marked } from '../../../site/node_modules/marked/lib/marked.esm.js';
+import { marked } from 'marked';
 
-import { loadWiki } from '../../../tools/lib/wiki-core.mjs';
-import { isSafeUrl, renderMarkdown } from '../../../site/src/lib/markdown.mjs';
-import { rmrf } from '../helpers.mjs';
+import { loadWiki } from '../../tools/lib/wiki-core.mjs';
+import { isSafeUrl, renderMarkdown } from '../src/lib/markdown.mjs';
 
 const dirs = [];
-after(() => { while (dirs.length) rmrf(dirs.pop()); });
+after(() => { while (dirs.length) fs.rmSync(dirs.pop(), { recursive: true, force: true }); });
 
 const plain = (md) => marked.parse(md, { async: false });
 
