@@ -101,6 +101,23 @@ describe('config', () => {
     assert.equal(c.sources.connectors.length, 1);
     assert.equal(c.sources.connectors[0].recipe, 'github');
     assert.equal(c.sources.connectors[0].fromV1Remote, true);
+    assert.equal('lookup' in c.sources.connectors[0], false);
+  });
+
+  it('a v1 sources.remote entry opts into live lookup with lookup: true, and only with true', () => {
+    const load = (extra) => {
+      const r = repo();
+      const cfgPath = path.join(r, 'brain.config.yaml');
+      const YAML_REMOTE = `  remote:\n    - provider: github\n      repo: acme/docs\n      paths: ["**/*.md"]\n${extra}`;
+      const text = fs.readFileSync(cfgPath, 'utf-8').replace(/^\s*remote:.*$/m, '').replace(/^sources:\s*$/m, `sources:\n${YAML_REMOTE}`);
+      fs.writeFileSync(cfgPath, text.includes('sources:') ? text : `${text}\nsources:\n${YAML_REMOTE}`);
+      return loadServiceConfig(r).sources.connectors[0];
+    };
+    const on = load('      lookup: true\n      lookup_select: { paths: ["docs/**"] }\n');
+    assert.equal(on.lookup, true);
+    assert.deepEqual(on.lookup_select, { paths: ['docs/**'] });
+    assert.equal('lookup' in load('      lookup: "yes"\n'), false);
+    assert.equal('lookup' in load('      lookup: false\n'), false);
   });
 });
 

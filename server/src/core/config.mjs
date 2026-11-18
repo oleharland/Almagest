@@ -148,6 +148,9 @@ function remoteAsConnectors(remote) {
     tier: r.tier || 'evidence',
     snapshot: 'commit',
     fromV1Remote: true,
+    // Live lookup is opt-in per connector; a remote entry opts in the same way.
+    ...(r.lookup === true ? { lookup: true } : {}),
+    ...(r.lookup_select && typeof r.lookup_select === 'object' ? { lookup_select: r.lookup_select } : {}),
   }));
 }
 

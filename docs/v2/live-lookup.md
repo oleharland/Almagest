@@ -696,6 +696,11 @@ passages share it as described under "When the answer is given". Live passages
 come out of the passage share, as described under [The live pass](#the-live-pass). Every key is listed with its default in
 [mcp.md](mcp.md#configuration).
 
+A repository listed under `sources.remote` opts in the same way: add
+`lookup: true` to its entry. It runs through the `github` or `gitlab` recipe,
+so it can be searched only if that recipe has a `search` block. The shipped
+`github` recipe has one. The `gitlab` recipe does not.
+
 ## Where the code is
 
 | File | What it holds |
