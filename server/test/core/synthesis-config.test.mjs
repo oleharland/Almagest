@@ -36,9 +36,9 @@ describe('synthesis: config and vocabulary', () => {
     assert.ok(JOB_TRIGGERS.includes('synthesis'));
   });
 
-  it('names the branch ingest/learnings-<sha7>', () => {
-    assert.equal(learningsBranch('0123456789abcdef'), 'ingest/learnings-0123456');
-    assert.match(learningsBranch('0123456789abcdef', { unique: true }), /^ingest\/learnings-[0-9a-f]{7}$/);
-    assert.notEqual(learningsBranch('0123456789abcdef', { unique: true }), 'ingest/learnings-0123456');
+  it('names the branch ingest/learnings_<sha7>', () => {
+    assert.equal(learningsBranch('0123456789abcdef'), 'ingest/learnings_0123456');
+    assert.match(learningsBranch('0123456789abcdef', { unique: true }), /^ingest\/learnings_[0-9a-f]{7}$/);
+    assert.notEqual(learningsBranch('0123456789abcdef', { unique: true }), 'ingest/learnings_0123456');
   });
 });

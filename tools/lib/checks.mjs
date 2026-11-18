@@ -210,97 +210,153 @@ function rawIndirection(block, note) {
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
 
-/** Does a line start a block that interrupts a paragraph (so no code span crosses into it)? */
-function interruptsParagraph(line) {
-  if (line.trim() === '') return true;
-  const open = FENCE_OPEN.exec(line);
-  if (open && !(open[1][0] === '`' && open[2].includes('`'))) return true;
-  return /^ {0,3}<!--/.test(line) || /^ {0,3}#{1,6}(\s|$)/.test(line);
+/**
+ * CommonMark HTML blocks that stay open until their end condition, however
+ * many blank lines come first (types 1 to 5). Each start needs at most three
+ * spaces of indent; the end condition is tested on the start line too.
+ */
+const HTML_BLOCKS = [
+  { kind: 'html', start: /^ {0,3}<(?:script|pre|style|textarea)(?:[ \t>]|$)/i, end: /<\/(?:script|pre|style|textarea)>/i },
+  { kind: 'comment', start: /^ {0,3}<!--/, end: /-->/ },
+  { kind: 'html', start: /^ {0,3}<\?/, end: /\?>/ },
+  { kind: 'html', start: /^ {0,3}<![A-Za-z]/, end: />/ },
+  { kind: 'html', start: /^ {0,3}<!\[CDATA\[/, end: /\]\]>/ },
+];
+const THEMATIC = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+const ATX = /^ {0,3}#{1,6}(?:[ \t]|$)/;
+const BULLET = /^( {0,3})([-+*])( +|\t|$)/;
+const ORDERED = /^( {0,3})(\d{1,9})([.)])( +|\t|$)/;
+
+const leading = (line) => line.length - line.trimStart().length;
+const expandLeadingTabs = (line) => {
+  const m = /^[ \t]*/.exec(line)[0];
+  if (!m.includes('\t')) return line;
+  let col = 0;
+  for (const c of m) col = c === '\t' ? col + 4 - (col % 4) : col + 1;
+  return ' '.repeat(col) + line.slice(m.length);
+};
+
+/** The list marker that starts `rest`: `{ offset, empty, ordered, start }`, or null (a thematic break is not a marker). */
+function listMarker(rest) {
+  if (THEMATIC.test(rest)) return null;
+  const m = BULLET.exec(rest) || ORDERED.exec(rest);
+  if (!m) return null;
+  const bullet = m.length === 4;
+  const indent = m[1].length;
+  const width = bullet ? 1 : m[2].length + 1;
+  const after = rest.slice(indent + width);
+  const empty = after.trim() === '';
+  const gap = /^[ \t]*/.exec(after)[0].length;
+  const spaces = empty || gap >= 5 ? 1 : Math.max(1, gap);
+  return { offset: indent + width + spaces, empty, ordered: !bullet, start: bullet ? 1 : Number(m[2]) };
 }
 
-/** Where a run of exactly `n` backticks starts in `line` at or after `from`, or -1. */
-function findBacktickRun(line, n, from) {
-  for (let i = from; i < line.length; i++) {
-    if (line[i] !== '`') continue;
-    let j = i;
-    while (line[j] === '`') j++;
-    if (j - i === n) return i;
-    i = j - 1;
-  }
-  return -1;
+/** Does `rest` start a block of its own (so it is not a lazy continuation of a paragraph)? */
+function startsBlock(rest) {
+  if (/^ {0,3}>/.test(rest) || ATX.test(rest) || THEMATIC.test(rest)) return true;
+  const open = FENCE_OPEN.exec(rest);
+  if (open && !(open[1][0] === '`' && open[2].includes('`'))) return true;
+  if (HTML_BLOCKS.some((h) => h.start.test(rest))) return true;
+  return listMarker(rest) !== null;
 }
 
 /**
- * Does a page body end inside an HTML comment (`<!--` with no `-->` after it)
- * or inside a fenced code block? Returns 'comment', 'fence' or null. Either one
- * would swallow whatever is added below the page's last section later.
+ * Does a page body end inside a block that stays open to the end of the page?
+ * Returns 'fence', 'comment' (an HTML comment block), 'html' (any other
+ * CommonMark HTML block of types 1 to 5), or null. A Markdown renderer treats
+ * everything added after such a block as part of it, so a later section would
+ * vanish or turn into markup.
  *
- * Fences follow CommonMark: three or more backticks or tildes, indented up to
- * three spaces, a backtick fence's info string holding no backtick; one closes
- * only with the same character, at least as long, up to three spaces of indent,
- * and nothing after it but spaces. Indented code is not a fence.
+ * The scan follows CommonMark's block structure, line by line:
  *
- * Inline code follows CommonMark too: a run of backticks closes with the next
- * run of the same length, and the span may cross a line break but not a blank
- * line (nor a line that starts a fence, a comment or a heading). A `<!--` inside
- * a span is code. A run with no closer is literal. A comment marker inside a
- * fence (or a fence marker inside a comment) means nothing.
+ *   - a fenced block opens with three or more backticks or tildes, indented
+ *     up to three spaces (a backtick fence's info string holds no backtick);
+ *     it closes with the same character, at least as long, up to three
+ *     spaces of indent and nothing after it but spaces;
+ *   - an HTML block of type 1 (`<script`, `<pre`, `<style`, `<textarea`, until
+ *     the matching closing tag), 2 (`<!--` until `-->`), 3 (`<?` until `?>`),
+ *     4 (`<!` and a letter, until `>`) or 5 (`<![CDATA[` until `]]>`) starts
+ *     when a line begins with that text after at most three spaces of indent,
+ *     outside any code block, and may interrupt a paragraph. Types 6 and 7
+ *     end at the next blank line and cannot swallow what comes after;
+ *   - a block inside a list item or a blockquote ends with its container: an
+ *     unclosed fence in a list item closes when the item does, and a fence in
+ *     a quote closes at the first line without the `>`;
+ *   - indented code (four spaces) is never scanned, and neither is inline
+ *     text: a `<!--` in the middle of a line, or inside a code span, starts no
+ *     block.
  */
 export function bodyEndsOpen(body) {
-  const lines = String(body ?? '').replace(/\r/g, '').split('\n');
-  let fence = null;
-  let comment = false;
-  let at = 0;          // line index
-  let col = 0;         // column in lines[at]
-  while (at < lines.length) {
-    const line = lines[at];
-    if (col === 0) {
-      if (fence) {
-        const close = FENCE_CLOSE.exec(line);
-        if (close && close[1][0] === fence.ch && close[1].length >= fence.len) fence = null;
-        at++;
+  const lines = String(body ?? '').replace(/\r/g, '').split('\n').map(expandLeadingTabs);
+  const stack = [];        // open containers: { type: 'quote' } | { type: 'list', offset }
+  let leaf = null;         // an open fence or HTML block: { kind, depth, ch?, len?, end? }
+  let paragraph = false;   // is the last line of the innermost block paragraph text?
+  for (const line of lines) {
+    let rest = line;
+    let matched = 0;
+    for (const c of stack) {
+      if (c.type === 'quote') {
+        const m = /^ {0,3}> ?/.exec(rest);
+        if (!m) break;
+        rest = rest.slice(m[0].length);
+      } else if (rest.trim() !== '') {
+        if (leading(rest) < c.offset) break;
+        rest = rest.slice(c.offset);
+      }
+      matched += 1;
+    }
+    if (leaf) {
+      if (matched < leaf.depth) {
+        leaf = null;                       // its container ended: so did the block
+      } else {
+        if (leaf.kind === 'fence') {
+          const close = FENCE_CLOSE.exec(rest);
+          if (close && close[1][0] === leaf.ch && close[1].length >= leaf.len) leaf = null;
+        } else if (leaf.end.test(rest)) {
+          leaf = null;
+        }
         continue;
       }
-      if (!comment) {
-        const open = FENCE_OPEN.exec(line);
-        if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
-          fence = { ch: open[1][0], len: open[1].length };
-          at++;
-          continue;
-        }
+    }
+    if (matched < stack.length) {
+      const lazy = paragraph && rest.trim() !== '' && !startsBlock(rest);
+      if (lazy) continue;                  // a paragraph runs on without its prefix
+      stack.length = matched;
+      paragraph = false;
+    }
+    // New containers, then the leaf block of what is left.
+    for (;;) {
+      if (leading(rest) >= 4 && !paragraph) break;
+      const quote = /^ {0,3}> ?/.exec(rest);
+      if (quote) { stack.push({ type: 'quote' }); rest = rest.slice(quote[0].length); paragraph = false; continue; }
+      const marker = listMarker(rest);
+      if (marker && !(paragraph && (marker.empty || (marker.ordered && marker.start !== 1)))) {
+        stack.push({ type: 'list', offset: marker.offset });
+        rest = rest.slice(marker.offset);
+        paragraph = false;
+        continue;
       }
+      break;
     }
-    if (comment) {
-      const end = line.indexOf('-->', col);
-      if (end === -1) { at++; col = 0; continue; }
-      comment = false;
-      col = end + 3;
+    if (rest.trim() === '') { paragraph = false; continue; }
+    if (leading(rest) >= 4) { if (!paragraph) continue; paragraph = true; continue; }   // indented code, or a paragraph continuation
+    const open = FENCE_OPEN.exec(rest);
+    if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
+      leaf = { kind: 'fence', depth: stack.length, ch: open[1][0], len: open[1].length };
+      paragraph = false;
       continue;
     }
-    const tick = line.indexOf('`', col);
-    const start = line.indexOf('<!--', col);
-    if (tick === -1 && start === -1) { at++; col = 0; continue; }
-    if (start !== -1 && (tick === -1 || start < tick)) {
-      const end = line.indexOf('-->', start + 2);
-      if (end === -1) { comment = true; at++; col = 0; continue; }
-      col = end + 3;
+    const block = HTML_BLOCKS.find((h) => h.start.test(rest));
+    if (block) {
+      paragraph = false;
+      if (!block.end.test(rest)) leaf = { kind: block.kind, depth: stack.length, end: block.end };
       continue;
     }
-    let run = tick;
-    while (line[run] === '`') run++;
-    const n = run - tick;
-    // The closing run: on this line, or on a later line of the same paragraph.
-    let closeAt = findBacktickRun(line, n, run);
-    let closeLine = at;
-    for (let k = at + 1; closeAt === -1 && k < lines.length && !interruptsParagraph(lines[k]); k++) {
-      closeAt = findBacktickRun(lines[k], n, 0);
-      closeLine = k;
-    }
-    if (closeAt === -1) { col = run; continue; }   // no closer: the backticks are literal text
-    at = closeLine;
-    col = closeAt + n;
+    paragraph = !(ATX.test(rest) || THEMATIC.test(rest));
   }
-  return fence ? 'fence' : comment ? 'comment' : null;
+  // What is added later starts at column 0, which ends every list item and quote:
+  // only a block that is not inside a container is still open then.
+  return leaf && leaf.depth === 0 ? leaf.kind : null;
 }
 
 function buildTypeVocabulary(pages, config) {
@@ -433,13 +489,14 @@ function checkSchema(pages, config, out) {
       }
     }
 
-    // SCHEMA-007 — the body must not end inside an HTML comment or a code fence.
+    // SCHEMA-007 — the body must not end inside an HTML comment, another HTML block or a code fence.
     {
       const open = bodyEndsOpen(page.body);
       if (open) {
-        out.add('SCHEMA-007', `the page ends inside ${open === 'comment' ? 'an HTML comment that is never closed (`<!--` with no `-->`)' : 'a fenced code block that is never closed'} — it would swallow whatever is added below it later`, {
+        const what = { comment: 'an HTML comment that is never closed (`<!--` with no `-->`)', html: 'an HTML block that is never closed (`<script`, `<pre`, `<style`, `<textarea`, `<?`, `<!` or `<![CDATA[`)', fence: 'a fenced code block that is never closed' }[open];
+        out.add('SCHEMA-007', `the page ends inside ${what} — it would swallow whatever is added below it later`, {
           ...where,
-          hint: open === 'comment' ? 'close the comment with `-->`' : 'close the fence with a line of the same character, at least as long',
+          hint: open === 'comment' ? 'close the comment with `-->`' : open === 'html' ? 'close the block (`</script>`, `</pre>`, `</style>`, `</textarea>`, `?>`, `>` or `]]>`) or remove the markup' : 'close the fence with a line of the same character, at least as long',
         });
       }
     }

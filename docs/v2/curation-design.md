@@ -57,7 +57,7 @@ both sources through one function.
 |---|---|---|
 | A page in an open proposal | A tier control beside the page: evidence, curated, canonical. It starts on what the agent wrote | Changing it is a human edit to the proposal. The service adds one commit on the branch that changes only the `tier:` line, authored by the reviewer and committed by the service, after its own audit passes. The reviewed version moves, and earlier approvals no longer count |
 | A suggestion in the inbox | A list of pages many documents point at, each with its counts: "30 documents contributed to this page" | The reviewer makes it canonical or dismisses the suggestion |
-| A page already on `main` | "Make canonical", "Make curated" and "Make evidence" on the page's entry (`/inbox/pages/<slug>`) | The service opens a small proposal authored by that person on `ingest/tier-<slug>-<sha7>` that changes only the `tier:` line. It goes through the normal gate: policy, audit, merge, log row. If the person's own approval meets the policy it is recorded at once |
+| A page already on `main` | "Make canonical", "Make curated" and "Make evidence" on the page's entry (`/inbox/pages/<slug>`) | The service opens a small proposal authored by that person on `ingest/tier_<slug>-<sha7>` that changes only the `tier:` line. It goes through the normal gate: policy, audit, merge, log row. If the person's own approval meets the policy it is recorded at once |
 
 Before the reviewer confirms canonical, the inbox says what it means in plain
 words: the agent can no longer change this page, new material that contradicts
@@ -138,7 +138,7 @@ writes one.
 | Trigger | After a merge, once at least N source pages were added or changed on `main` since the last run (default 5). Also on a cron expression that runs the same check, and by hand with `almagest synthesize` (`--force` skips only the threshold) |
 | Default | On (`synthesis.enabled: true`), decided by the owner on 2026-11-18. The caps below bound what it costs |
 | What the agent reads | The wiki on `main`, nothing else. No new source |
-| What it may write | Up to a capped number of `claim` pages (default 5) on `ingest/learnings-<sha7 of main>`, and the index, log and derived index rows they need. Nothing else |
+| What it may write | Up to a capped number of `claim` pages (default 5) on `ingest/learnings_<sha7 of main>`, and the index, log and derived index rows they need, added only at the end of their tables. Nothing else |
 | How it ends | A proposal labelled as learnings. Each claim can be accepted or turned down on its own, which the inbox already supports per page |
 
 What counts as a learning, written into the rules the agent follows:
@@ -204,7 +204,7 @@ Both are plain comparisons, so they belong in `tools/audit.mjs`, as warnings:
 | `server/src/ingest/runner.mjs` | `guardLearnings`: new claim pages and bookkeeping only, with the Basis checks. Also applied to a revise of a learnings proposal |
 | `server/src/ingest/synthesis.mjs` (new) | The trigger and the bounds: count changed source pages on merge, the cron, the last-run marker, the caps |
 | `server/src/ingest/index.mjs` | Starts and stops the trigger; `almagest synthesize` is registered here with the other ingest commands |
-| `server/src/governance/learnings.mjs` (new) | Reads a learning's Basis; the store of turned-down learnings |
+| `server/src/governance/learnings.mjs` (new) | Reads a learning's Basis; the store of turned-down learnings; the checks on hidden characters, front matter limits and where rows may be added |
 | `server/src/governance/service.mjs`, `summary.mjs`, `web/views.mjs` | `kind: 'learnings'`, the title, the explanation, the Basis links, remembering what was turned down |
 | `tools/lib/checks.mjs`, `docs/audit.md` | `DUP-001`, `BASIS-001` |
 

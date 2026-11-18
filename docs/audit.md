@@ -91,13 +91,20 @@ Check IDs are **frozen**. `agent/rules/wiki.md`, `brain.config.yaml`, and the re
 | `SCHEMA-004` | `owner` missing or not in `owner_teams` while `require_owner: true` | error |
 | `SCHEMA-005` | `type` carries a `type_fields` vocabulary value (e.g. `type: organisation`) | error |
 | `SCHEMA-006` | The front matter uses a YAML anchor (`&name`), alias (`*name`) or merge key (`<<:`) | error |
-| `SCHEMA-007` | The page body ends inside an HTML comment (`<!--` with no `-->`) or a fenced code block | error |
+| `SCHEMA-007` | The page body ends inside an HTML comment (`<!--` with no `-->`), another HTML block that stays open to the end of the page (`<script`, `<pre`, `<style`, `<textarea`, `<?`, `<!X`, `<![CDATA[`), or a fenced code block | error |
 
 `SCHEMA-005` catches the single most common authoring mistake: `page_types` and the `type_fields` vocabularies are separate lists, and an organisation is `type: entity` with `entity_type: organisation`.
 
 `SCHEMA-006` keeps a page header plain. With an anchor and an alias, `tier: *t` takes its value from a `&t` on another line, so two edits that each look harmless can combine into a page that reads `canonical`. The check decides from the parsed YAML document: an anchor on any node, an alias node, or a plain `<<` key. A `*` or `&` that starts a continuation line of a multi-line plain scalar, or sits inside a quoted string, a comment or a block scalar, is text and is not a finding. Only a header that does not parse falls back to a scan of the raw text, and that page already fails to load.
 
-`SCHEMA-007` catches a body that ends inside an HTML comment or a fenced code block. Whatever is added below that point later would be hidden or shown as code. A fence closes only with a fence of the same character and at least the same length, as in CommonMark. Indented code is not a fence. Inline code follows CommonMark: a run of backticks closes with the next run of the same length, and a span may cross a line break but not a blank line. A `<!--` inside a code span or inside a closed fenced block never counts as an open comment.
+`SCHEMA-007` catches a body that ends inside a block that stays open to the end of the page. A Markdown renderer treats whatever is added below that point later as part of the block, so it would be hidden, shown as code or run as markup. The check follows the CommonMark block rules, line by line:
+
+- A fence opens with three or more backticks or tildes after at most three spaces of indent, and closes only with a fence of the same character, at least as long, with nothing after it but spaces.
+- An HTML block of type 1 (`<script`, `<pre`, `<style`, `<textarea`, open until the matching closing tag), type 2 (`<!--` until `-->`), type 3 (`<?` until `?>`), type 4 (`<!` and a letter, until `>`) or type 5 (`<![CDATA[` until `]]>`) starts only when a line begins with that text after at most three spaces of indent, outside any code block. It may interrupt a paragraph, and blank lines do not end it. Types 6 and 7 (`<div`, `<details` and the like) end at the next blank line, so they cannot swallow a later section and are not reported.
+- A block inside a list item or a blockquote ends with its container. An unclosed fence in a list item is closed by the end of the item, so it is not a finding.
+- Indented code is never scanned. Neither is inline text: a `<!--` in the middle of a line, or inside a code span, starts no block.
+
+The check never reads a line of prose as a block start, so a legitimate page is not refused for it. A page that quotes `<script>` as code puts it in a fence, a code span or indented code.
 
 ### Links — does the graph resolve?
 

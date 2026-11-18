@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import matter from 'gray-matter';
-import { marked } from 'marked';
+import { renderMarkdown } from './markdown.mjs';
 import siteConfig from '../../site.config';
 import {
   WIKI_DIRS as CORE_WIKI_DIRS,
@@ -171,7 +171,7 @@ export function getPages(): WikiPage[] {
     matter,
     wikiDirs: WIKI_DIRS,
     showExamplePages: siteConfig.showExamplePages,
-    render: (markdown: string) => marked.parse(markdown, { async: false }) as string,
+    render: (markdown: string) => renderMarkdown(markdown) as string,
     onWarn: (message: string) => console.warn(message),
   });
 

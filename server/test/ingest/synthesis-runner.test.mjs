@@ -31,13 +31,13 @@ async function run(t, synth) {
 const claim = (slug, basis, extra = {}) => ({ slug, title: `${slug} says something the pages do not say alone`, basis, ...extra });
 
 describe('synthesize: a run that follows the rules', () => {
-  it('commits new claim pages on ingest/learnings-<sha7 of main> and hands governance the branch', async () => {
+  it('commits new claim pages on ingest/learnings_<sha7 of main> and hands governance the branch', async () => {
     const t = await brain();
     const main = t.git('rev-parse', 'main').trim();
     const done = await run(t, undefined);
 
     assert.equal(done.status, 'succeeded', done.error);
-    assert.equal(done.branch, `ingest/learnings-${main.slice(0, 7)}`);
+    assert.equal(done.branch, `ingest/learnings_${main.slice(0, 7)}`);
     assert.equal(done.source, null, 'the job has no source');
     assert.equal(t.git('rev-parse', 'main').trim(), main, 'main must not move');
     assert.equal(t.governance.calls.length, 1);
@@ -66,17 +66,17 @@ describe('synthesize: a run that follows the rules', () => {
     assert.equal(done.status, 'succeeded');
     assert.match(done.note, /unchanged/);
     assert.equal(t.governance.calls.length, 0);
-    assert.equal(t.git('branch', '--list', 'ingest/learnings-*').trim(), '');
+    assert.equal(t.git('branch', '--list', 'ingest/learnings_*').trim(), '');
   });
 
   it('uses a fresh branch when the name is already taken', async () => {
     const t = await brain();
     const main = t.git('rev-parse', 'main').trim();
-    t.git('branch', `ingest/learnings-${main.slice(0, 7)}`, 'main');
+    t.git('branch', `ingest/learnings_${main.slice(0, 7)}`, 'main');
     const done = await run(t, undefined);
     assert.equal(done.status, 'succeeded', done.error);
-    assert.notEqual(done.branch, `ingest/learnings-${main.slice(0, 7)}`);
-    assert.match(done.branch, /^ingest\/learnings-[0-9a-f]{7}$/);
+    assert.notEqual(done.branch, `ingest/learnings_${main.slice(0, 7)}`);
+    assert.match(done.branch, /^ingest\/learnings_[0-9a-f]{7}$/);
   });
 });
 

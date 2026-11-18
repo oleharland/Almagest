@@ -133,7 +133,7 @@ describe('tier change on a page already on main', () => {
     const out = await gov.proposeTier('beta', 'canonical', ada, { confirm: true });
     assert.equal(out.status, 'merged', out.mergeError?.message);
     assert.equal(out.kind, 'tier');
-    assert.match(out.branch, /^ingest\/tier-beta-[0-9a-f]{7}$/);
+    assert.match(out.branch, /^ingest\/tier_beta-[0-9a-f]{7}$/);
     assert.equal(out.title, 'Ada wants to make “Beta Appliance” canonical.');
     assert.equal(tierOn(r, 'main', 'beta'), 'canonical');
     assert.match(show(r, 'main', 'brain/log.md'), /Ada wants to make “Beta Appliance” canonical\. — approved by Ada \(web\)/);

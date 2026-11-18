@@ -219,6 +219,8 @@ In order:
 
 Evidence is captured via `sources:` and inline citations. A standalone `## Evidence` section is not required.
 
+**Write Markdown, not HTML.** A page body is Markdown. The site shows any raw HTML in it as visible text: `<script>`, event handler attributes, `<details>` and `<div hidden>` do not run or hide anything, they print. A link or image whose address starts with `javascript:`, `vbscript:` or `data:` is dropped. Keep the markup out of the page. A body that ends inside an open HTML block or a code fence is `SCHEMA-007`.
+
 ## Writing style
 
 This is a machine-readable knowledge base, not a document for humans to read linearly. Every sentence must earn its place.
@@ -301,7 +303,7 @@ Frozen. Rules, config, and reports reference them by ID.
 | `SCHEMA-004` | `owner` missing or not in `owner_teams` while `require_owner: true` | error |
 | `SCHEMA-005` | `type` carries a `type_fields` vocabulary value (e.g. `type: organisation`) | error |
 | `SCHEMA-006` | The front matter uses a YAML anchor (`&name`), alias (`*name`) or merge key (`<<:`) | error |
-| `SCHEMA-007` | The page body ends inside an HTML comment (`<!--` with no `-->`) or a fenced code block | error |
+| `SCHEMA-007` | The page body ends inside an HTML comment (`<!--` with no `-->`), another HTML block that stays open to the end of the page (`<script`, `<pre`, `<style`, `<textarea`, `<?`, `<!X`, `<![CDATA[`), or a fenced code block | error |
 | `LINK-001` | `[[wikilink]]` to a page that does not exist | error |
 | `LINK-002` | Orphan — zero backlinks | warning |
 | `LINK-003` | `relations` target does not exist | error |

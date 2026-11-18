@@ -99,7 +99,7 @@ background with Claude Code, and a Codex model name would break it.
 | `revise` | Apply a decision's `effect` or a reviewer's requested changes | the proposal's |
 | `reverify` | Re-check a page (telemetry `auto_reverify`) against its sidecars | new `ingest/reverify-<slug>-<sha7 of main>`, or a proposal's |
 | `drop-page` | Undo one page on a proposal — mechanical, no agent | the proposal's |
-| `synthesize` | Draw conclusions from pages already on `main`. No source | new `ingest/learnings-<sha7 of main>` |
+| `synthesize` | Draw conclusions from pages already on `main`. No source | new `ingest/learnings_<sha7 of main>` (see Learnings) |
 
 Status: `queued → running → succeeded | blocked | failed | cancelled`.
 `blocked` means the run produced decisions and nothing else. A run with nothing
@@ -184,6 +184,15 @@ only tie to evidence is the Basis. The rules the agent follows are in `agent/rul
 Runner mode → Learnings. The agent reads the wiki on `main` and nothing else.
 The job has no source.
 
+Its branch is `ingest/learnings_<sha7 of main>`. The underscore is the point:
+the slug function that names an ordinary ingest branch from a chat title or a
+file name emits only `a-z`, `0-9` and `-`, so no source a person submits can
+produce this name, however its hash is chosen. A tier proposal branch has the
+same form, `ingest/tier_<slug>-<sha7>`. As a second line of defence the runner
+refuses an `ingest` job whose branch already holds a live proposal of another
+kind (learnings or tier), or one that came from a different source, with an
+error and before the agent runs.
+
 ### When it runs
 
 Every route goes through one function (`server/src/ingest/synthesis.mjs`,
@@ -220,9 +229,11 @@ that breaks one fails as a whole and nothing is committed. A revise of a
 learnings proposal is held to the same limits.
 
 - Every change is a new file under `brain/wiki/`, or `brain/index.md`, `brain/log.md` or `brain/.index/*.tsv`. No existing page is edited, renamed or deleted. The manifest, sidecars and every other file are off limits.
-- `brain/index.md` and `brain/log.md` only gain whole lines. Compared with the branch's starting commit, no existing line may be removed, changed or moved. A placeholder row such as `| _(no actions yet)_ | | |` may give way to a real row. The inbox shows the lines a run adds to these files, so a rewritten line would go unseen.
+- `brain/index.md` and `brain/log.md` only gain whole lines, and only at the end. Compared with the branch's starting commit, no existing line may be removed, changed or moved. Every added table row comes after the last existing row of the table it joins. Any other added line comes after everything already in the file. A placeholder row such as `| _(no actions yet)_ | | |` may give way to a real row, and blank lines may be added anywhere. The inbox shows the lines a run adds to these files, so a rewritten line, or a backdated row between two existing ones, would go unseen or mislead.
 - A learning has no `sources` of its own and no citation in its body: not a well formed one, and not the text `[source:` either. A cited learning would show the reviewer nothing, and a learning ties to evidence through its Basis alone.
 - A learning's body is at most 8000 characters. The inbox shows the whole body, so the runner bounds it instead of the inbox cutting it.
+- A learning carries no character a reader cannot see or that changes the order of text, in its front matter or its body. Refused: bidirectional controls (U+202A to U+202E, U+2066 to U+2069, U+061C, U+200E, U+200F), zero-width characters (U+200B, U+200C, U+200D, U+2060, U+FEFF), the line and paragraph separators (U+2028, U+2029), tag characters (U+E0000 to U+E007F) and any other C0 or C1 control character except a tab and a line break. One byte order mark at the very start of the file, and the carriage return of a CRLF line break, are allowed. The error names the character and its line and column. A person reads the page in the inbox, and a chat reads it with such characters removed, so without this rule the two would read different sentences.
+- A learning's front matter is bounded, because some of its fields (title, aliases, tags, `related`, `relations`) reach chats. It may carry only the keys a `claim` page needs: the base keys of the page schema (`title`, `type`, `tier`, `origin`, `status`, `confidence`, `tags`, `aliases`, `owner`, `date_created`, `date_modified`, `last_verified`, `sources`, `related`, `relations`) and whatever frontmatter fields `type_fields.claim` names in `brain.config.yaml` (none by default). Any other key is refused. Each string is at most 300 characters, each list at most 20 entries, and the whole front matter block at most 4000 characters. Every `related` and `relations` target is a page that exists on `main`, and `relations` has only its four keys.
 - At most `max_claims` new pages.
 - Each new page is `type: claim`, `origin: self`, and not canonical.
 - Its `## Basis` links at least two pages that exist on `main` and are `origin: source`, and those pages cite at least two different sources. Two source entries count as one source when they share an id or a sha256. Links to other pages are allowed in addition.

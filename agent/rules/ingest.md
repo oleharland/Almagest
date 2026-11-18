@@ -539,7 +539,9 @@ A learning is a new `claim` page: `type: claim`, `origin: self`, a title that is
 - Do not propose a learning that the prompt lists as turned down, unless one of the pages it rests on has changed.
 - A learning has no sources of its own. Leave `sources` empty and write no `[source: ...]` citation in it. Its tie to evidence is the Basis.
 - Keep a learning to one conclusion. The body may not exceed 8000 characters.
-- In `index.md` and `log.md`, only add rows. Do not change, remove or reorder a row that is already there.
+- In `index.md` and `log.md`, only add rows, and add each one after the last row of its table. Do not change, remove or reorder a row that is already there, and do not insert a row between two that exist.
+- Keep the front matter to the keys a claim page needs (the page schema's base keys and nothing else): each string at most 300 characters, each list at most 20 entries, the whole block at most 4000 characters. Every `related` and `relations` target is a page that exists on `main`.
+- Write plain text. A learning carries no bidirectional control character, no zero-width character and no control character other than a tab and a line break, in its front matter or its body. The runner refuses the run and names the character.
 - If two existing pages contradict each other, write no claim about it. Report a `contradiction` in `blocked[]`, quoting both claims with their sources.
 - Never set `tier: canonical`.
 

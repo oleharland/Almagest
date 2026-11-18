@@ -38,6 +38,7 @@ import { canonicalOrUnsure, canonicalSet, differOnlyInTier, tierOfText, tierRead
 import { authorizeMainMove } from '../../../tools/lib/git-hooks.mjs';
 import { serviceActor } from '../core/auth.mjs';
 import { childEnv, gitIdentity } from '../core/git.mjs';
+import { oneLine } from '../core/text.mjs';
 import { mergeManifest, stripRemovedPlaceholders } from './bookkeeping.mjs';
 import { canonicalAt } from './canonical.mjs';
 import { mergePages, pageProvenance } from './page-merge.mjs';
@@ -117,18 +118,9 @@ Chronological record of all ingest, audit, and maintenance actions.
 |------|--------|---------|
 `;
 
-/**
- * Free text as one short line, for a commit message: control characters,
- * line breaks and runs of spaces become single spaces, and the length is
- * capped. A title or a name must not be able to add a line to a message that
- * carries `Approved by:` and `Reviewed head:` trailers.
- */
-export function oneLine(value, max = 200) {
-  const text = String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\s]+/g, ' ').trim();
-  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
-}
+export { oneLine };
 
-const cell = (s) => String(s ?? '').replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').trim();
+const cell = (s) => String(s ?? '').replace(/[\r\n\u0085\u2028\u2029]+/g, ' ').replace(/\|/g, '\\|').trim();
 
 export function logRow({ date, proposal, approvers, combined = [] }) {
   const who = approvers.map((a) => `${a.display || a.actorId} (${a.channel})`).join(', ') || 'unknown';
@@ -471,7 +463,7 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
     if (tierOfText(after) !== t.to) return bad(`the page does not end up at tier ${t.to}`);
     if (tierOfText(before) !== t.from) return bad(`the page was not at tier ${t.from} when this was proposed`);
     // A person chose a tier for these words. If the page has changed since, they never saw the new ones.
-    if (now !== before) return bad('the page changed since this was proposed, so the tier change has to be proposed again');
+    if (now !== before) return [{ path: file, slug: t.slug, code: 'page_changed', reason: 'the page changed since this was proposed, so the tier change has to be proposed again' }];
     if (tierOfText(now) !== t.from) return bad(`the page is no longer at tier ${t.from} on the knowledge base`);
     if (configLocked.has(t.slug) && t.to !== 'canonical') return bad('the page is locked in brain.config.yaml, which only a person edits by hand');
     return [];
@@ -518,7 +510,11 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
         (own?.slug === slug && own.to === 'canonical')
         || (edit?.to === 'canonical' && edit.blob && edit.blob === blob)
       );
-      if (!chosen) {
+      if (!chosen && !external && plain && headBlob && edit?.to === 'canonical' && edit.blob === headBlob && blob !== headBlob) {
+        // A person chose this page as canonical in this proposal, and main has
+        // changed the page since: the merged page is not the one they chose.
+        out.push({ path: f.path, slug, code: 'changed_after_choice', reason: 'the page changed on main after the tier was set' });
+      } else if (!chosen) {
         out.push({ path: f.path, reason: r.yaml === 'canonical' || r.matter === 'canonical'
           ? 'the merged page reads as canonical, and no person chose that in the review inbox'
           : 'the merged page\'s tier cannot be read the same way by both parsers, so it might be canonical' });
@@ -541,6 +537,17 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
   }
 
   const canonicalRefusal = (files, proposalId, what = 'canonical') => {
+    // Two refusals are not a rule being broken: a page moved under a person's choice.
+    // They say what happened and what to do, and they are not logged as a violation.
+    const moved = files.length === 1 && ['page_changed', 'changed_after_choice'].includes(files[0].code) ? files[0] : null;
+    if (moved) {
+      return {
+        ok: false, reason: what, files, slug: moved.slug, benign: true,
+        message: moved.code === 'page_changed'
+          ? 'The page changed since this was proposed, so the tier change has to be proposed again.'
+          : `The page “${oneLine(moved.slug, 100)}” changed on main after you set its tier to canonical, so the version you chose is no longer what would be added. Ask for the proposal to be redone and set the tier again.`,
+      };
+    }
     log?.error('merge refused: a canonical rule', { proposal: proposalId, files: files.map((f) => f.path) });
     return {
       ok: false, reason: what, files,

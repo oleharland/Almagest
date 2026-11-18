@@ -197,9 +197,27 @@ function extendsNote(e) {
 }
 
 /** A learning: the conclusion in the agent's words, and the pages it rests on as links. */
+const CONFIDENCE_WORDS = { high: 'High', medium: 'Medium', low: 'Low', unknown: 'Unknown' };
+const RELATION_WORDS = { supports: 'Supports', contradicts: 'Contradicts', supersedes: 'Replaces', depends_on: 'Depends on' };
+
+/** The fields of a learning's front matter that carry meaning, open above the body: some reach chats as they are. */
+function learningMeta(meta) {
+  if (!meta) return '';
+  const row = (label, items) => (items.length ? html`<dt>${label}</dt><dd>${items.join(', ')}</dd>` : '');
+  const relations = Object.entries(meta.relations || {}).filter(([, v]) => v.length);
+  return html`<dl class="facts learning-meta">
+    <dt>Title</dt><dd>${meta.title}</dd>
+    ${row('Aliases', meta.aliases || [])}
+    ${row('Tags', meta.tags || [])}
+    <dt>Confidence</dt><dd>${CONFIDENCE_WORDS[meta.confidence] || meta.confidence || 'Not set'}</dd>
+    ${row('Related pages', meta.related || [])}
+    ${relations.map(([k, v]) => row(RELATION_WORDS[k] || k, v))}
+  </dl>`;
+}
+
 function learningBody(change) {
   const basis = change.basis || [];
-  return html`<p class="faint">What it rests on</p>
+  return html`${learningMeta(change.meta)}<p class="faint">What it rests on</p>
     ${basis.length
       ? html`<ul class="basis">${basis.map((b) => html`<li><a href="/inbox/pages/${encodeURIComponent(b.slug)}">${b.title || b.slug}</a></li>`)}</ul>`
       : html`<p class="missing">This page names no pages it rests on. Do not accept it as it is.</p>`}
@@ -367,7 +385,7 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
       ${findings.length ? html`<details><summary>${audit.ok ? 'See the notes' : 'What the checks found'}</summary><ul>${findings.slice(0, 50).map((f) => html`<li>${f.slug ? html`<strong>${f.slug}</strong>: ` : ''}${f.message}${f.count > 1 ? ` (×${f.count})` : ''}</li>`)}</ul></details>` : ''}
     </p>
     ${info.lookup ? html`<p class="status">${info.lookup}${p.lookupQuestion ? html` The question was “${p.lookupQuestion}”.` : ''}</p>` : ''}
-    ${p.mergeError ? html`<div class="flash flash--err" role="alert">${p.mergeError.message}</div>` : ''}
+    ${p.mergeError ? html`<div class="flash flash--err" role="alert">${p.mergeError.message}${p.mergeError.slug ? html` <a href="/inbox/pages/${encodeURIComponent(p.mergeError.slug)}">Open the page</a>` : ''}</div>` : ''}
     ${chat ? html`<div class="flash flash--ok" role="status">A chat assistant asked${chat.onBehalfOf ? ` on behalf of ${chat.onBehalfOf.display}` : ''} for this to be ${chat.action === 'reject' ? 'turned down' : 'approved'}. It can't do that itself — read it below and decide.${chat.headSha && chat.headSha !== p.headSha ? ' The proposal changed after the chat asked; this is the current version.' : ''}</div>` : ''}
     ${lapsed.length && live && p.status !== 'conflicted' ? html`<div class="flash flash--ok" role="status">${p.revisedBecause === 'conflict'
       ? 'The knowledge base changed while this waited, so it was redone on top of the current version.'

@@ -31,9 +31,10 @@ import { asArray, findCitations, safeFrontmatter } from '../../../tools/lib/wiki
 import { serviceActor } from '../core/auth.mjs';
 import { modelForTier } from '../core/config.mjs';
 import { gitIdentity, WorktreeTamperedError } from '../core/git.mjs';
+import { oneLine } from '../core/text.mjs';
 import { ingestBranch, learningsBranch, nowIso, slugify, validateRunReport } from '../core/schemas.mjs';
 import { canonicalAt } from '../governance/canonical.mjs';
-import { basisOf, createRejectedMemory, distinctSources, MAX_LEARNING_CHARS, readPage, synthesisSettings } from '../governance/learnings.mjs';
+import { appendViolation, basisOf, createRejectedMemory, describeHidden, distinctSources, frontMatterProblem, hiddenCharacter, MAX_LEARNING_CHARS, readPage, synthesisSettings } from '../governance/learnings.mjs';
 import { isPlaceholderRow } from '../governance/bookkeeping.mjs';
 import { agentInstructionPath, writableMatcher } from '../governance/paths.mjs';
 import { LIVE } from '../governance/policy.mjs';
@@ -175,7 +176,33 @@ export function createRunner(ctx, { driver, logsDir }) {
       return { proposal: null, branch, source: job.source || null };
     }
     const source = job.source || { id: `${job.kind}-${slugify(job.slug || job.instructions || 'pages')}`, sha256: (await git.revParse(config.service.git.main)).slice(0, 12) };
-    return { proposal: null, branch: job.branch || ingestBranch(source), source: job.source || null };
+    const branch = job.branch || ingestBranch(source);
+    await refuseForeignBranch(job, branch, job.source || null);
+    return { proposal: null, branch, source: job.source || null };
+  }
+
+  /**
+   * An ingest that is not a revise must not work on a branch where a live
+   * proposal of something else is open. The branch names are built so a
+   * person's source cannot collide with a learnings or tier branch; this is
+   * the check that does not rely on that: before the agent runs, a live
+   * proposal on the target branch has to be of the ordinary kind and have
+   * come from this same source.
+   */
+  async function refuseForeignBranch(job, branch, source) {
+    let live = [];
+    try { live = ((await ctx.governance.listProposals({ status: LIVE })) || []).filter((p) => p?.branch === branch && LIVE.includes(p.status)); }
+    catch (err) { throw new JobError(`cannot check ${branch} for an open proposal: ${err.message}`, { retryable: true }); }
+    for (const p of live) {
+      if (p.kind === 'learnings' || p.kind === 'tier') {
+        throw new JobError(`branch ${branch} already holds an open ${p.kind === 'tier' ? 'tier' : 'learnings'} proposal (${oneLine(p.id, 60)}), which this ${job.kind} job did not come from — not run`);
+      }
+      const other = p.source || null;
+      const differs = (a, b) => a !== undefined && a !== null && a !== '' && b !== undefined && b !== null && b !== '' && a !== b;
+      if (source && other && (differs(source.id, other.id) || differs(source.sha256, other.sha256))) {
+        throw new JobError(`branch ${branch} already holds an open proposal (${oneLine(p.id, 60)}) that came from a different source (${oneLine(other.id, 80)}) than this job's (${oneLine(source.id, 80)}) — not run`);
+      }
+    }
   }
 
   /**
@@ -449,6 +476,10 @@ export function createRunner(ctx, { driver, logsDir }) {
       if (lost !== null) {
         throw refuse(`learnings run changed an existing line of ${p} (“${lost.trim().slice(0, 80)}”) — it may only add whole lines to the index and the log, because the inbox shows added lines only`);
       }
+      const misplaced = appendViolation(typeof before === 'string' ? before : '', after);
+      if (misplaced !== null) {
+        throw refuse(`learnings run added a line to ${p} (“${misplaced.slice(0, 80)}”) among the lines that were already there — it may only add rows after the last row of a table, because the inbox shows added lines only`);
+      }
     }
 
     const onMain = new Set((await git.run(['ls-tree', '--name-only', main, '--', wikiPrefix])).split('\n').filter((f) => f.endsWith('.md')).map((f) => path.posix.basename(f, '.md')));
@@ -468,10 +499,17 @@ export function createRunner(ctx, { driver, logsDir }) {
       return basisPages.get(slug);
     };
 
+    const claimFields = config.v1.typeFields?.claim?.fields || [];
     for (const slug of fresh) {
       const file = path.join(wikiAbs, `${slug}.md`);
+      const raw = fs.readFileSync(file, 'utf-8');
+      // A person reads the page in the inbox and a chat reads it through a
+      // filter: a character that reorders or hides text shows one to one and
+      // another to the other. Checked on the raw text, front matter and body.
+      const hidden = hiddenCharacter(raw);
+      if (hidden) throw refuse(`learnings run wrote ${slug}.md with ${describeHidden(hidden)} — a learning may not carry characters that change the order of text or cannot be seen`);
       let page;
-      try { page = readPage(fs.readFileSync(file, 'utf-8')); }
+      try { page = readPage(raw); }
       catch (err) { throw refuse(`learnings run wrote ${slug}.md, whose front matter cannot be read (${String(err.message).split('\n')[0].slice(0, 120)})`); }
       if (page.type !== 'claim' || page.origin !== 'self') {
         throw refuse(`learnings run wrote ${slug}.md as type: ${page.type || 'none'}, origin: ${page.origin} — a learnings run writes only claim pages with origin: self`);
@@ -486,6 +524,8 @@ export function createRunner(ctx, { driver, logsDir }) {
       if (page.body.trim().length > MAX_LEARNING_CHARS) {
         throw refuse(`learnings run wrote ${slug}.md with a body of ${page.body.trim().length} characters, over the limit of ${MAX_LEARNING_CHARS} characters — a learning is one conclusion a person reads whole`);
       }
+      const frontProblem = frontMatterProblem(page, { claimFields, known: onMain });
+      if (frontProblem) throw refuse(`learnings run wrote ${slug}.md and ${frontProblem}`);
       if (page.tier === 'canonical') throw refuse(`learnings run wrote ${slug}.md with tier: canonical — only a person makes a page canonical, in the review inbox (non-negotiable 4)`);
       const { slugs, missing } = basisOf(page.body, onMain);
       if (missing.length) throw refuse(`learnings run wrote ${slug}.md with Basis link(s) to ${list(missing)}, which are not pages on ${main} — a Basis names pages that already exist on ${main}`);
@@ -760,19 +800,24 @@ export function createRunner(ctx, { driver, logsDir }) {
 }
 
 function commitMessage(job, t, report, driverName) {
+  // Every value below can carry text a person or an agent chose: a chat's
+  // source title, the agent's page summary, a decision's question. Each is
+  // one line with a length cap, so none can add a line or a trailer to a
+  // message whose branch becomes the second parent of a merge on main.
   const src = t.source;
+  const one = (v, max = 160) => oneLine(v, max);
   const subject = job.kind === 'ingest'
-    ? `ingest: ${src?.title || src?.id || 'source'}${src?.sha256 ? ` (${src.sha256.slice(0, 7)})` : ''}`
+    ? `ingest: ${one(src?.title || src?.id || 'source', 120)}${src?.sha256 ? ` (${one(src.sha256.slice(0, 7), 7)})` : ''}`
     : job.kind === 'synthesize'
-      ? `synthesize: learnings from ${t.branch.replace(/^ingest\/learnings-/, '')}`
-      : `${job.kind}: ${t.proposal?.id || src?.id || job.id}`;
+      ? `synthesize: learnings from ${one(String(t.branch).replace(/^ingest\/learnings_/, ''), 40)}`
+      : `${one(job.kind, 20)}: ${one(t.proposal?.id || src?.id || job.id, 100)}`;
   const lines = [
     subject, '',
-    `Job: ${job.id} (trigger ${job.trigger}, attempt ${job.attempts || 1})`,
-    `Driver: ${driverName}`,
-    `Outcome: ${report.outcome} — ${report.pages.length} page(s), ${report.blocked.length} blocked`,
-    ...report.pages.map((p) => `- ${p.action} ${p.slug}${p.summary ? `: ${p.summary}` : ''}`),
-    ...report.blocked.map((b) => `- blocked (${b.kind}) ${b.slug || ''}: ${b.question}`),
+    `Job: ${one(job.id, 60)} (trigger ${one(job.trigger, 30)}, attempt ${Number(job.attempts) || 1})`,
+    `Driver: ${one(driverName, 40)}`,
+    `Outcome: ${one(report.outcome, 30)} — ${report.pages.length} page(s), ${report.blocked.length} blocked`,
+    ...report.pages.map((p) => `- ${one(p.action, 20)} ${one(p.slug, 100)}${p.summary ? `: ${one(p.summary, 200)}` : ''}`),
+    ...report.blocked.map((b) => `- blocked (${one(b.kind, 30)}) ${one(b.slug || '', 100)}: ${one(b.question, 200)}`),
   ];
   return lines.join('\n');
 }

@@ -307,7 +307,7 @@ These are code, not config. No rule, profile or flag changes them.
    throwaway worktree; anything but exit 0 means main does not move. Two of
    those checks guard what a reviewer cannot see: `SCHEMA-006` refuses YAML
    anchors, aliases and merge keys in a page's front matter, and `SCHEMA-007`
-   refuses a page body that ends inside an HTML comment or a code fence.
+   refuses a page body that ends inside an HTML comment, another HTML block that stays open to the end of the page, or a code fence.
 6. **A proposal that modifies a canonical page never merges.** (The canonical set
    is the config list plus every page whose frontmatter on `main` says
    `tier: canonical`. The one exception is a tier proposal's own `tier:` line,
@@ -626,8 +626,10 @@ proposal.
 **The tier proposal.** For a page already on `main`, the page's entry in the
 inbox (`/inbox/pages/<slug>`) offers "Make canonical", "Make curated" and "Make
 evidence". The service creates a small proposal authored by that person on a
-branch named `ingest/tier-<slug>-<sha7>`, the same shape as every other
-proposal branch, so the hooks and the path checks treat it like one. Its only
+branch named `ingest/tier_<slug>-<sha7>`. It starts with `ingest/` like every other
+proposal branch, so the hooks and the path checks treat it like one, and the
+underscore is a character the slug function never emits, so no source a person
+submits can be given the same branch name. Its only
 change is the `tier:` line of that page. It is marked `kind: 'tier'` and
 carries `tier: { slug, from, to, title }`. Its title reads, for example, "Ole
 wants to make “Glossary” canonical." It goes through the normal gate: policy,
@@ -636,6 +638,12 @@ the policy, it is recorded through the ordinary approve path, so in a solo
 brain the whole change is one action. Otherwise it waits in the inbox. A tier
 proposal has no agent to redo it: asking for changes or taking a page out is
 refused, and a clash with a newer `main` means turning it down and trying again.
+If the page changed on `main` after the tier change was proposed, approving it
+is refused with a plain sentence ("The page changed since this was proposed, so
+the tier change has to be proposed again") and a link to the page. The proposal
+is marked `conflicted`, like any proposal that can no longer merge, it is not
+logged as a policy violation, and a conflicted tier proposal no longer stops
+the same change from being proposed again.
 
 The merge checks a tier proposal in code. What the reviewer saw (the merge base
 to the head) must be one modified file, the page, whose text differs from the
@@ -682,7 +690,12 @@ name or a source name can hold line breaks. Everywhere such text goes into a
 commit message (the merge commit, the tier commits, the challenge commit and
 the author name) control characters and line breaks become single spaces and
 the length is capped, so a title cannot add an `Approved by:` line of its own.
-The log row flattens its cells the same way.
+That covers the commits the ingest runner writes on a branch, which become the
+second parent of the merge on `main`: a chat's source title, the agent's page
+summaries and a decision's question are flattened, and so are the author and
+co-author names and emails of every commit (an email holds no `<`, `>` or
+space). The log row flattens its cells the same way, including a lone carriage
+return and the Unicode line and paragraph separators.
 
 **Agents and outside merges.** An agent never sets `tier: canonical`. The
 runner refuses a branch that does, on a new page or an existing one, and the
@@ -731,15 +744,15 @@ and proposes them (docs/v2/ingest.md, Learnings). The proposal is marked
 `kind: 'learnings'` and titled in plain words, for example "5 things the brain
 concluded from what it holds". It has no source file. Its `source` is
 `{ kind: 'synthesis', id: 'learnings_<sha7 of main>' }`, which stands for the
-commit of `main` the agent read. The id has an underscore because `slugify`, which turns a chat title or a file name into a source id, emits only `a-z`, `0-9` and `-`. No submitted source can share this id. A newer proposal replaces an older open one only when both have the same source id and the same kind, so a chat source can never close an open learnings proposal, nor the reverse.
+commit of `main` the agent read. The id has an underscore because `slugify`, which turns a chat title or a file name into a source id, emits only `a-z`, `0-9` and `-`. No submitted source can share this id. The same holds for the branch, `ingest/learnings_<sha7 of main>`: no submitted source can be given it, and the runner refuses an ingest job whose branch holds a live proposal of another kind or from another source. A newer proposal replaces an older open one only when both have the same source id and the same kind, so a chat source can never close an open learnings proposal, nor the reverse.
 
 The proposal page opens with one sentence: these are conclusions the brain
 drew from pages that were already reviewed, each one lists the pages it rests
 on, and you can accept or turn down each one on its own. Each learning shows
-its Basis pages as links, then its complete text: every section, in order, with
+the front matter fields that carry meaning (title, aliases, tags, confidence, related pages and relations), open, because some of them reach chats. It then shows its Basis pages as links and its complete text: every section, in order, with
 no length cut, as plain text (the inbox escapes it, so a learning is never read
 as markup). This does not depend on whether the inbox could pair the text with
-a source. The page details (the front matter) sit in a fold below it. A learning
+a source. The whole front matter still sits in a fold below it, for the fields that carry no meaning. A learning
 cannot be so long that this is a problem: the runner refuses one over 8000
 characters. The buttons are the ones every
 proposal has: **Accept page**, **Take this page out**, **Approve all**, **Ask

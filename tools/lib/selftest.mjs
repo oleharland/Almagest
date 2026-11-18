@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import matter from 'gray-matter';
 
+import { bodyEndsOpen } from './checks.mjs';
 import { findCitations, parseBody, parseCitation, sectionLines } from './wiki-core.mjs';
 import { renderAliasesTsv, renderPagesTsv } from './derived-index.mjs';
 import { loadWiki } from './wiki-core.mjs';
@@ -155,6 +156,19 @@ console.log('\ndirty fixture — every check ID fires at its documented severity
   const where = (id) => json.findings.filter((f) => f.id === id).map((f) => f.slug);
   check('SCHEMA-006 names only the page with the anchor and alias', JSON.stringify(where('SCHEMA-006')) === '["bad-anchor"]', JSON.stringify(where('SCHEMA-006')));
   check('SCHEMA-007 names only the page that ends inside a fence', JSON.stringify(where('SCHEMA-007')) === '["bad-unclosed"]', JSON.stringify(where('SCHEMA-007')));
+
+  // SCHEMA-007 follows CommonMark: what stays open to the end of the page, and what only looks like it does.
+  for (const [what, body, expected] of [
+    ['an open fence', '## A\n\n```\ncode\n', 'fence'],
+    ['an open HTML comment block', '## A\n\n<!--\nnote\n', 'comment'],
+    ['an open <script block', '## A\n\n<script>\n', 'html'],
+    ['an open <pre block', '## A\n\n<pre>\ncode\n', 'html'],
+    ['an open <![CDATA[ block', '## A\n\n<![CDATA[\n', 'html'],
+    ['a <!-- inside indented code', '## A\n\n    <!-- code\n\nAfter.\n', null],
+    ['a <!-- in the middle of prose', '## A\n\nUse <!-- in prose.\n', null],
+    ['a fence that ends with its list item', '## A\n\n- item\n\n  ```\n  code\n', null],
+    ['a closed <script block', '## A\n\n<script>x</script>\n', null],
+  ]) check(`SCHEMA-007 reads ${what}`, bodyEndsOpen(body) === expected, String(bodyEndsOpen(body)));
 
   // The finding shape docs/audit.md documents.
   const sample = json.findings[0];

@@ -56,7 +56,7 @@ describe('synthesis end to end', () => {
         finished = await ctx.store.jobs.get(queued.id);
       }
       assert.equal(finished.status, 'succeeded', finished.error);
-      assert.match(finished.branch, /^ingest\/learnings-[0-9a-f]{7}$/);
+      assert.match(finished.branch, /^ingest\/learnings_[0-9a-f]{7}$/);
 
       const proposal = await ctx.governance.getProposal(finished.proposalId);
       assert.equal(proposal.kind, 'learnings');

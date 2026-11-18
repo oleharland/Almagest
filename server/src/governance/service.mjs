@@ -28,11 +28,11 @@ import { safeFrontmatter } from '../../../tools/lib/wiki-core.mjs';
 import { assertCanApprove, assertCanChangeTier, AuthError, ForbiddenError, hasRole, parseTokens, serviceActor } from '../core/auth.mjs';
 import { gitIdentity } from '../core/git.mjs';
 import { HttpError } from '../core/http.mjs';
-import { ingestBranch, newId, nowIso, ROLES } from '../core/schemas.mjs';
+import { newId, nowIso, reservedBranch, ROLES } from '../core/schemas.mjs';
 import { NotFoundError } from '../core/store/index.mjs';
 import { attachDemand, buildChanges } from './builder.mjs';
 import { canonicalAt } from './canonical.mjs';
-import { basisOf, createRejectedMemory, LEARNINGS_SOURCE_PREFIX, readPage } from './learnings.mjs';
+import { basisOf, createRejectedMemory, LEARNINGS_SOURCE_PREFIX, learningMeta, readPage } from './learnings.mjs';
 import { appendChallenge, challengeFrom, challengeRow } from './challenges.mjs';
 import { normalizeAudit, oneLine, runAudit } from './merge.mjs';
 import { listChanges, outsideFiles } from './paths.mjs';
@@ -229,6 +229,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       // The whole text, for the inbox: a person approves a learning from what it shows, so it shows all of it.
       c.body = page.body.trim();
       c.front = page.front.trim();
+      c.meta = learningMeta(page);
       for (const slug of basisOf(page.body, known).slugs) c.basis.push({ slug, title: await titleOf(slug) });
     }
   }
@@ -460,9 +461,13 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
 
     let status = 'approved';
     let job = null;
-    if (result.reason === 'paths' || result.reason === 'canonical' || result.reason === 'tier') {
+    if (result.reason === 'tier' && result.benign) {
+      // The page moved under a tier choice: this proposal can no longer merge,
+      // and nothing was broken. Marked like any proposal that no longer fits.
+      status = 'conflicted';
+    } else if (result.reason === 'paths' || result.reason === 'canonical' || result.reason === 'tier') {
       status = p.status;
-      await record('policy.violation', actor, p.id, channel, { reason: result.message, code: result.reason, files: result.files, headSha: p.headSha });
+      if (!result.benign) await record('policy.violation', actor, p.id, channel, { reason: result.message, code: result.reason, files: result.files, headSha: p.headSha });
     } else if (result.reason === 'conflict' || result.reason === 'audit') {
       status = 'conflicted';
     } else if (result.reason === 'stale') {
@@ -474,7 +479,9 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     // proposal — after that a person has to look.
     let message = result.message;
     let conflictRevise = p.conflictRevise || { count: 0, headSha: '' };
-    if (status === 'conflicted' && p.kind === 'tier') {
+    if (status === 'conflicted' && p.kind === 'tier' && result.benign) {
+      message = result.message;
+    } else if (status === 'conflicted' && p.kind === 'tier') {
       // A tier change has no agent to redo it: the page moved under it.
       message = 'The page changed after this was proposed, so the change no longer fits. Turn this down and make the change again.';
     } else if (status === 'conflicted') {
@@ -499,7 +506,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
         }
       }
     }
-    const updated = await store.proposals.update(p.id, { status, conflictRevise, mergeError: { reason: result.reason, message, at: nowIso(), ...(result.files ? { files: result.files } : {}) }, updatedAt: nowIso() });
+    const updated = await store.proposals.update(p.id, { status, conflictRevise, mergeError: { reason: result.reason, message, at: nowIso(), ...(result.files ? { files: result.files } : {}), ...(result.slug ? { slug: result.slug } : {}) }, updatedAt: nowIso() });
     await record('proposal.merge_failed', actor, p.id, channel, { reason: result.reason, headSha: p.headSha, jobId: job?.id || null });
     bus.emit('proposal.updated', { proposal: updated });
     return updated;
@@ -729,7 +736,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
         throw new HttpError(409, to === 'canonical' ? 'This page is already canonical.' : 'This page is locked in brain.config.yaml. Only a person editing that file by hand can unlock it.');
       }
       for (const other of await store.proposals.list({ status: policy.LIVE })) {
-        if (other.kind === 'tier' && other.tier?.slug === slug) throw new HttpError(409, 'A tier change for this page is already waiting in the inbox.');
+        if (other.kind === 'tier' && other.tier?.slug === slug && other.status !== 'conflicted') throw new HttpError(409, 'A tier change for this page is already waiting in the inbox.');
       }
       const next = withTier(text, to);
       if (next === null) throw new HttpError(409, 'The tier line of this page cannot be edited here.');
@@ -740,8 +747,8 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       const audit = await merger.auditCommit(sha);
       if (audit.exit !== 0) throw new HttpError(409, `That change was not made, because the automatic checks failed on the result (${auditNote(audit)}).`);
 
-      let branch = ingestBranch({ id: `tier-${slug}`, sha256: mainSha });
-      if (await git.branchExists(branch)) branch = ingestBranch({ id: `tier-${slug}` });
+      let branch = reservedBranch('tier', slug, mainSha);
+      if (await git.branchExists(branch)) branch = reservedBranch('tier', slug, '');
       await git.run(['update-ref', '-m', `almagest: tier proposal for ${slug}`, `refs/heads/${branch}`, sha]);
       try {
         const job = {

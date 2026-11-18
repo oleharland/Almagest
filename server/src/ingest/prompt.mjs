@@ -137,7 +137,7 @@ function synthesisPrompt({ job, branch, auditCommand, allowedTools, learnings = 
     '',
     '```json',
     JSON.stringify({
-      source: { id: `learnings-${String(branch).split('-').pop()}` },
+      source: { id: `learnings-${String(branch).match(/([0-9a-f]{7})$/)?.[1] || 'main'}` },
       outcome: 'written | unchanged | blocked-only | failed',
       pages: [{ slug: '<slug>', action: 'create', tier: 'curated', summary: 'one line' }],
       blocked: [{ kind: 'contradiction', slug: '<slug>', question: '…', claimA: '…', sourceA: '<id>', claimB: '…', sourceB: '<id>', options: [{ id: 'keep', label: '…', effect: '…' }] }],

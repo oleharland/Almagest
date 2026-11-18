@@ -77,9 +77,21 @@ export function ingestBranch(source) {
   return `ingest/${slug}-${sha7}`;
 }
 
-/** `ingest/learnings-<sha7 of main>` — the branch a synthesize job works on. */
+/**
+ * A branch name for work the service starts itself, in a form `slugify` can
+ * never produce: `ingest/<kind>_<name>-<sha7>`, or `ingest/<kind>_<sha7>`
+ * when there is no name. `slugify` emits only a-z, 0-9 and "-", so no source
+ * title, file name or hash prefix a person submits can name the same branch.
+ */
+export function reservedBranch(kind, name, sha7) {
+  const tail = String(sha7 || '').replace(/[^0-9a-f]/gi, '').slice(0, 7) || crypto.randomBytes(4).toString('hex').slice(0, 7);
+  const middle = name ? `${slugify(name)}-` : '';
+  return `ingest/${kind}_${middle}${tail}`;
+}
+
+/** `ingest/learnings_<sha7 of main>` — the branch a synthesize job works on. */
 export function learningsBranch(mainSha, { unique = false } = {}) {
-  return ingestBranch({ id: 'learnings', sha256: unique ? '' : mainSha });
+  return reservedBranch('learnings', '', unique ? '' : mainSha);
 }
 
 // ── validation ───────────────────────────────────────────────────────────────
