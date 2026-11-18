@@ -194,6 +194,93 @@ The scheduler retries on an exponential backoff. [source: alpha-pdf, p.3]</pre>
   </section>
 
   <section class="al-stack">
+    <h2 class="g-h">Review: contents rail, page header, compare, marked words</h2>
+    <div class="g-rail">
+      <nav class="al-rail" aria-label="Contents of this proposal (example)">
+        <h2>First</h2>
+        <ul class="al-rail__list" role="list"><li><a class="al-rail__link al-rail__link--ask" href="#"><span class="al-rail__state"><svg class="al-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.4M8 10.6v.1"/></svg></span><span class="al-rail__name">1 question to answer first</span></a></li></ul>
+        <h2>Pages</h2>
+        <p class="al-rail__progress"><progress class="al-progress" max="3" value="1">1 of 3</progress><span>1 of 3 pages accepted</span></p>
+        <ul class="al-rail__list" role="list">
+          <li><a class="al-rail__link" href="#" aria-current="location"><span class="al-rail__state al-rail__state--accepted"><svg class="al-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M5.5 8.2l1.7 1.7 3.3-3.6"/></svg><span class="al-visually-hidden">Accepted: </span></span><span class="al-rail__name">Job scheduler</span><span class="al-rail__meta"><span class="al-rail__kind">New</span><span class="al-tier al-tier--curated">Curated</span><span class="al-delta"><span class="al-delta__add">+12</span> <span class="al-delta__chg">~1</span> <span class="al-delta__del">-0</span></span></span></a></li>
+          <li><a class="al-rail__link" href="#"><span class="al-rail__state"><svg class="al-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/></svg><span class="al-visually-hidden">Not accepted yet: </span></span><span class="al-rail__name">Retry budget</span><span class="al-rail__meta"><span class="al-rail__kind">Changed</span><span class="al-tier al-tier--evidence">Evidence</span><span class="al-delta"><span class="al-delta__add">+3</span> <span class="al-delta__chg">~2</span> <span class="al-delta__del">-1</span></span></span></a></li>
+          <li><a class="al-rail__link" href="#"><span class="al-rail__state al-rail__state--out"><svg class="al-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M5.8 8h4.4"/></svg><span class="al-visually-hidden">Taken out: </span></span><span class="al-rail__name">Old runbook</span><span class="al-rail__meta"><span class="al-rail__kind">Removed</span></span></a></li>
+        </ul>
+        <details class="al-rail__group"><summary>Other files (2)</summary><ul class="al-rail__list" role="list"><li><a class="al-rail__link" href="#"><span class="al-rail__name al-mono">index.md</span></a></li><li><a class="al-rail__link" href="#"><span class="al-rail__name al-mono">log.md</span></a></li></ul></details>
+      </nav>
+    </div>
+    <header class="al-reviewhead g-static-head">
+      <div class="al-reviewhead__main">
+        <a class="al-link-arrow al-link-arrow--back al-reviewhead__back" href="#">All proposals</a>
+        <h1>Q3 board deck</h1>
+        <p class="al-reviewhead__meta">1 new page, 2 changed pages · 18 facts: 12 added, 4 changed, 2 removed · Sent 3 hours ago</p>
+        <p class="al-reviewhead__ref al-mono">brain/raw/q3-board-deck.pdf</p>
+      </div>
+      <div class="al-reviewhead__side">
+        <span class="al-chip">Waiting for review</span>
+        <a class="al-reviewhead__needs" href="#">1 thing still needed</a>
+        <details class="al-menu al-menu--end"><summary class="al-btn al-btn--quiet">More</summary><div class="al-menu__panel al-stack al-stack--sm"><a href="#">Ask for changes</a><a href="#">Turn down</a></div></details>
+        <button class="al-btn al-btn--primary" type="button">Approve all</button>
+      </div>
+    </header>
+    <section class="al-pagesec">
+      <div class="al-pagesec__head">
+        <div class="al-pagesec__title"><h3>Retry budget</h3><span class="al-chip al-chip--info">Updated page</span><span class="al-delta"><span class="al-delta__add">+3</span> <span class="al-delta__chg">~2</span> <span class="al-delta__del">-1</span></span></div>
+        <div class="al-pagesec__tools">
+          <nav class="al-segmented" aria-label="View of this page"><a class="al-segmented__item" href="#" aria-current="true">Compare</a><a class="al-segmented__item" href="#">Whole page</a></nav>
+          <button class="al-btn al-btn--sm" type="button">Accept page</button>
+          <button class="al-btn al-btn--sm al-btn--danger" type="button">Take this page out</button>
+        </div>
+      </div>
+      <div class="al-pagesec__body">
+        <div class="al-compare">
+          <div class="al-compare__head"><span>What gets written</span><span>Where it comes from</span></div>
+          <div class="al-compare__group">
+            <div class="al-compare__facts">
+              <div class="al-claim al-claim--change"><div class="al-claim__op">Updated fact</div><div class="al-claim__was">Was: <del>The scheduler retries on a fixed 30-second backoff.</del></div><p class="al-claim__text">The scheduler retries on an exponential backoff starting at 30 seconds.</p></div>
+              <div class="al-claim al-claim--add"><div class="al-claim__op">New fact</div><p class="al-claim__text">Jobs are retried at most five times.</p></div>
+            </div>
+            <div class="al-compare__source"><div class="al-compare__passage">
+              <div class="al-source">Source: <strong>Alpha System Overview</strong>, page 3</div>
+              <blockquote class="al-quote">The <mark>scheduler retries on an exponential backoff</mark> starting at <mark>30 seconds</mark>. Jobs are <mark>retried at most five times</mark> before they are parked.</blockquote>
+            </div></div>
+          </div>
+          <div class="al-compare__group">
+            <div class="al-compare__facts"><div class="al-claim al-claim--add"><div class="al-claim__op">New fact</div><p class="al-claim__text">Parked jobs are kept for a week.</p></div></div>
+            <div class="al-compare__source"><div class="al-compare__passage"><div class="al-source">Source: <strong>Alpha System Overview</strong>, page 9</div><div class="al-source al-source--missing">We couldn't find that spot in the source. Check it by hand before you approve.</div></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </section>
+
+  <section class="al-stack">
+    <h2 class="g-h">Review: the whole page as text, folds, dialog</h2>
+    <div class="al-docmeta-wrap">
+      <dl class="al-dl al-docmeta"><dt>Title</dt><dd>Retry budget</dd><dt>Type</dt><dd>topic</dd><dt>Tier</dt><dd>curated</dd><dt>Sources</dt><dd><ul class="al-docmeta__sources" role="list"><li><span class="al-code">alpha-pdf</span> Alpha System Overview</li></ul></dd></dl>
+      <div class="al-doc">
+        <div class="al-doc__h al-doc__h--2">Retries</div>
+        <p class="al-doc__p">The scheduler retries on an exponential backoff. <span class="al-cite">source: alpha-pdf, p.3</span></p>
+        <div class="al-doc__li al-doc__li--0"><span class="al-doc__bullet" aria-hidden="true">•</span><span>Jobs are retried at most five times. <span class="al-cite">source: alpha-pdf, p.3</span></span></div>
+        <div class="al-doc__li al-doc__li--1"><span class="al-doc__bullet" aria-hidden="true">•</span><span>A parked job is kept for a week.</span></div>
+      </div>
+    </div>
+    <div class="al-difftools"><span class="al-difftools__counts"><span class="al-delta__add">+2</span> <span class="al-delta__del">-1</span> <span class="al-text-tertiary">3 lines changed</span></span><nav class="al-segmented" aria-label="How to show the changes"><a class="al-segmented__item" href="#" aria-current="true">One column</a><a class="al-segmented__item" href="#">Side by side</a></nav></div>
+    <div class="al-diff" role="group" aria-label="Changes (example)">
+      <details class="al-diff__fold"><summary>14 unchanged lines</summary><div class="al-diff__line al-diff__line--ctx"><span class="al-diff__ln">1</span><span class="al-diff__ln">1</span><span class="al-diff__code">An unchanged line.</span></div></details>
+      <div class="al-diff__hunk">From line 15 · ## Retries</div>
+      <div class="al-diff__line al-diff__line--del"><span class="al-diff__ln">15</span><span class="al-diff__ln"></span><span class="al-diff__code">A failed job is retried on a <del class="al-diff__rem">fixed 30-second</del> backoff.</span></div>
+      <div class="al-diff__line al-diff__line--add"><span class="al-diff__ln"></span><span class="al-diff__ln">15</span><span class="al-diff__code">A failed job is retried on an <ins class="al-diff__ins">exponential</ins> backoff. <span class="al-diff__eol">(no newline at end of file)</span></span></div>
+      <div class="al-diff__fold al-diff__fold--static">40 unchanged lines, not shown because the page is large</div>
+    </div>
+    <dialog class="al-dialog g-dialog" open>
+      <h2>Keyboard shortcuts</h2>
+      <dl class="al-dl"><dt><kbd class="al-kbd">j</kbd></dt><dd>Next fact</dd><dt><kbd class="al-kbd">k</kbd></dt><dd>Previous fact</dd><dt><kbd class="al-kbd">v</kbd></dt><dd>Switch view</dd></dl>
+    </dialog>
+    <div class="al-queuerow al-card"><div class="al-queuerow__main"><div class="al-card__title">Q3 board deck</div><div class="al-queuerow__ref al-mono">brain/raw/q3-board-deck.pdf</div><div class="al-text-secondary">12 new facts about Job scheduler</div></div><div class="al-queuerow__counts">3 pages<span class="al-delta"><span class="al-delta__add">+12</span> <span class="al-delta__chg">~4</span> <span class="al-delta__del">-2</span></span></div><div class="al-queuerow__state al-cluster"><span class="al-chip al-chip--warning">1 question for you</span><span class="al-chip">Waiting for review</span></div><div class="al-queuerow__age al-text-tertiary">3 hours ago</div></div>
+  </section>
+
+  <section class="al-stack">
     <h2 class="g-h">Two-pane and action bar</h2>
     <p class="al-text-secondary">The two-pane layout and the sticky action bar are shown at the bottom of this page, below both themes.</p>
   </section>

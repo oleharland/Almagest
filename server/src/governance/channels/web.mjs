@@ -32,7 +32,7 @@ import { safeNext } from '../html.mjs';
 import { describe } from '../summary.mjs';
 import { redirect } from '../sessions.mjs';
 import { vouchedAs } from '../trust.mjs';
-import { fontRoutes, newNonce, securityHeaders } from '../web/layout.mjs';
+import { fontRoutes, newNonce, securityHeaders, useThemeFrom } from '../web/layout.mjs';
 import * as views from '../web/views.mjs';
 
 const ACTIVE = ['open', 'approved', 'conflicted', 'changes_requested'];
@@ -59,6 +59,8 @@ const DONE = ['merged', 'merged_unaccepted', 'rejected', 'superseded'];
 
 export function create(ctx, cfg, { governance, sessions, confirmations }) {
   const { store, log, config } = ctx;
+  // The instance theme comes from the brain's repository, which in a container is not where this code is. Read once, here.
+  useThemeFrom(ctx.repoRoot);
   const roots = [ctx.repoRoot, ctx.config.paths?.state, ctx.config.paths?.worktrees, os.tmpdir(), '/private/var/', '/var/folders/']
     .filter(Boolean).map((r) => String(r));
   const pub = (v) => publicView(v, roots);
@@ -137,7 +139,7 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
     return items;
   }
 
-  async function renderProposal(req, res, actor, id, { flash = null, status = 200, confirm = '' } = {}) {
+  async function renderProposal(req, res, actor, id, { flash = null, status = 200, confirm = '', view = '', diff = '' } = {}) {
     const csrf = sessions.csrfToken(req, res, actor);
     const ev = await governance.evaluate(id).catch((err) => { if (err.status === 404) return null; throw err; });
     if (!ev) {
@@ -147,11 +149,26 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
     const canAct = await canActOn(ev.proposal, actor);
     const chat = await chatRequest(confirm, ev.proposal.id);
     const nav = await navCounts();
+    // The page text and diffs are read from git only when the whole-page view asks for them.
+    const chosen = views.pickView(view);
+    const pageTexts = chosen === 'page' && ev.proposal.kind !== 'learnings' && ev.proposal.kind !== 'tier'
+      ? await governance.pageTexts(ev.proposal).catch((err) => { log.warn('could not read page text for the review', { error: err.message }); return null; })
+      : null;
     return respond(req, res, (nonce) => views.proposalPage({
       proposal: ev.proposal, decisions: ev.decisions, evaluation: ev.evaluation,
       actor, csrf, nonce, canAct, flash, why, chat, navCounts: nav,
+      view: chosen, diffMode: views.pickDiff(diff), pageTexts,
       tiers: { canCanonical: mayCanonical(actor), canonicalRole },
     }), { status });
+  }
+
+  /** The view the person chose travels through a form post as two hidden fields; only known values are kept. */
+  function withView(dest, body) {
+    if (!/^\/inbox\/p\/[^/?#]+(\?|$)/.test(dest)) return dest;
+    const q = [];
+    if (body?.view === 'page') q.push('view=page');
+    if (body?.diff === 'split') q.push('diff=split');
+    return q.length ? `${dest}${dest.includes('?') ? '&' : '?'}${q.join('&')}` : dest;
   }
 
   /**
@@ -168,7 +185,7 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
     try {
       const out = await fn();
       const key = typeof message === 'function' ? message(out) : message;
-      const dest = next ? next(out) : backTo;
+      const dest = withView(next ? next(out) : backTo, body);
       redirect(res, `${dest}${dest.includes('?') ? '&' : '?'}m=${encodeURIComponent(key)}`);
       return undefined;
     } catch (err) {
@@ -177,7 +194,7 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
       if ((err.status || 500) >= 500) log.error('inbox action failed', { path: url.pathname, error: err.stack || err.message });
       const id = backTo.match(/^\/inbox\/p\/([^/?#]+)/)?.[1];
       if (id) {
-        return renderProposal(req, res, actor, decodeURIComponent(id), { flash: { error: true, text: err.status && err.status < 500 ? err.message : 'Something went wrong. Nothing was changed.' }, status: err.status || 500, confirm: body?.confirm });
+        return renderProposal(req, res, actor, decodeURIComponent(id), { flash: { error: true, text: err.status && err.status < 500 ? err.message : 'Something went wrong. Nothing was changed.' }, status: err.status || 500, confirm: body?.confirm, view: body?.view, diff: body?.diff });
       }
       return respond(req, res, (nonce) => views.messagePage({ title: "That didn't work", text: err.status && err.status < 500 ? err.message : 'Something went wrong.', nonce, link: { href: '/inbox', label: 'Back to the inbox' } }), { status: err.status || 500 });
     }
@@ -214,7 +231,7 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
 
     http.route('GET', '/inbox/p/:id', async (req, res, { actor, params, query, url }) => {
       if (!requireHuman(req, res, actor, url)) return undefined;
-      return renderProposal(req, res, actor, params.id, { flash: flashFrom(query), confirm: String(query.confirm || '') });
+      return renderProposal(req, res, actor, params.id, { flash: flashFrom(query), confirm: String(query.confirm || ''), view: String(query.view || ''), diff: String(query.diff || '') });
     });
 
     const back = (id) => `/inbox/p/${encodeURIComponent(id)}`;

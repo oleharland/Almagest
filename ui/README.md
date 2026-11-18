@@ -39,6 +39,7 @@ An instance themes both frontends in `site/src/styles/theme.css`, which loads la
 - Tier: `--tier-canonical`, `--tier-curated`, `--tier-evidence`
 - Diff: `--diff-add`, `--diff-add-mark`, `--diff-add-content`, `--diff-del`, `--diff-del-mark`, `--diff-del-content`
 - Primitives: `--color-ink-50..950`, `--color-blue-*`, `--color-teal-*`, `--color-red-*`, `--color-green-*`, `--color-amber-*`, `--color-brand-blue`
+- Marked words: `--mark`, `--mark-strong`, `--mark-line`
 - Widths: `--width-measure` (70ch, prose), `--width-page` (1120px), `--width-wide` (1440px), with `--gutter` and `--gutter-wide`
 - Spacing: `--space-0` (2px), `--space-1` (4px), `--space-2` (8px), `--space-3` (12px), `--space-4` (16px), `--space-5` (24px), `--space-6` (32px), `--space-7` (48px), `--space-8` (64px)
 - Type: `--text-xs` (12px), `--text-sm` (13px), `--text-base` (15px), `--text-md` (17px), `--text-lg` (20px), `--text-xl` (24px), `--text-2xl` (32px), `--text-3xl` (40px); `--leading-*`, `--tracking-*`, `--weight-*`
@@ -77,12 +78,17 @@ All in `components.css`, prefix `al-`, BEM-like.
 - `al-dl` (`--mono`, `--stacked`): metadata list
 - `al-code`, `al-pre` (`--wrap`, `--preview`)
 - `al-diff` (`--split`; `__hunk`, `__line` with `--add`, `--del`, `--ctx`, `--empty`; `__ln`, `__code`, `__row`, `__ins`, `__rem`)
-- `al-twopane` (`--left`, `--side-first`; `__main`, `__side`): sticky side pane
+- `al-twopane` (`--left`, `--side-first`; `__main`, `__side`): sticky side pane. Set `--pane-top` on it (or a parent) to move where the pane sticks
 - `al-actionbar` (`__inner`, `__msg`): sticky bottom bar
 - `al-skeleton` (`--line`, `--short`, `--block`): static, no shimmer
 - `al-details`: disclosure
 - `al-claim` (`--add`, `--change`, `--remove`; `__op`, `__text`, `__was`, `__source`, `__missing`), `al-source` (`--missing`), `al-quote`, `al-decision` (`--resolved`; `__vs`, `__side`, `__options`)
 - `al-narrow`, `al-stats`, `al-stat`
+- Review page (all in `components.css`, under "Review page"): `al-review` (sets the sticky offsets), `al-reviewhead` (`__main`, `__back`, `__meta`, `__ref`, `__side`, `__needs`: the sticky header), `al-rail` (`__list`, `__link`, `__state`, `__name`, `__meta`, `__kind`, `__progress`, `__group`: the contents list; use it in `al-twopane--left`), `al-pagesec` (`__head` sticky, `__title`, `__tools`, `__state`, `__body`: one page), `al-compare` (`__head`, `__group`, `__facts`, `__source`, `__passage` sticky, `__label`: facts beside the passage they cite), `mark` (marked words, `.is-on` and `.has-active` for emphasis), `al-doc` (`__p`, `__h`, `__li`, `__code`, `__row`, `--removed`), `al-cite`, `al-docmeta`, `al-filecard` (a folded file), `al-queuerow`
+- `al-delta` (`__add`, `__chg`, `__del`): `+12 ~1 -0` counts
+- `al-menu` (`--end`, `__panel`): a button that opens a small panel, no script needed
+- `al-dialog`, `al-progress`, `al-icon`
+- `al-diff` also has `__fold` (a `<details>` of unchanged lines, or `--static`), `__eol`, and `al-difftools`; under 720px a split diff shows one column
 
 ## Rules of the look
 

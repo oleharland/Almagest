@@ -12,8 +12,12 @@
 import { html, raw, safeUrl } from '../html.mjs';
 import { locatorWords } from '../excerpt.mjs';
 import { hintWords } from '../hints.mjs';
-import { ACTION_WORDS, auditWords, DECISION_WORDS, describe, LEARNINGS_EXPLANATION, OP_WORDS, sourceName, STATUS_HEADLINE, TIER_WORDS } from '../summary.mjs';
+import { ACTION_WORDS, auditWords, counts as factCounts, DECISION_WORDS, describe, LEARNINGS_EXPLANATION, OP_WORDS, sourceName, STATUS_HEADLINE, TIER_WORDS } from '../summary.mjs';
+import { frontMatterLines, layoutDiff, parseDiff, splitFront } from '../diff.mjs';
 import { layout, timeAgo } from './layout.mjs';
+import { groupClaims, supportFor } from './passages.mjs';
+import { detailChanges, diffView, metaList, pageText, splitPage } from './pageview.mjs';
+import { normalizeSources } from '../../../../tools/lib/wiki-core.mjs';
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -133,17 +137,26 @@ export function queuePage({ items, filters, actor, csrf, nonce, now = Date.now()
     </div>
     ${items.length === 0
       ? html`<div class="al-empty">${filters.show === 'done' ? 'Nothing here yet.' : 'Nothing to review. New material shows up here when the agent finishes reading a source.'}</div>`
-      : html`<ul class="al-stack al-stack--sm al-queue" role="list">${items.map(({ proposal: p, info }) => html`
-        <li><a class="al-card al-card--interactive al-stack al-stack--sm" href="/inbox/p/${encodeURIComponent(p.id)}">
-          <div class="al-card__title">${info.title}</div>
-          <div class="al-text-secondary">${info.line}</div>
-          <div class="al-cluster">
+      : html`<ul class="al-stack al-stack--sm al-queue" role="list">${items.map(({ proposal: p, info }) => {
+        const name = proposalName(p, info);
+        const c = info.counts;
+        const facts = c.added + c.changed + c.removed;
+        return html`
+        <li><a class="al-card al-card--interactive al-queuerow" href="/inbox/p/${encodeURIComponent(p.id)}" title="${info.title}">
+          <div class="al-queuerow__main">
+            <div class="al-card__title">${name.title}</div>
+            ${name.ref ? html`<div class="al-queuerow__ref al-mono">${name.ref}</div>` : ''}
+            <div class="al-text-secondary">${info.line}</div>
+          </div>
+          <div class="al-queuerow__counts">${c.pages ? plural(c.pages, 'page') : 'No pages'}${facts ? html`<span class="al-delta"><span class="al-delta__add">+${c.added}</span> <span class="al-delta__chg">~${c.changed}</span> <span class="al-delta__del">-${c.removed}</span></span>` : ''}</div>
+          <div class="al-queuerow__state al-cluster">
             ${info.openDecisions ? html`<span class="al-chip al-chip--warning">${plural(info.openDecisions, 'question')} for you</span>` : ''}
             ${info.hot ? html`<span class="al-chip al-chip--info">${info.hot === 1 ? 'Frequently read page' : `${info.hot} frequently read pages`}</span>` : ''}
             ${statusChip(p)}
-            <span class="al-text-tertiary">${timeAgo(p.createdAt, now)}</span>
           </div>
-        </a></li>`)}</ul>`}`;
+          <div class="al-queuerow__age al-text-tertiary">${timeAgo(p.createdAt, now)}</div>
+        </a></li>`;
+      })}</ul>`}`;
   return layout({ title: 'Review inbox', actor, nonce, csrf, current: 'inbox', body, navCounts });
 }
 
@@ -169,17 +182,6 @@ function excerptBlock(claim) {
     default:
       return '';
   }
-}
-
-function claimCard(claim) {
-  return html`<div class="al-claim al-claim--${claim.op}">
-    <div class="al-claim__op">${OP_WORDS[claim.op] || claim.op}</div>
-    ${claim.op === 'change' && claim.before && claim.before !== claim.text ? html`<div class="al-claim__was">Was: <del>${claim.before}</del></div>` : ''}
-    <p class="al-claim__text">${claim.text}</p>
-    ${claim.op === 'change' && claim.before === claim.text ? html`<div class="al-claim__was">Same wording — the source it points to changed.</div>` : ''}
-    ${citationLine(claim)}
-    ${excerptBlock(claim)}
-  </div>`;
 }
 
 function hotWhy(e) {
@@ -227,55 +229,242 @@ function learningBody(change) {
       : change.preview ? html`<p class="al-text-tertiary">The conclusion (the start only)</p><pre class="al-pre al-pre--wrap al-pre--preview">${change.preview}</pre>` : ''}`;
 }
 
-function pageCard(p, change, { canAct, csrf, required, why = null, tiers = null }) {
+// ── the page sections ────────────────────────────────────────────────────────
+
+const MARKER_WORDS = { create: 'New', update: 'Changed', rename: 'Renamed', delete: 'Removed' };
+const MARKER_CLASS = { create: 'al-chip--success', update: 'al-chip--info', rename: 'al-chip--info', delete: 'al-chip--danger' };
+/** Core first: new pages, then changed ones, then renamed and removed. */
+const ORDER = { create: 0, update: 1, rename: 2, delete: 3 };
+const orderedChanges = (changes) => [...changes].sort((a, b) => (ORDER[a.action] ?? 1) - (ORDER[b.action] ?? 1));
+
+const VIEWS = ['compare', 'page'];
+const DIFF_MODES = ['unified', 'split'];
+/** A value from the address, or the default when it is not one we offer. */
+export const pickView = (v) => (VIEWS.includes(v) ? v : 'compare');
+export const pickDiff = (v) => (DIFF_MODES.includes(v) ? v : 'unified');
+
+/** The link to this proposal in a given view, optionally to a spot on the page. Both choices travel in the address. */
+function reviewHref(p, { view, diff }, hash = '') {
+  const q = [`view=${pickView(view)}`];
+  if (pickDiff(diff) === 'split') q.push('diff=split');
+  return `/inbox/p/${encodeURIComponent(p.id)}?${q.join('&')}${hash}`;
+}
+
+/** Hidden fields that carry the chosen view through a form post, so the person lands back where they were. */
+function keepFields(view, diff) {
+  return html`${view !== 'compare' ? html`<input type="hidden" name="view" value="${view}">` : ''}${diff === 'split' ? html`<input type="hidden" name="diff" value="${diff}">` : ''}`;
+}
+
+const SVG = (body) => raw(`<svg class="al-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`);
+const ICON_PENDING = SVG('<circle cx="8" cy="8" r="5.5"/>');
+const ICON_ACCEPTED = SVG('<circle cx="8" cy="8" r="5.5"/><path d="M5.5 8.2l1.7 1.7 3.3-3.6"/>');
+const ICON_OUT = SVG('<circle cx="8" cy="8" r="5.5"/><path d="M5.8 8h4.4"/>');
+const ICON_ASK = SVG('<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.4M8 10.6v.1"/>');
+
+const stateOf = (change) => (change.pageStatus === 'rejected' ? { icon: ICON_OUT, words: 'Taken out', cls: 'out' }
+  : change.pageStatus === 'accepted' ? { icon: ICON_ACCEPTED, words: 'Accepted', cls: 'accepted' }
+    : { icon: ICON_PENDING, words: 'Not accepted yet', cls: 'pending' });
+
+/** `+12 ~1 -0`: facts added, changed and removed on a page. */
+function deltaOf(change) {
+  const c = { add: 0, change: 0, remove: 0 };
+  for (const cl of change.claims || []) if (cl.op in c) c[cl.op]++;
+  return c;
+}
+
+function deltaHtml(change) {
+  const d = deltaOf(change);
+  if (!d.add && !d.change && !d.remove) return '';
+  return html`<span class="al-delta"><span aria-hidden="true"><span class="al-delta__add">+${d.add}</span> <span class="al-delta__chg">~${d.change}</span> <span class="al-delta__del">-${d.remove}</span></span><span class="al-visually-hidden">${plural(d.add, 'fact')} added, ${d.change} changed, ${d.remove} removed</span></span>`;
+}
+
+// ── compare: each fact next to its passage ───────────────────────────────────
+
+function factCard(claim, slug, n) {
+  return html`<div class="al-claim al-claim--${claim.op}" id="fact-${slug}-${n}" data-fact tabindex="-1">
+    <div class="al-claim__op">${OP_WORDS[claim.op] || claim.op}</div>
+    ${claim.op === 'change' && claim.before && claim.before !== claim.text ? html`<div class="al-claim__was">Was: <del>${claim.before}</del></div>` : ''}
+    <p class="al-claim__text">${claim.text}</p>
+    ${claim.op === 'change' && claim.before === claim.text ? html`<div class="al-claim__was">Same wording — the source it points to changed.</div>` : ''}
+  </div>`;
+}
+
+/** The right side of one fact's row: the part of the passage that supports it, or the warning that there is none. */
+function supportCell(group, claim) {
+  if (group.status !== 'found' || group.passage === null) return html`${citationLine(claim)}${excerptBlock(claim)}`;
+  const s = supportFor(claim.excerpt ?? group.passage, claim.text);
+  return s.matched
+    ? html`<p class="al-compare__support">${s.html}</p>`
+    : html`<p class="al-compare__support al-compare__support--none">${s.html}</p><p class="al-text-tertiary">No sentence in this passage clearly matches. Read the whole passage.</p>`;
+}
+
+/** One row per fact. The source and spot are named once above its group, and the whole passage is one fold below it. */
+function compareView(change) {
+  const groups = groupClaims(change.claims);
+  let n = 0;
+  return html`<div class="al-compare">
+    <div class="al-compare__head"><span>What gets written</span><span>Where it comes from</span></div>
+    ${groups.map((g) => {
+      const found = g.status === 'found' && g.passage !== null;
+      return html`<div class="al-compare__group">
+        ${found ? html`<div class="al-compare__src">${citationLine(g.items[0].claim)}</div>` : ''}
+        ${g.items.map((it) => html`<div class="al-compare__row">
+          <div class="al-compare__facts"><p class="al-compare__label">What gets written</p>${factCard(it.claim, change.slug, n++)}</div>
+          <div class="al-compare__source"><div class="al-compare__passage"><p class="al-compare__label">Where it comes from</p>${supportCell(g, it.claim)}</div></div>
+        </div>`)}
+        ${found ? html`<details class="al-details al-compare__whole"><summary>Show the whole passage</summary><blockquote class="al-quote" aria-label="What the source says">${g.passage}</blockquote></details>` : ''}
+      </div>`;
+    })}
+  </div>`;
+}
+
+// ── whole page: what the wiki will say ───────────────────────────────────────
+
+const lineList = (text) => {
+  const lines = String(text).split('\n');
+  if (lines.length && lines[lines.length - 1] === '') lines.pop();
+  return lines;
+};
+
+function sizeNote(shown, total, what) {
+  return html`<div class="al-callout al-callout--warning" role="note">${what} is ${size(total)}. Only the first ${size(shown)} is shown here. The rest is not shown. Approving still adds all of it.</div>`;
+}
+
+/** In the whole page view the facts sit inside the text, so those without a checked source are listed above it, with their warnings. */
+function checkList(change) {
+  const bad = (change.claims || []).filter((cl) => cl.excerptStatus !== 'found');
+  if (!bad.length) return '';
+  return html`<details class="al-details" open><summary>${plural(bad.length, 'fact')} without a checked source</summary>
+    <div class="al-flow">${bad.map((cl) => html`<div class="al-claim al-claim--${cl.op}"><div class="al-claim__op">${OP_WORDS[cl.op] || cl.op}</div><p class="al-claim__text">${cl.text}</p>${citationLine(cl)}${excerptBlock(cl)}</div>`)}</div></details>`;
+}
+
+function wholePageView(change, rv) {
+  const entry = rv.texts?.[change.slug];
+  if (!entry?.text) return html`<p class="al-source al-source--missing">The text of this page could not be read here. Read it another way before you approve.</p>`;
+  const t = entry.text;
+  const removed = change.action === 'delete';
+  const parts = splitPage(t.text);
+  const ptitles = new Map(normalizeSources(parts.data.sources).map((x) => [x.id, x.title]));
+  const note = t.truncated ? sizeNote(t.shownBytes, t.bytes, 'This page') : '';
+  if (removed || change.action === 'create') {
+    return html`${removed ? html`<div class="al-callout al-callout--danger" role="note">This page would be removed. This is what it says now.</div>` : ''}
+      ${note}
+      ${parts.ok ? metaList(parts.data, { tier: change.tier }) : html`<p class="al-source al-source--missing">The details at the top of this page could not be read, so the whole text is shown below.</p>`}
+      ${pageText(parts.body, { titles: ptitles, single: pageSingle(parts.data), removed })}`;
+  }
+  // A changed page: git's diff between the version the branch started from and the one being reviewed.
+  if (!entry.diff) {
+    return html`<p class="al-source al-source--missing">The changes to this page could not be read here, so the whole page is shown.</p>${note}${pageText(parts.body, { titles: ptitles, single: pageSingle(parts.data) })}`;
+  }
+  const parsed = parseDiff(entry.diff.text);
+  const file = parsed.files[0];
+  const mode = rv.diffMode;
+  const label = `Changes to ${change.title}`;
+  const newLines = lineList(t.text);
+  const before = entry.base ? splitPage(entry.base.text) : null;
+  const split = Boolean(file && file.hunks.length && before?.ok && parts.ok);
+  const front = split ? splitFront(file, frontMatterLines(entry.base.text), frontMatterLines(t.text)) : null;
+  const tools = html`<div class="al-difftools">
+    <span class="al-difftools__counts"><span class="al-delta__add">+${parsed.added}</span> <span class="al-delta__del">-${parsed.removed}</span> <span class="al-text-tertiary">${entry.diff.truncated ? 'lines in the part shown' : plural(parsed.added + parsed.removed, 'line') + ' changed'}</span></span>
+    <nav class="al-segmented al-difftools__mode" aria-label="How to show the changes">
+      <a class="al-segmented__item" data-diff="unified" aria-current="${mode === 'unified' ? 'true' : 'false'}" href="${safeUrl(reviewHref(rv.p, { view: 'page', diff: 'unified' }, `#page-${change.slug}`))}">One column</a>
+      <a class="al-segmented__item" data-diff="split" aria-current="${mode === 'split' ? 'true' : 'false'}" href="${safeUrl(reviewHref(rv.p, { view: 'page', diff: 'split' }, `#page-${change.slug}`))}">Side by side</a>
+    </nav></div>`;
+  const sizeNotes = html`${note}${entry.diff.truncated ? sizeNote(entry.diff.shownBytes, entry.diff.bytes, 'The list of changes to this page') : ''}`;
+  const renamed = change.from ? html`<p class="al-text-secondary">Renamed from “${change.from}”.</p>` : '';
+  if (!file || !file.hunks.length) {
+    return html`${renamed}${sizeNotes}<p class="al-text-secondary">${file?.renamed ? 'Only the name of this page changes. Its text stays the same.' : 'No lines of this page change.'}</p>`;
+  }
+  if (!split) {
+    return html`${renamed}${sizeNotes}<p class="al-source al-source--missing">The details at the top of this page could not be read on one side, so the raw changes to the whole file are shown.</p>${tools}${diffView(layoutDiff(file, newLines, { newTotal: entry.lines }), mode, label)}`;
+  }
+  const oldFront = frontMatterLines(entry.base.text);
+  const newFront = frontMatterLines(t.text);
+  const said = detailChanges(before.data, parts.data);
+  return html`${renamed}${sizeNotes}
+    <section class="al-detailchanges" aria-labelledby="dc-${change.slug}">
+      <h4 id="dc-${change.slug}">What changed in the page's details</h4>
+      ${said.length ? html`<ul class="al-detailchanges__list">${said.map((x) => html`<li>${x}</li>`)}</ul>` : html`<p class="al-text-secondary">The details at the top of the page did not change.</p>`}
+      ${front.front.hunks.length ? html`<details class="al-details"><summary>Show the raw details block</summary>${diffView(layoutDiff(front.front, newLines, { newTotal: newFront }), mode, `${label}, details block`)}</details>` : ''}
+    </section>
+    <h4>What changed in the text</h4>
+    ${tools}
+    ${front.body.hunks.length
+      ? diffView(layoutDiff(front.body, newLines, { newTotal: entry.lines, from: { old: oldFront + 1, new: newFront + 1 } }), mode, label)
+      : html`<p class="al-text-secondary">The text of the page did not change.</p>`}`;
+}
+
+/** True when a page names one source or none: its citation chips then say only the locator. */
+function pageSingle(data) { return normalizeSources(data.sources).length <= 1; }
+
+// ── one page of the proposal ─────────────────────────────────────────────────
+
+function pageSection(change, rv) {
+  const { p, canAct, csrf, required, tiers, keep } = rv;
   const req = required?.pages?.[change.slug];
   const rejected = change.pageStatus === 'rejected';
-  const action = change.action === 'rename' && change.from ? `Renamed from “${change.from}”` : ACTION_WORDS[change.action] || change.action;
   const accepted = change.pageStatus === 'accepted';
-  return html`<section class="al-card al-card--flush${rejected ? ' al-card--muted' : ''}" id="page-${change.slug}">
-    <div class="al-card__head">
-      <div class="al-grow al-stack al-stack--sm">
-        <h3>${change.title}</h3>
-        <div class="al-cluster">
-          <span class="al-chip">${action}</span>
-          <span class="al-chip">${TIER_WORDS[change.tier] || change.tier}</span>
-          ${change.canonical && !change.promotes ? html`<span class="al-chip al-chip--danger">Locked — can't be changed here</span>` : ''}
-          ${change.promotes ? html`<span class="al-chip al-chip--danger">Made canonical without a person choosing it</span>` : ''}
-          ${change.tierSetBy ? html`<span class="al-chip al-chip--success">Made canonical by ${change.tierSetBy.display || change.tierSetBy.by}</span>` : ''}
-          ${change.hot ? html`<span class="al-chip al-chip--info">Frequently read</span>` : ''}
-          ${change.owner ? html`<span class="al-chip">Owned by ${change.owner}</span>` : ''}
-          ${req?.explicit && !rejected ? html`<span class="al-chip al-chip--warning">Needs its own approval</span>` : ''}
-          ${accepted ? html`<span class="al-chip al-chip--success">Accepted</span>` : ''}
-          ${rejected ? html`<span class="al-chip al-chip--danger">Taken out</span>` : ''}
-        </div>
+  const action = change.action === 'rename' && change.from ? `Renamed from “${change.from}”` : ACTION_WORDS[change.action] || change.action;
+  const id = encodeURIComponent(p.id);
+  const slugId = encodeURIComponent(change.slug);
+  const normal = p.kind !== 'learnings' && p.kind !== 'tier';
+  const showTier = tiers && !rejected && change.action !== 'delete' && p.kind !== 'tier' && !(change.canonical && !change.promotes);
+  const st = stateOf(change);
+  const body = p.kind === 'learnings'
+    ? learningBody(change)
+    : rv.view === 'page' && normal ? wholePageView(change, rv) : null;
+
+  return html`<section class="al-pagesec${rejected ? ' al-pagesec--out' : ''}" id="page-${change.slug}" data-page aria-labelledby="title-${change.slug}">
+    <div class="al-pagesec__head">
+      <div class="al-pagesec__title">
+        <span class="al-pagesec__state al-pagesec__state--${st.cls}">${st.icon}<span class="al-visually-hidden">${st.words}: </span></span>
+        <h3 id="title-${change.slug}">${change.title}</h3>
+        <span class="al-chip ${MARKER_CLASS[change.action] || ''}">${action}</span>
+        ${deltaHtml(change)}
       </div>
-      ${canAct.canReview && !rejected ? html`<div class="al-cluster">
-        ${accepted || !canAct.ok ? '' : html`<form method="post" action="/inbox/p/${encodeURIComponent(p.id)}/page/${encodeURIComponent(change.slug)}/accept">${csrfField(csrf)}${headField(p)}<button class="al-btn al-btn--sm" type="submit">Accept page</button></form>`}
-        <form method="post" action="/inbox/p/${encodeURIComponent(p.id)}/page/${encodeURIComponent(change.slug)}/reject" data-confirm="Take this page out of the proposal?">${csrfField(csrf)}<button class="al-btn al-btn--sm al-btn--danger" type="submit">Take this page out</button></form>
-      </div>` : ''}
+      <div class="al-pagesec__tools">
+        ${normal ? html`<nav class="al-segmented" aria-label="View of this page">
+          <a class="al-segmented__item" data-view="compare" aria-current="${rv.view === 'compare' ? 'true' : 'false'}" href="${safeUrl(reviewHref(p, { view: 'compare', diff: rv.diffMode }, `#page-${change.slug}`))}">Compare</a>
+          <a class="al-segmented__item" data-view="page" aria-current="${rv.view === 'page' ? 'true' : 'false'}" href="${safeUrl(reviewHref(p, { view: 'page', diff: rv.diffMode }, `#page-${change.slug}`))}">Whole page</a>
+        </nav>` : ''}
+        ${showTier ? html`<details class="al-menu"><summary class="al-btn al-btn--sm">Change the tier</summary>
+          <div class="al-menu__panel al-stack al-stack--sm"><p class="al-text-tertiary">Now: <strong>${TIER_NAME[change.tier] || change.tier}</strong></p>${tierChoices({
+            action: `/inbox/p/${id}/page/${slugId}/tier`, current: change.tier, title: change.title,
+            csrf, hidden: html`${headField(p)}${keep}`, canCanonical: tiers.canCanonical, canonicalRole: tiers.canonicalRole,
+          })}</div></details>` : ''}
+        ${canAct.canReview && !rejected ? html`
+          ${accepted || !canAct.ok ? '' : html`<form method="post" action="/inbox/p/${id}/page/${slugId}/accept">${csrfField(csrf)}${headField(p)}${keep}<button class="al-btn al-btn--sm" type="submit">Accept page</button></form>`}
+          <form method="post" action="/inbox/p/${id}/page/${slugId}/reject" data-confirm="Take this page out of the proposal?">${csrfField(csrf)}${keep}<button class="al-btn al-btn--sm al-btn--danger" type="submit">Take this page out</button></form>` : ''}
+      </div>
     </div>
-    <div class="al-card__body al-flow">
-      ${tiers && !rejected && change.action !== 'delete' && p.kind !== 'tier' && !(change.canonical && !change.promotes)
-        ? html`<div class="al-cluster"><span class="al-text-tertiary">Tier</span> <strong>${TIER_NAME[change.tier] || change.tier}</strong>
-          <details class="al-details"><summary>Change the tier</summary>
-            ${tierChoices({
-              action: `/inbox/p/${encodeURIComponent(p.id)}/page/${encodeURIComponent(change.slug)}/tier`, current: change.tier, title: change.title,
-              csrf, hidden: headField(p), canCanonical: tiers.canCanonical, canonicalRole: tiers.canonicalRole,
-            })}
-          </details></div>` : ''}
+    <div class="al-pagesec__body al-flow">
+      <div class="al-cluster">
+        <span class="al-tier al-tier--${change.tier}">${TIER_WORDS[change.tier] || change.tier}</span>
+        ${change.canonical && !change.promotes ? html`<span class="al-chip al-chip--danger">Locked — can't be changed here</span>` : ''}
+        ${change.promotes ? html`<span class="al-chip al-chip--danger">Made canonical without a person choosing it</span>` : ''}
+        ${change.tierSetBy ? html`<span class="al-chip al-chip--success">Made canonical by ${change.tierSetBy.display || change.tierSetBy.by}</span>` : ''}
+        ${change.hot ? html`<span class="al-chip al-chip--info">Frequently read</span>` : ''}
+        ${change.owner ? html`<span class="al-chip">Owned by ${change.owner}</span>` : ''}
+        ${req?.explicit && !rejected ? html`<span class="al-chip al-chip--warning">Needs its own approval</span>` : ''}
+        ${accepted ? html`<span class="al-chip al-chip--success">Accepted</span>` : ''}
+        ${rejected ? html`<span class="al-chip al-chip--danger">Taken out</span>` : ''}
+      </div>
       ${(p.extends || []).filter((e) => e.slug === change.slug).map(extendsNote)}
-      ${change.hot ? hotWhy(why) : ''}
-      ${p.kind === 'learnings' ? learningBody(change) : ''}
+      ${change.hot ? hotWhy(rv.why) : ''}
+      ${body !== null && p.kind === 'learnings' ? body : ''}
       ${p.kind === 'learnings' ? '' : change.needsManualLook ? html`<p class="al-source al-source--missing">This new page has no facts the inbox could pair with a source, so nothing below has been checked for you. Read the whole page before you approve.</p>
-        <pre class="al-pre al-pre--wrap al-pre--preview">${change.preview || ''}</pre>` : ''}
-      ${p.kind === 'learnings' || change.needsManualLook ? '' : change.claims.length === 0 && !(change.fields || []).length
-        ? html`<p class="al-text-secondary">${change.action === 'delete' ? 'The whole page would be removed.' : 'No facts changed — only formatting or wording without a source.'}</p>`
-        : change.claims.map(claimCard)}
-      ${(change.fields || []).length ? html`<details class="al-details"><summary>${plural(change.fields.length, 'detail')} changed</summary>
+        ${rv.view === 'page' && normal ? '' : html`<pre class="al-pre al-pre--wrap al-pre--preview">${change.preview || ''}</pre>`}` : ''}
+      ${p.kind === 'learnings' ? '' : (change.fields || []).length ? html`<details class="al-details"><summary>${plural(change.fields.length, 'detail')} changed</summary>
         <dl class="al-dl al-dl--mono">${change.fields.map((f) => html`<dt>${f.label}</dt><dd>${f.before || '—'} → ${f.after || '—'}</dd>`)}</dl></details>` : ''}
+      ${p.kind === 'learnings' ? '' : rv.view === 'page' && normal
+        ? html`${checkList(change)}${body}`
+        : change.needsManualLook ? '' : change.claims.length === 0 && !(change.fields || []).length
+          ? html`<p class="al-text-secondary">${change.action === 'delete' ? 'The whole page would be removed.' : 'No facts changed — only formatting or wording without a source.'}</p>`
+          : change.claims.length ? compareView(change) : ''}
     </div>
   </section>`;
 }
+
 
 /** "alpha-pdf, p.3" → "Alpha System Overview, page 3", using the titles the proposal's pages give their sources. */
 function sourceTitles(p) {
@@ -294,7 +483,7 @@ function sourceWords(text, titles) {
   return `${titles.get(m[1]) || m[1]}, ${locatorWords(m[2].trim())}`;
 }
 
-function decisionCard(p, d, { canAct, csrf }) {
+function decisionCard(p, d, { canAct, csrf, keep = '' }) {
   const c = d.context || {};
   const titles = sourceTitles(p);
   if (d.status !== 'open') {
@@ -310,7 +499,7 @@ function decisionCard(p, d, { canAct, csrf }) {
       ${c.claimB ? html`<div class="al-decision__side"><div class="al-text-tertiary">The new material says</div>${c.claimB}${c.sourceB ? html`<div class="al-source">Source: ${sourceWords(c.sourceB, titles)}</div>` : ''}</div>` : ''}
     </div>` : ''}
     ${canAct.canReview ? html`<form class="al-stack al-stack--sm" method="post" action="/inbox/d/${encodeURIComponent(d.id)}/resolve">
-      ${csrfField(csrf)}${headField(p)}
+      ${csrfField(csrf)}${headField(p)}${keep}
       <label class="al-label" for="note-${d.id}">Note for the agent (optional)</label>
       <input class="al-input" type="text" id="note-${d.id}" name="note" maxlength="2000">
       <div class="al-decision__options">${d.options.map((o) => html`<button class="al-btn al-btn--block" type="submit" name="optionId" value="${o.id}">${o.label}</button>`)}</div>
@@ -339,30 +528,128 @@ function size(bytes) {
   return bytes < 1024 ? plural(bytes, 'byte') : `${(bytes / 1024).toFixed(bytes < 10240 ? 1 : 0)} KB`;
 }
 
+/** Files the service keeps by itself: new ones of these need no close reading. */
+const BOOKKEEPING = /(^|\/)(index\.md|log\.md|manifest\.yaml|canonical-challenges\.md)$|(^|\/)\.index\/|(^|\/)raw\/(extracted|processed)\//;
+
 /**
  * Every file the proposal changes outside the wiki, with what it says — the
  * bookkeeping, and anything under raw/. Approving the proposal approves these
- * too, so they are shown, not just named.
+ * too, so they are shown, not just named. Each is folded, except a new file
+ * that is not one of the usual bookkeeping files: that one starts open.
  */
 function otherFilesSection(files) {
   if (!files.length) return '';
-  return html`<h2>Other files</h2>
+  return html`<div id="other-files" class="al-flow"><h2>Other files</h2>
     <p class="al-text-secondary">Approving also adds these. Read anything you didn't expect.</p>
-    ${files.map((f) => html`<section class="al-card al-card--flush">
-      <div class="al-card__head"><div class="al-grow al-stack al-stack--sm">
-        <strong>${f.path}</strong>
-        <div class="al-cluster"><span class="al-chip">${FILE_STATUS[f.status] || f.status}${f.from ? ` from ${f.from}` : ''}</span>${f.bytes != null ? html`<span class="al-chip">${size(f.bytes)}${f.lines != null ? `, ${plural(f.lines, 'line')}` : ''}</span>` : ''}</div>
-      </div></div>
-      <div class="al-card__body al-flow">
+    ${files.map((f, i) => html`<details class="al-filecard" id="file-${i}"${f.status === 'A' && !BOOKKEEPING.test(f.path) ? raw(' open') : ''}>
+      <summary class="al-filecard__head">
+        <strong class="al-filecard__path">${f.path}</strong>
+        <span class="al-cluster"><span class="al-chip">${FILE_STATUS[f.status] || f.status}${f.from ? ` from ${f.from}` : ''}</span>${f.bytes != null ? html`<span class="al-chip">${size(f.bytes)}${f.lines != null ? `, ${plural(f.lines, 'line')}` : ''}</span>` : ''}</span>
+      </summary>
+      <div class="al-filecard__body al-flow">
         ${f.binary ? html`<p class="al-source al-source--missing">A binary file — it can't be shown here.</p>`
           : f.preview != null ? html`<p class="al-text-tertiary">${f.previewOf === 'added' ? 'Lines this adds' : 'Content'}${f.previewTruncated ? ' (the start only)' : ''}:</p><pre class="al-pre al-pre--wrap al-pre--preview">${f.preview}</pre>`
-          : ''}
+          : html`<p class="al-text-tertiary">Nothing to show for this file.</p>`}
       </div>
-    </section>`)}`;
+    </details>`)}</div>`;
 }
 
-export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, nonce, canAct, flash = null, now = Date.now(), why = {}, chat = null, navCounts = {}, tiers = null }) {
+// ── the name of a proposal ───────────────────────────────────────────────────
+
+/**
+ * What to call a proposal on screen: the document's own name, with the path or
+ * reference under it. The stored `proposal.title` is not touched: commit
+ * messages, the log and notifications keep using it.
+ */
+export function proposalName(p, info = null) {
+  const i = info || describe(p, []);
+  if (p.kind === 'learnings' || p.kind === 'tier' || !p.source) return { title: i.title, ref: '' };
+  const src = p.source;
+  const looksLikePath = (t) => /\//.test(t) && !/\s/.test(t);
+  // What the pages call this document: matched by the snapshot path, then by id.
+  const named = new Map();
+  for (const ch of p.changes || []) {
+    for (const cl of ch.claims || []) {
+      const c = cl.citation;
+      if (!c?.title) continue;
+      if (src.path && c.path === src.path) named.set('path', named.get('path') || c.title);
+      if (src.id && c.id === src.id) named.set('id', named.get('id') || c.title);
+      if (cl.op !== 'remove') named.set(`n:${c.title}`, (named.get(`n:${c.title}`) || 0) + 1);
+    }
+  }
+  // The source's own title, when it has a real one. A title that is only a path says little: then the pages' name for it, or the name most new facts cite.
+  const ownTitle = src.title && !looksLikePath(src.title) ? sourceName(src) : '';
+  let title = ownTitle || named.get('path') || named.get('id') || '';
+  if (!title && (!src.title || looksLikePath(src.title))) {
+    const best = [...named].filter(([k]) => k.startsWith('n:') && k !== 'n:unknown').sort((a, b) => b[1] - a[1])[0];
+    if (best) title = best[0].slice(2);
+  }
+  title = title || sourceName(src);
+  const ref = src.connector && src.ref ? `${src.label || src.connector} · ${src.ref}` : String(src.path || src.ref || src.id || '').trim();
+  return { title, ref: ref === title ? '' : ref };
+}
+
+// ── the review page ──────────────────────────────────────────────────────────
+
+/** The line under the title: how much changes, and when it was sent. */
+function summaryLine(p, info, now) {
+  const when = `Sent ${timeAgo(p.createdAt, now)}${p.revision > 1 ? `, revised ${plural(p.revision - 1, 'time')}` : ''}`;
+  if (p.kind === 'learnings' || p.kind === 'tier') return `${info.line}. ${when}.`;
+  const c = info.counts;
+  const pages = [c.pagesNew ? plural(c.pagesNew, 'new page') : '', c.pagesUpdated ? plural(c.pagesUpdated, 'changed page') : '', c.pagesRemoved ? plural(c.pagesRemoved, 'removed page') : ''].filter(Boolean).join(', ');
+  const total = c.added + c.changed + c.removed;
+  const facts = total ? `${plural(total, 'fact')}: ${[c.added ? `${c.added} added` : '', c.changed ? `${c.changed} changed` : '', c.removed ? `${c.removed} removed` : ''].filter(Boolean).join(', ')}` : '';
+  return `${[pages || 'No pages change', facts].filter(Boolean).join(' · ')} · ${when}`;
+}
+
+function railHtml(p, changes, open, done, files) {
+  const live = changes.filter((c) => c.pageStatus !== 'rejected');
+  const accepted = live.filter((c) => c.pageStatus === 'accepted').length;
+  const item = (c) => {
+    const st = stateOf(c);
+    return html`<li><a class="al-rail__link" href="#page-${c.slug}" data-rail="page-${c.slug}">
+      <span class="al-rail__state al-rail__state--${st.cls}">${st.icon}<span class="al-visually-hidden">${st.words}: </span></span>
+      <span class="al-rail__name">${c.title}</span>
+      <span class="al-rail__meta"><span class="al-rail__kind">${MARKER_WORDS[c.action] || c.action}</span><span class="al-tier al-tier--${c.tier}">${TIER_NAME[c.tier] || c.tier}</span>${deltaHtml(c)}</span>
+    </a></li>`;
+  };
+  return html`<nav class="al-rail" aria-label="Contents of this proposal">
+    ${open.length ? html`<h2>First</h2><ul class="al-rail__list" role="list"><li><a class="al-rail__link al-rail__link--ask" href="#questions" data-rail="questions"><span class="al-rail__state">${ICON_ASK}</span><span class="al-rail__name">${plural(open.length, 'question')} to answer first</span></a></li></ul>` : ''}
+    ${changes.length ? html`<h2>Pages</h2>
+      <p class="al-rail__progress"><progress class="al-progress" max="${live.length}" value="${accepted}">${accepted} of ${live.length}</progress><span>${accepted} of ${plural(live.length, 'page')} accepted</span></p>
+      <ul class="al-rail__list" role="list">${orderedChanges(changes).map(item)}</ul>` : ''}
+    ${done.length ? html`<ul class="al-rail__list" role="list"><li><a class="al-rail__link" href="#answered" data-rail="answered"><span class="al-rail__name">Answered questions (${done.length})</span></a></li></ul>` : ''}
+    ${files.length ? html`<details class="al-rail__group"><summary>Other files (${files.length})</summary>
+      <ul class="al-rail__list" role="list">${files.map((f, i) => html`<li><a class="al-rail__link" href="#file-${i}" data-rail="file-${i}"><span class="al-rail__name al-mono">${f.path.split('/').pop()}</span><span class="al-rail__meta"><span class="al-rail__kind">${FILE_STATUS[f.status] || f.status}</span></span></a></li>`)}</ul></details>` : ''}
+  </nav>`;
+}
+
+/**
+ * One compact strip under the header: the result of the automatic checks and
+ * what is still needed, on a line or two. A failed or missing check is a red
+ * alert, never a quiet line. Outcomes that are not about review (added, merged
+ * elsewhere, turned down) keep their own panel.
+ */
+function statusStrip(evaluation, p, audit, findings, live) {
+  if (!live) return html`<p class="al-text-secondary"><strong>${STATUS_HEADLINE[p.status] || p.status}.</strong> ${audit.text}</p>${needsBox(evaluation, p)}`;
+  const items = [...(evaluation.blockers || []), ...(evaluation.missing || [])];
+  const notes = findings.length ? html`<details class="al-details al-strip__notes"><summary>${audit.ok ? 'See the notes' : 'What the checks found'}</summary><ul>${findings.slice(0, 50).map((f) => html`<li>${f.slug ? html`<strong>${f.slug}</strong>: ` : ''}${f.message}${f.count > 1 ? ` (×${f.count})` : ''}</li>`)}</ul></details>` : '';
+  return html`<div class="al-strip${audit.ok ? '' : ' al-strip--fail'}" id="needs"${audit.ok ? '' : raw(' role="alert"')}>
+    <p class="al-strip__line"><strong>${STATUS_HEADLINE[p.status] || p.status}.</strong> <span class="${audit.ok ? '' : 'al-strip__fail'}">${audit.text}</span></p>
+    ${evaluation.ready
+      ? html`<p class="al-strip__line"><strong>Ready.</strong> ${evaluation.explanation}</p>`
+      : html`<div class="al-strip__line"><strong>Before this can be added:</strong> <ul class="al-strip__list">${items.map((x) => html`<li>${x.message}</li>`)}</ul></div>`}
+    ${notes}
+  </div>`;
+}
+
+const KEYS_HELP = [['j', 'Next fact'], ['k', 'Previous fact'], ['n', 'Next page'], ['p', 'Previous page'], ['v', 'Switch between compare and whole page'], ['?', 'Show or hide this list']];
+
+export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, nonce, canAct, flash = null, now = Date.now(), why = {}, chat = null, navCounts = {}, tiers = null, view = 'compare', diffMode = 'unified', pageTexts = null }) {
+  view = pickView(view);
+  diffMode = pickDiff(diffMode);
   const info = describe(p, decisions);
+  const name = proposalName(p, info);
   const open = decisions.filter((d) => d.status === 'open');
   const done = decisions.filter((d) => d.status !== 'open');
   const audit = auditWords(p.audit);
@@ -374,44 +661,70 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
   const findings = dedupeFindings(p.audit?.findings || []);
   const approveBlocked = open.length ? 'Answer the questions above first — answering them changes the proposal.' : '';
   const id = encodeURIComponent(p.id);
+  const keep = keepFields(view, diffMode);
+  const changes = p.changes || [];
+  const files = p.otherFiles || [];
+  const rv = { p, canAct: live ? canAct : { ok: false }, csrf, required: p.required, tiers: live && canAct.canReview ? tiers : null, keep, view, diffMode, texts: pageTexts, titles: sourceTitles(p) };
+  const items = [...evaluation.blockers || [], ...evaluation.missing || []];
+  const needsShort = !live ? '' : open.length ? `${plural(open.length, 'question')} to answer first`
+    : mine ? 'You approved this version' : evaluation.ready ? 'Ready to add' : `${plural(items.length || 1, 'thing')} still needed`;
+
+  const header = html`<header class="al-reviewhead">
+    <div class="al-reviewhead__main" title="${name.title}">
+      <a class="al-link-arrow al-link-arrow--back al-reviewhead__back" href="/inbox">All proposals</a>
+      <h1>${name.title}</h1>
+      <p class="al-reviewhead__meta">${summaryLine(p, info, now)}</p>
+      ${name.ref ? html`<p class="al-reviewhead__ref al-mono" title="${name.ref}">${name.ref}</p>` : ''}
+    </div>
+    <div class="al-reviewhead__side">
+      <div class="al-reviewhead__actions">
+      ${statusChip(p)}
+      ${needsShort ? html`<a class="al-reviewhead__needs" href="#needs">${needsShort}</a>` : ''}
+      ${live && canAct.canReview ? html`<details class="al-menu al-menu--end"><summary class="al-btn al-btn--quiet">More</summary>
+        <div class="al-menu__panel al-stack al-stack--sm"><a href="#request-changes">Ask for changes</a><a href="#turn-down">Turn down</a></div></details>` : ''}
+      ${live && canAct.ok && p.status === 'approved' ? html`<form method="post" action="/inbox/p/${id}/retry">${csrfField(csrf)}${keep}<button class="al-btn" type="submit">Try again</button></form>` : ''}
+      ${live && canAct.ok && !mine ? html`<form method="post" action="/inbox/p/${id}/approve">${csrfField(csrf)}${headField(p)}${keep}${chat?.action === 'approve' ? html`<input type="hidden" name="confirm" value="${chat.code}">` : ''}<input type="hidden" name="scope" value="all"><button class="al-btn al-btn--primary" type="submit"${approveBlocked ? raw(' disabled') : ''}>Approve all</button></form>` : ''}
+      </div>
+      ${live ? html`<p class="al-reviewhead__decide" id="decide">${canAct.ok ? (approveBlocked || (mine ? 'You approved this version.' : evaluation.ready ? 'Ready to add.' : 'Approving adds it once everything above is in place.')) : canAct.why}</p>` : ''}
+    </div>
+  </header>`;
 
   const body = html`
-    <a class="al-text-tertiary" href="/inbox">← All proposals</a>
+    <div class="al-review">
+    ${header}
+    <div class="al-twopane al-twopane--left al-review__grid">
+    <aside class="al-twopane__side">${railHtml(p, changes, open, done, files)}</aside>
+    <div class="al-twopane__main al-review__main al-flow">
     ${flashBox(flash)}
-    <h1>${info.title}</h1>
-    <p class="al-lede">${info.line}. Sent ${timeAgo(p.createdAt, now)}${p.revision > 1 ? ` · revised ${plural(p.revision - 1, 'time')}` : ''}.</p>
     ${p.kind === 'learnings' ? html`<p class="al-text-secondary">${LEARNINGS_EXPLANATION}</p>` : ''}
-    <p class="al-text-secondary"><strong>${STATUS_HEADLINE[p.status] || p.status}.</strong> ${audit.text}
-      ${findings.length ? html`<details class="al-details"><summary>${audit.ok ? 'See the notes' : 'What the checks found'}</summary><ul>${findings.slice(0, 50).map((f) => html`<li>${f.slug ? html`<strong>${f.slug}</strong>: ` : ''}${f.message}${f.count > 1 ? ` (×${f.count})` : ''}</li>`)}</ul></details>` : ''}
-    </p>
+    ${statusStrip(evaluation, p, audit, findings, live)}
     ${info.lookup ? html`<p class="al-text-secondary">${info.lookup}${p.lookupQuestion ? html` The question was “${p.lookupQuestion}”.` : ''}</p>` : ''}
     ${p.mergeError ? html`<div class="al-callout al-callout--danger" role="alert">${p.mergeError.message}${p.mergeError.slug ? html` <a href="/inbox/pages/${encodeURIComponent(p.mergeError.slug)}">Open the page</a>` : ''}</div>` : ''}
     ${chat ? html`<div class="al-callout al-callout--success" role="status">A chat assistant asked${chat.onBehalfOf ? ` on behalf of ${chat.onBehalfOf.display}` : ''} for this to be ${chat.action === 'reject' ? 'turned down' : 'approved'}. It can't do that itself — read it below and decide.${chat.headSha && chat.headSha !== p.headSha ? ' The proposal changed after the chat asked; this is the current version.' : ''}</div>` : ''}
     ${lapsed.length && live && p.status !== 'conflicted' ? html`<div class="al-callout al-callout--success" role="status">${p.revisedBecause === 'conflict'
       ? 'The knowledge base changed while this waited, so it was redone on top of the current version.'
       : 'This proposal changed since it was approved.'} ${lapsed.length === 1 ? `${lapsed[0]}'s approval was for the earlier version and no longer counts` : `Approvals from ${lapsed.join(', ')} were for the earlier version and no longer count`}${stale ? ' — please look again.' : '.'}</div>` : ''}
-    ${needsBox(evaluation, p)}
-    ${p.notes ? html`<details class="al-details"><summary>The agent's notes</summary><p>${p.notes}</p></details>` : ''}
+    ${p.notes ? html`<details class="al-details" open><summary>The agent's notes</summary><p>${p.notes}</p></details>` : ''}
 
-    ${open.length ? html`<h2>${plural(open.length, 'question')} for you</h2>${open.map((d) => decisionCard(p, d, { canAct, csrf }))}` : ''}
+    ${open.length ? html`<section id="questions" class="al-flow"><h2>${plural(open.length, 'question')} for you</h2>${open.map((d) => decisionCard(p, d, { canAct, csrf, keep }))}</section>` : ''}
 
-    <h2>What would change</h2>
-    ${(p.changes || []).length === 0 ? html`<p class="al-text-secondary">No pages change — only the knowledge base's own records.</p>` : ''}
-    ${(p.changes || []).map((c) => pageCard(p, c, { canAct: live ? canAct : { ok: false }, csrf, required: p.required, why: why[c.slug], tiers: live && canAct.canReview ? tiers : null }))}
-    ${otherFilesSection(p.otherFiles || [])}
+    <h2 id="pages">What would change</h2>
+    ${changes.length === 0 ? html`<p class="al-text-secondary">No pages change — only the knowledge base's own records.</p>` : ''}
+    ${orderedChanges(changes).map((c) => pageSection(c, { ...rv, why: why[c.slug] }))}
+    ${otherFilesSection(files)}
 
-    ${done.length ? html`<h2>Answered questions</h2>${done.map((d) => decisionCard(p, d, { canAct, csrf }))}` : ''}
+    ${done.length ? html`<section id="answered" class="al-flow"><h2>Answered questions</h2>${done.map((d) => decisionCard(p, d, { canAct, csrf, keep }))}</section>` : ''}
 
     ${live && canAct.canReview ? html`<section class="al-section al-stack" id="request-changes">
       <h2>Something not right?</h2>
       <form class="al-field" method="post" action="/inbox/p/${id}/request-changes">
-        ${csrfField(csrf)}
+        ${csrfField(csrf)}${keep}
         <label for="feedback" class="al-label">Tell the agent what to change. It will revise and send it back.</label>
         <textarea class="al-textarea" id="feedback" name="feedback" required maxlength="5000"></textarea>
         <p class="al-cluster"><button class="al-btn" type="submit">Ask for changes</button></p>
       </form>
-      <form class="al-field" method="post" action="/inbox/p/${id}/reject" data-confirm="Turn this down? Nothing from it will be added.">
-        ${csrfField(csrf)}${chat?.action === 'reject' ? html`<input type="hidden" name="confirm" value="${chat.code}">` : ''}
+      <form class="al-field" id="turn-down" method="post" action="/inbox/p/${id}/reject" data-confirm="Turn this down? Nothing from it will be added.">
+        ${csrfField(csrf)}${keep}${chat?.action === 'reject' ? html`<input type="hidden" name="confirm" value="${chat.code}">` : ''}
         <label for="reason" class="al-label">Or turn the whole thing down (optional reason)</label>
         <input class="al-input" type="text" id="reason" name="reason" maxlength="2000">
         <p class="al-cluster"><button class="al-btn al-btn--danger" type="submit">Turn down</button></p>
@@ -426,15 +739,18 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
       <dt>Based on</dt><dd>${String(p.baseSha || '').slice(0, 12)}</dd>
       ${p.merge?.sha ? html`<dt>Merged as</dt><dd>${p.merge.sha.slice(0, 12)}</dd>` : ''}
       <dt>Approvals</dt><dd>${(p.approvals || []).length ? p.approvals.map((a) => `${a.display} (${a.scope === 'all' ? 'everything' : a.scope}, ${a.channel}${a.headSha === p.headSha ? '' : ', earlier version'})`).join('; ') : 'none yet'}</dd>
-    </dl></details>`;
+    </dl></details>
+    </div>
+    </div>
+    </div>
+    <dialog class="al-dialog" id="keys" aria-labelledby="keys-title">
+      <h2 id="keys-title">Keyboard shortcuts</h2>
+      <dl class="al-dl">${KEYS_HELP.map(([k, w]) => html`<dt><kbd class="al-kbd">${k}</kbd></dt><dd>${w}</dd>`)}</dl>
+      <p class="al-text-tertiary">None of these accept, take out, approve or turn down anything. Those are always a click.</p>
+      <form method="dialog"><button class="al-btn" type="submit">Close</button></form>
+    </dialog>`;
 
-  const footer = live ? html`<div class="al-actionbar"><div class="al-page al-page--wide al-actionbar__inner">
-    <div class="al-actionbar__msg">${canAct.ok ? (approveBlocked || (mine ? 'You approved this version.' : evaluation.ready ? 'Ready to add.' : 'Approving adds it once everything above is in place.')) : canAct.why}</div>
-    ${canAct.ok && p.status === 'approved' ? html`<form method="post" action="/inbox/p/${id}/retry">${csrfField(csrf)}<button class="al-btn" type="submit">Try again</button></form>` : ''}
-    ${canAct.ok && !mine ? html`<form method="post" action="/inbox/p/${id}/approve">${csrfField(csrf)}${headField(p)}${chat?.action === 'approve' ? html`<input type="hidden" name="confirm" value="${chat.code}">` : ''}<input type="hidden" name="scope" value="all"><button class="al-btn al-btn--primary" type="submit"${approveBlocked ? raw(' disabled') : ''}>Approve all</button></form>` : ''}
-  </div></div>` : null;
-
-  return layout({ title: info.title, actor, nonce, csrf, current: 'inbox', body, footer, navCounts, width: 'wide' });
+  return layout({ title: name.title, actor, nonce, csrf, current: 'inbox', body, navCounts, width: 'wide' });
 }
 
 // ── side pages ───────────────────────────────────────────────────────────────

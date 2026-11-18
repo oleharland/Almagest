@@ -32,6 +32,7 @@ import { newId, nowIso, reservedBranch, ROLES } from '../core/schemas.mjs';
 import { NotFoundError } from '../core/store/index.mjs';
 import { attachDemand, buildChanges } from './builder.mjs';
 import { canonicalAt } from './canonical.mjs';
+import { capText } from './diff.mjs';
 import { basisOf, createRejectedMemory, LEARNINGS_SOURCE_PREFIX, learningMeta, readPage } from './learnings.mjs';
 import { appendChallenge, challengeFrom, challengeRow } from './challenges.mjs';
 import { normalizeAudit, oneLine, runAudit } from './merge.mjs';
@@ -980,6 +981,34 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     canonicalRole,
     getDecision: (id) => store.decisions.get(id),
     listDecisions: (prpId) => store.decisions.listByProposal(prpId),
+    /**
+     * What each page of a proposal reads like, for the review page: the whole
+     * text at the version being reviewed (the text being removed, for a removed
+     * page) and, for a changed page, git's diff between the base and that
+     * version. Read only, straight from git objects. Each is capped
+     * (PAGE_TEXT_LIMIT); the sizes say how much was left out.
+     */
+    async pageTexts(p) {
+      const out = {};
+      for (const c of p.changes || []) {
+        const entry = {};
+        const removed = c.action === 'delete';
+        const text = await git.show(removed ? p.baseSha : p.headSha, c.path);
+        if (typeof text === 'string') {
+          entry.text = capText(text);
+          entry.lines = text === '' ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+        }
+        if (c.action === 'update' || c.action === 'rename') {
+          const paths = c.from ? [c.path.replace(/[^/]*$/, `${c.from}.md`), c.path] : [c.path];
+          const diff = await git.tryRun(['diff', '--no-color', '--no-ext-diff', '-M', '-U3', p.baseSha, p.headSha, '--', ...paths]);
+          if (typeof diff === 'string') entry.diff = capText(diff);
+          const before = await git.show(p.baseSha, paths[0]);
+          if (typeof before === 'string') entry.base = capText(before);
+        }
+        out[c.slug] = entry;
+      }
+      return out;
+    },
     async evaluate(prpId) {
       const p = await load(prpId);
       return { proposal: p, ...(await evaluateProposal(p)) };
