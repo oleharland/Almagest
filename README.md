@@ -242,6 +242,8 @@ Full walkthrough in [Getting Started](docs/getting-started.md).
 - [Multi-Brain](docs/multi-brain.md) — running several knowledge domains side by side
 - [Upstream Updates](docs/upstream-updates.md) — pulling framework improvements
 - [v2 service](docs/v2/spec.md) — [ingest](docs/v2/ingest.md) · [connectors](docs/v2/connectors.md) · [governance](docs/v2/governance.md) · [MCP](docs/v2/mcp.md) · [telemetry](docs/v2/telemetry.md) · [security](docs/v2/security.md)
+- [Contributing](CONTRIBUTING.md) — setup, the checks CI runs, and the invariants to keep
+- [Security](SECURITY.md) — how to report a vulnerability, and what is already known
 
 ## Structure
 
@@ -283,7 +285,7 @@ Two things exist exactly once, and everything else is generated from them or cal
 - **An AI coding agent** meeting [`agent/contract.md`](agent/contract.md). Known-good: [Claude Code](https://claude.com/claude-code) (the reference harness), Codex, Cursor, Gemini CLI, Antigravity, Copilot. Setup per harness in [Agent Harnesses](docs/agent-harnesses.md).
 - **Git, and a human who merges.** The agent commits to a branch; `main` moves only when a person merges a reviewed diff — or, with the service, approves the exact version in the review inbox and the service merges for them. There is no auto-merge mode in either.
 - **For the service only:** Node.js 22.13+ (it uses the built-in `node:sqlite`) and git 2.38+ (`merge-tree --write-tree`). `node server/bin/almagest.mjs doctor` checks both.
-- **Node.js 22+** — for `tools/audit.mjs` and for the site (the site needs 22.22+, Astro 7's floor). This is a hard dependency now, not a site-only one: the audit and the site call the same parser (`tools/lib/wiki-core.mjs`) rather than keeping two that would drift apart, and Node cannot import the site's TypeScript, so the shared file is plain ESM. The site still builds from `cd site && npm install && npm run build` on a fresh clone with no root install — the core imports no packages, by design.
+- **Node.js 22+** — for `tools/audit.mjs` and for the site (the site needs a recent 22.x: Astro sets the floor, currently 22.23.4, recorded in `site/package.json` → `engines`). This is a hard dependency now, not a site-only one: the audit and the site call the same parser (`tools/lib/wiki-core.mjs`) rather than keeping two that would drift apart, and Node cannot import the site's TypeScript, so the shared file is plain ESM. The site still builds from `cd site && npm install && npm run build` on a fresh clone with no root install — the core imports no packages, by design.
 - `shasum -a 256` or `sha256sum` — for source fingerprinting.
 - Bash and coreutils — for `tools/agent-shims.sh` and the benchmark harness, which deliberately need no language runtime at all.
 
