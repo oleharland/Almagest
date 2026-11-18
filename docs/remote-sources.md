@@ -95,12 +95,16 @@ Already present in `.mcp.json`:
   "type": "http",
   "url": "https://api.githubcopilot.com/mcp/",
   "headers": {
-    "Authorization": "Bearer ${GITHUB_TOKEN:-}"
+    "Authorization": "Bearer ${GITHUB_TOKEN:-}",
+    "X-MCP-Toolsets": "repos,git",
+    "X-MCP-Readonly": "true"
   }
 }
 ```
 
 This is GitHub's official hosted MCP server. Nothing runs locally.
+
+The two extra headers matter. The `github` recipe lists files with `get_repository_tree`, which the hosted server only offers when the `git` toolset is requested. Without `X-MCP-Toolsets` a sync fails with `unknown tool "get_repository_tree"`. `X-MCP-Readonly` drops the write tools, which a connector never needs.
 
 ## GitLab
 
