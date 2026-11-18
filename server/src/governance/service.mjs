@@ -32,7 +32,7 @@ import { normalizeAudit, runAudit } from './merge.mjs';
 import { listChanges, outsideFiles } from './paths.mjs';
 import * as policy from './policy.mjs';
 import { assertMayAct, vouchedAs } from './trust.mjs';
-import { describe, titleFor } from './summary.mjs';
+import { describe, lookupQuestionOf, titleFor } from './summary.mjs';
 
 /** canonical_conflict has exactly one non-dismiss effect (spec → Decision). Enforced by construction. */
 export const CANONICAL_OPTIONS = [
@@ -213,7 +213,13 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     const decisions = known();
 
     const now = nowIso();
+    // How this proposal came to exist. Kept from the first job: a later
+    // revise job (trigger `feedback`) must not erase that live lookup fetched it.
+    const trigger = live?.trigger || job.trigger || '';
+    const lookupQuestion = live?.lookupQuestion || lookupQuestionOf(job);
     const fields = {
+      ...(trigger ? { trigger } : {}),
+      ...(lookupQuestion ? { lookupQuestion } : {}),
       jobId: job.id || live?.jobId || '', branch, baseSha, headSha,
       worktree: info.worktree || job.worktree || live?.worktree || '',
       title: titleFor(source), source,

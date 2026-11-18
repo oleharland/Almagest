@@ -86,6 +86,31 @@ function validTs(ts) {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString();
 }
 
+const LOOKUP_STEPS = ['sources', 'staged', 'connectors'];
+const strings = (v, max = 50) => (Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === 'string' && x).map((x) => x.slice(0, 120)))].slice(0, max) : []);
+const count = (v) => (Number.isFinite(Number(v)) ? Math.max(0, Math.round(Number(v))) : 0);
+
+/**
+ * The compact summary `ask` attaches when live lookup ran: counts, step names
+ * and job ids only. Anything else is dropped, so a caller cannot smuggle
+ * passage text or a document title into the event log.
+ */
+function cleanLookup(l) {
+  if (!l || typeof l !== 'object') return null;
+  const out = {
+    step: LOOKUP_STEPS.includes(l.step) ? l.step : null,
+    steps: strings(l.steps).filter((s) => LOOKUP_STEPS.includes(s)),
+    connectorsAsked: Array.isArray(l.connectorsAsked) ? strings(l.connectorsAsked) : count(l.connectorsAsked),
+    fetched: count(l.fetched),
+    cacheHits: count(l.cacheHits),
+    latencyMs: count(l.latencyMs),
+    incomplete: l.incomplete === true,
+    skipped: strings(l.skipped),
+    queued: strings((l.queued || []).map?.((q) => (typeof q === 'string' ? q : q?.jobId))),
+  };
+  return out;
+}
+
 /** The privacy settings, resolved with defaults. Throws on an unknown mode — a typo must not mean "plain". */
 export function privacyOf(telemetry = {}) {
   const queries = telemetry.store_queries ?? 'plain';
@@ -145,5 +170,9 @@ export function buildEvent(partial, { privacy, now = Date.now(), secret } = {}) 
   evt.answered = partial.answered === true ? true : partial.answered === false ? false : null;
   evt.latencyMs = Number.isFinite(Number(partial.latencyMs)) ? Math.max(0, Math.round(Number(partial.latencyMs))) : null;
   if (typeof partial.helpful === 'boolean') evt.helpful = partial.helpful;
+  // `ask` passes its summary of a live lookup either as `lookup` (the MCP
+  // recorder spreads `telemetry.extra`) or already nested as `extra.lookup`.
+  const lookup = cleanLookup(partial.lookup ?? partial.extra?.lookup);
+  if (lookup) evt.extra = { lookup };
   return evt;
 }

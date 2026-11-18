@@ -81,13 +81,15 @@ export const commands = {
       const gaps = await env.ctx.telemetry.gaps({ limit: positive(opts.limit, 20), since: opts.since });
       if (opts.json) return out(JSON.stringify({ gaps }, null, 2) + '\n');
       if (gaps.length === 0) return out('No open gaps.\n');
+      const anyLookup = gaps.some((g) => g.lookup?.served);
       const rows = gaps.map((g) => ({
         count: g.count,
         sessions: g.distinctSessions,
         'last seen': g.lastSeen.slice(0, 10),
+        ...(anyLookup ? { lookup: g.lookup?.served ? `served ${g.lookup.served}, ${g.lookup.jobs.length ? 'queued' : 'not queued'}` : '' } : {}),
         question: g.representative ?? `(hashed) ${g.cluster}`,
       }));
-      out(`${table(rows, ['count', 'sessions', 'last seen', 'question'], { right: ['count', 'sessions'] })}\n\n` +
+      out(`${table(rows, ['count', 'sessions', 'last seen', ...(anyLookup ? ['lookup'] : []), 'question'], { right: ['count', 'sessions'] })}\n\n` +
         gaps.map((g) => `→ ${g.suggestion}`).join('\n') + '\n');
     }),
   },

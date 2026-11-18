@@ -290,6 +290,7 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
     <p class="status"><strong>${STATUS_HEADLINE[p.status] || p.status}.</strong> ${audit.text}
       ${findings.length ? html`<details><summary>${audit.ok ? 'See the notes' : 'What the checks found'}</summary><ul>${findings.slice(0, 50).map((f) => html`<li>${f.slug ? html`<strong>${f.slug}</strong>: ` : ''}${f.message}${f.count > 1 ? ` (×${f.count})` : ''}</li>`)}</ul></details>` : ''}
     </p>
+    ${info.lookup ? html`<p class="status">${info.lookup}${p.lookupQuestion ? html` The question was “${p.lookupQuestion}”.` : ''}</p>` : ''}
     ${p.mergeError ? html`<div class="flash flash--err" role="alert">${p.mergeError.message}</div>` : ''}
     ${chat ? html`<div class="flash flash--ok" role="status">A chat assistant asked${chat.onBehalfOf ? ` on behalf of ${chat.onBehalfOf.display}` : ''} for this to be ${chat.action === 'reject' ? 'turned down' : 'approved'}. It can't do that itself — read it below and decide.${chat.headSha && chat.headSha !== p.headSha ? ' The proposal changed after the chat asked; this is the current version.' : ''}</div>` : ''}
     ${lapsed.length && live && p.status !== 'conflicted' ? html`<div class="flash flash--ok" role="status">${p.revisedBecause === 'conflict'
@@ -354,12 +355,19 @@ export function reverifyPage({ items, error, actor, csrf, nonce }) {
   return layout({ title: 'Re-check', actor, nonce, csrf, current: 'reverify', body });
 }
 
+/** What live lookup did for a gap, for a reviewer. */
+function lookupWords(l) {
+  const from = l.lastStep === 'connectors' && l.connectors?.length ? `from ${l.connectors.join(', ')}`
+    : l.lastStep === 'staged' ? 'from documents waiting for review' : l.lastStep === 'sources' ? 'from sources already added' : 'from outside the knowledge base';
+  return `Answered ${plural(l.served, 'time')} by looking it up live ${from}. ${l.jobs?.length ? 'The document has been sent for review.' : 'Nothing has been sent for review.'}`;
+}
+
 export function gapsPage({ items, error, actor, csrf, nonce, now = Date.now() }) {
   const body = html`<h1>Questions the knowledge base couldn't answer</h1>
     <p class="lede">What people asked for and didn't find. Each one is a hint about which source to add next.</p>
     ${error ? html`<div class="empty">${error}</div>` : items.length === 0 ? html`<div class="empty">No unanswered questions recorded.</div>` : html`
     <table class="list"><thead><tr><th>Topic</th><th>Asked</th><th>Last asked</th></tr></thead><tbody>
-    ${items.map((g) => html`<tr><td><strong>${g.representative || (g.tokens || []).join(' ') || 'An unanswered question'}</strong>${(g.queries || []).length ? html`<div class="faint">${g.queries.slice(0, 3).map((q) => (typeof q === 'string' ? `“${q}”` : `“${q.text}”${q.count > 1 ? ` ×${q.count}` : ''}`)).join(' · ')}</div>` : ''}${g.suggestion ? html`<div class="cite">Suggestion: ${typeof g.suggestion === 'string' ? g.suggestion : g.suggestion.text || g.suggestion.label || ''}</div>` : ''}</td><td>${plural(g.count || 0, 'time')}${g.distinctSessions ? html`<div class="faint">by ${plural(g.distinctSessions, 'person', 'people')}</div>` : ''}</td><td>${timeAgo(g.lastSeen, now)}</td></tr>`)}
+    ${items.map((g) => html`<tr><td><strong>${g.representative || (g.tokens || []).join(' ') || 'An unanswered question'}</strong>${(g.queries || []).length ? html`<div class="faint">${g.queries.slice(0, 3).map((q) => (typeof q === 'string' ? `“${q}”` : `“${q.text}”${q.count > 1 ? ` ×${q.count}` : ''}`)).join(' · ')}</div>` : ''}${g.lookup?.served ? html`<div class="cite">${lookupWords(g.lookup)}</div>` : ''}${g.suggestion ? html`<div class="cite">Suggestion: ${typeof g.suggestion === 'string' ? g.suggestion : g.suggestion.text || g.suggestion.label || ''}</div>` : ''}</td><td>${plural(g.count || 0, 'time')}${g.distinctSessions ? html`<div class="faint">by ${plural(g.distinctSessions, 'person', 'people')}</div>` : ''}</td><td>${timeAgo(g.lastSeen, now)}</td></tr>`)}
     </tbody></table>`}`;
   return layout({ title: 'Unanswered', actor, nonce, csrf, current: 'gaps', body });
 }
