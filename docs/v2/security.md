@@ -1,14 +1,14 @@
 # Security model and status
 
-What the v2 service promises, what enforces each promise, and — stated plainly —
+What the v2 service promises, what enforces each promise, and, stated plainly,
 where the promise does not hold. Read this before you run the service
 anywhere other people, or other people's chats, can reach it.
 
 ## The promise
 
 **Nothing reaches `brain/wiki/` on `main` unless a human with an approver role
-approved the exact version (headSha) they were shown.** Agents — the headless
-ingest agent and every chat connected over MCP — can never approve. No profile
+approved the exact version (headSha) they were shown.** Agents (the headless
+ingest agent and every chat connected over MCP) can never approve. No profile
 and no setting relaxes this.
 
 ## What enforces it
@@ -57,7 +57,7 @@ exploit against the result without a bypass; what remains is below.
    a poisoned branch from your own remote can still clear the markers and move
    `main` once an agent checks it out and commits. The secrets are the same
    story: kept out of the shell (`~/.config/almagest/env`, mode 600, loaded
-   only by the service — [getting started](../getting-started.md) step 8),
+   only by the service, see [getting started](../getting-started.md) step 8),
    `almagest login` refusing in an agent environment, and `guard-git` blocking
    it, an agent whose shell can *read* that file can still mint a sign-in link
    or sign a session with a hand-written script. Only OS-level separation
@@ -71,7 +71,7 @@ exploit against the result without a bypass; what remains is below.
    GitHub; 30 minutes and 8 hours under `enterprise`).
 3. **A `merged_unaccepted` proposal is resolved by hand.** There is no reconcile
    button yet. Squash and rebase merges on GitHub are never accepted locally,
-   because their result cannot be checked against the reviewed head — use merge
+   because their result cannot be checked against the reviewed head. Use merge
    commits on a repository that feeds Almagest.
 4. **The hooks are installed per clone, by a person.** `node
    server/bin/almagest.mjs hooks install` copies them from `main` as committed
@@ -89,11 +89,11 @@ that still includes a staging path) are tracked and fail safe.
 
 ## Hardening checklist
 
-- [ ] `node server/bin/almagest.mjs hooks install` in every clone, in your own terminal — again whenever `doctor` says the hooks are outdated
+- [ ] `node server/bin/almagest.mjs hooks install` in every clone, in your own terminal, and again whenever `doctor` says the hooks are outdated
 - [ ] Service secrets in `~/.config/almagest/env` (mode 600) or the launchd/systemd unit, never `export`ed in a shell you start agents from
 - [ ] Branch protection on `main` at your git host (required reviews, merge commits, no force push)
 - [ ] `ALMAGEST_SECRET_KEY` set, and different per deployment
-- [ ] Token mode: approvers sign in with `ALMAGEST_LOGINS` or `almagest login`; chats and hooks get API tokens — `contributor` or `viewer` where you can
+- [ ] Token mode: approvers sign in with `ALMAGEST_LOGINS` or `almagest login`; chats and hooks get API tokens (`contributor` or `viewer` where you can)
 - [ ] `service.http.base_url` is HTTPS for anything beyond `localhost`
 - [ ] team / enterprise: OIDC, `require_sso_for_approval: true`, `separation_of_duties: true`
 - [ ] `ingest.driver: claude-code` (not `shell`) for unattended ingest

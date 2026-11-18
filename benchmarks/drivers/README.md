@@ -42,7 +42,7 @@ is missing or carries any other value.
 written into `run.env` and drive the report's Comparability block; a `no` costs
 you a warning and, for `budget_cap`, an extra confirmation. A `yes` that is not
 true costs the reader a number they cannot trust, which is worse. If the answer
-depends on the installed build, probe for it — `codex.sh` and `gemini-cli.sh`
+depends on the installed build, probe for it: `codex.sh` and `gemini-cli.sh`
 grep `--help` and report what they find.
 
 `capabilities` must work with the CLI absent or broken, because the preflight
@@ -51,7 +51,7 @@ calls it before anything else. Report `no` in that case.
 ### `version`
 
 One line identifying the CLI and its version, recorded as `driver_version` in
-`run.env`. Exit non-zero (message on stderr) when the CLI is not installed —
+`run.env`. Exit non-zero (message on stderr) when the CLI is not installed.
 `run.sh` turns that into a loud preflight failure before it spends anything, and
 `--dry-run` into a `driver_version=unknown`.
 
@@ -69,13 +69,13 @@ Reads the job from the environment. cwd is the arm's arena directory.
 | `ALM_SCHEMA_FILE` | path to a JSON schema file, or empty |
 | `ALM_CLI` | override for the binary the driver invokes (optional) |
 
-Writes **one flat JSON object** to stdout:
+Writes one flat JSON object to stdout:
 
 ```json
 {"result":"…","is_error":false,"duration_ms":0,"num_turns":0,"total_cost_usd":0,"session_id":"…"}
 ```
 
-`result` is the answer text — for the judge, the JSON verdict as a string. Only
+`result` is the answer text (for the judge, the JSON verdict as a string). Only
 `result` is required. Omit any of the rest you cannot report honestly; the
 harness records the missing ones as blank and falls back to its own wall clock
 for latency. It never fills a gap with a number.
@@ -91,7 +91,7 @@ printf '{"result":"%s","is_error":false}\n' "$(awk -f ../lib/json_escape.awk < o
 
 Exit non-zero if the call failed. `run.sh` records the arm as failed, keeps the
 stderr log, and exits non-zero itself. Do not paper over a failed call with an
-empty answer — an empty answer that scores is worse than a run that stops.
+empty answer. An empty answer that scores is worse than a run that stops.
 
 ## Rules for a new driver
 
@@ -100,7 +100,7 @@ empty answer — an empty answer that scores is worse than a run that stops.
 2. **Never fake a capability.** See above.
 3. **Say where you deviate.** No two CLIs take a system prompt the same way. If
    yours has no `--append-system-prompt` equivalent and you prepend `ALM_SYSTEM`
-   to the prompt instead, put it in the file header — that difference is part of
+   to the prompt instead, put it in the file header: that difference is part of
    what a cross-harness comparison is measuring.
 4. **Mark unverified flags in the header**, with the failure mode if they are
    wrong. `codex.sh` and `gemini-cli.sh` are written this way.
@@ -112,7 +112,7 @@ empty answer — an empty answer that scores is worse than a run that stops.
 
 ## Known limitation: parent-directory context
 
-Most agent CLIs load instruction files from the working directory upwards —
+Most agent CLIs load instruction files from the working directory upwards:
 `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`. The arena lives under
 `benchmarks/results/`, inside this repository, so a driver may pick up
 Almagest's own instruction files on top of the arm's system prompt. It affects

@@ -18,20 +18,20 @@
 
 An AI-powered knowledge base framework for coding agents.
 
-Fork it, point it at your domain, and drop in source material. Your agent reads what you give it, proposes structured wiki pages, and refuses to write a single claim it can't trace back to a source. The result is a cross-linked markdown wiki that both you and an agent can query — plus a static site to read it in.
+Fork it, point it at your domain, and drop in source material. Your agent reads what you give it, proposes structured wiki pages, and refuses to write a single claim it can't trace back to a source. The result is a cross-linked markdown wiki that both you and an agent can query, plus a static site to read it in.
 
 It runs on Claude Code, Codex, Cursor, Gemini CLI, Antigravity, or any agent that meets the [harness contract](agent/contract.md).
 
 There are two ways to run it, on the same repo and the same rules:
 
-- **As a framework** — an agent session plus git. You drop in files, the agent writes pages on a branch, you merge the diff.
-- **As a service** ([`server/`](#the-service), optional) — it ingests in the background from files and any MCP source (Drive, Granola, Linear, Slack, …), puts every proposed fact next to the passage it cites in a review inbox you can use from your phone, serves the brain to any chat over MCP, and tracks what gets asked so the most-read pages get the most scrutiny.
+- **As a framework**: an agent session plus git. You drop in files, the agent writes pages on a branch, you merge the diff.
+- **As a service** ([`server/`](#the-service), optional): it ingests in the background from files and any MCP source (Drive, Granola, Linear, Slack, …), puts every proposed fact next to the passage it cites in a review inbox you can use from your phone, serves the brain to any chat over MCP, and tracks what gets asked so the most-read pages get the most scrutiny.
 
 In both, nothing reaches `main` until a human approves the exact change.
 
 ## About that tagline
 
-It used to be a promise. It is now a program you can run.
+The tagline is backed by a program you can run.
 
 `tools/audit.mjs` checks the wiki mechanically, and its exit code gates the commit. **What is enforced by code:**
 
@@ -58,7 +58,7 @@ Here is one claim followed back to its source. Every hop is checked by the audit
 
 **What is still convention, enforced by nothing but the rules and your review:**
 
-- **That the citation is *true*.** The audit proves `[source: arch-overview, p.3]` points at a real source you really declared. It cannot read page 3 and confirm it says what the page claims it says. That is what the diff review is for — and why the text sidecar in `brain/raw/extracted/` is committed with `=== page 3 ===` markers, so checking takes seconds instead of reopening a PDF.
+- **That the citation is *true*.** The audit proves `[source: arch-overview, p.3]` points at a real source you really declared. It cannot read page 3 and confirm it says what the page claims it says. That is what the diff review is for, and it is why the text sidecar in `brain/raw/extracted/` is committed with `=== page 3 ===` markers, so checking takes seconds instead of reopening a PDF.
 - **That contradictions were noticed.** Surfacing a conflict requires understanding two claims are about the same thing. The rules require it; no check proves it happened.
 - **That canonical pages were respected during drafting.** `CANON-001` reports what got logged to `brain/canonical-challenges.md`. It cannot report what got quietly absorbed instead of logged.
 - **That the extraction is faithful to the source.** No tool checks reading comprehension.
@@ -68,7 +68,7 @@ Here is one claim followed back to its source. Every hop is checked by the audit
   <img src="docs/diagrams/who-checks-what.png" alt="Three layers. Rules in agent/rules/ are convention the agent follows: it cites every claim, surfaces contradictions, logs canonical conflicts and works only on an ingest branch, but nothing proves it followed them. The audit, tools/audit.mjs, proves the plumbing: well-formed citations to declared sources that exist on disk with matching sha256, resolving links and valid frontmatter, but it cannot prove page 12 says what the claim says. Your review judges the meaning: the citation is true, contradictions were noticed, canonical pages respected, extraction faithful. Only your merge reaches main.">
 </picture>
 
-The line worth holding onto: the audit makes provenance *plumbing* mechanical, so your review can spend all its attention on the part that needs a human.
+The audit makes provenance *plumbing* mechanical, so your review can spend all its attention on the part that needs a human.
 
 ## How it works
 
@@ -79,7 +79,7 @@ The line worth holding onto: the audit makes provenance *plumbing* mechanical, s
 
 ## The service
 
-The flow above needs nothing but an agent session and git. `server/` adds an optional long-running service around the same repo and the same rules — for when the brain should keep itself current, be reviewed by people who don't read diffs, and be asked from any chat.
+The flow above needs nothing but an agent session and git. `server/` adds an optional long-running service around the same repo and the same rules, for when the brain should keep itself current, be reviewed by people who don't read diffs, and be asked from any chat.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/service-flow-dark.png">
@@ -94,11 +94,11 @@ The flow above needs nothing but an agent session and git. `server/` adds an opt
 | **Brain as MCP server** | Search, ask and cite the brain from Claude, Cursor or any MCP client — over stdio from a clone, or over HTTP from anywhere, with OIDC or built-in OAuth | [MCP](docs/v2/mcp.md) |
 | **Demand** | Every request is recorded. Frequently read pages need stricter approval and get re-verified sooner; questions the brain couldn't answer become a gap list | [Telemetry](docs/v2/telemetry.md) |
 
-One code path, three profiles — `service.profile` in `brain.config.yaml`:
+One code path, three profiles (`service.profile` in `brain.config.yaml`):
 
-- **solo** — your laptop or one small container. SQLite, a sign-in secret kept apart from the API token your chats use, approve from your phone (a chat can hand you the link, never approve for you).
-- **team** — SSO sign-in, the person who submitted can't approve their own proposal, hot pages need two approvals.
-- **enterprise** — Postgres, SSO required to approve, owner-team sign-off on hot pages, Slack and GitHub-PR channels, remote MCP behind your IdP.
+- **solo**: your laptop or one small container. SQLite, a sign-in secret kept apart from the API token your chats use, approve from your phone (a chat can hand you the link, never approve for you).
+- **team**: SSO sign-in, the person who submitted can't approve their own proposal, hot pages need two approvals.
+- **enterprise**: Postgres, SSO required to approve, owner-team sign-off on hot pages, Slack and GitHub-PR channels, remote MCP behind your IdP.
 
 ```bash
 npm install
@@ -123,7 +123,7 @@ Containers: `deploy/docker/` (the image clones your brain at start). Always-on o
 
 ## Where it sits
 
-Almagest optimises for one thing — **trust in what the notes say** — and pays for it everywhere else. Named comparisons, so you can tell whether the trade is one you want:
+Almagest optimises for one thing, trust in what the notes say, and pays for it everywhere else. Named comparisons, so you can tell whether the trade is one you want:
 
 | | Obsidian + plugins | Logseq / Roam | NotebookLM | RAG over a vault (Khoj, Onyx) | Agent memory (mem0, Letta) | **Almagest** |
 |---|---|---|---|---|---|---|
@@ -139,9 +139,9 @@ Almagest optimises for one thing — **trust in what the notes say** — and pay
 | Re-ingesting an edited source | manual | manual | re-upload | re-index | n/a | **content fingerprint → targeted diff** |
 | Runs offline / self-hosted | **yes** | **yes** | no | yes | varies | **yes** |
 
-**Where Almagest loses, plainly.** If you want to capture a thought on a train, use Obsidian — Almagest has no capture app; even with the service, getting a thought in means a chat submission or a file drop, followed by a review. If you have 40,000 PDFs, use a real RAG system — this is grep over a flat directory, and it will not embed its way out of that. If you want to ask questions of a document you read once and will never think about again, NotebookLM will do it in ninety seconds with no repo, no config, and no agent. If you want an assistant that quietly remembers things about you, mem0 and Letta are built for exactly that, and Almagest's entire design is a refusal to remember anything quietly.
+**Where Almagest loses, plainly.** If you want to capture a thought on a train, use Obsidian: Almagest has no capture app; even with the service, getting a thought in means a chat submission or a file drop, followed by a review. If you have 40,000 PDFs, use a real RAG system: this is grep over a flat directory, and it will not embed its way out of that. If you want to ask questions of a document you read once and will never think about again, NotebookLM will do it in ninety seconds with no repo, no config, and no agent. If you want an assistant that quietly remembers things about you, mem0 and Letta are built for exactly that, and Almagest's entire design is a refusal to remember anything quietly.
 
-**Where it wins.** When the cost of a confidently wrong note is high — when someone will make a decision on it months from now, when several people share the base, when you will be asked "where did that number come from" — the other tools have no answer and Almagest has a file path, a page number, a fingerprint, and a diff with your merge on it.
+**Where it wins.** When the cost of a confidently wrong note is high (when someone will make a decision on it months from now, when several people share the base, when you will be asked "where did that number come from"), the other tools have no answer and Almagest has a file path, a page number, a fingerprint, and a diff with your merge on it.
 
 What that looks like in practice:
 
@@ -176,43 +176,43 @@ What that looks like in practice:
 
 ## What makes it different
 
-- **Nothing unreviewed lands.** The agent works on an `ingest/<source>-<sha>` branch and commits there; `main` moves only when you merge a diff you have read — or, with the service, approve that exact version in the review inbox. The gate is a diff, not a summary box — because the failure that matters is not the agent writing without permission, it is the agent writing something plausible and wrong while you skim a box at 11pm and type `y`.
+- **Nothing unreviewed lands.** The agent works on an `ingest/<source>-<sha>` branch and commits there; `main` moves only when you merge a diff you have read (or, with the service, approve that exact version in the review inbox). The gate is a diff, not a summary box, because the failure that matters is the agent writing something plausible and wrong while you skim a box at 11pm and type `y`.
 - **Review without git, if you want it.** With the service, a proposal shows each new or changed fact beside the passage it cites, and the questions the agent could not settle as cards with options. Approve in the browser, from a chat link, in Slack, by email, or keep GitHub PRs. The approval is pinned to the version you saw, and no agent can give one.
 - **Scrutiny follows use.** The service records what gets asked. Frequently read pages need stricter approval and are re-verified sooner; questions the brain could not answer become a gap list of what to ingest next.
 - **Blocking cases still stop mid-run.** Contradictions, anything touching a canonical page, deletions, merges, renames, and low-confidence curated pages are not written to the branch at all. Those are the cases a diff review is a bad place to first encounter.
-- **Every claim cites its source** — down to the section, page, row, slide, or timestamp — in one frozen grammar that a program can parse. A page with no sources is a build failure, not a style note.
+- **Every claim cites its source** (down to the section, page, row, slide, or timestamp) in one frozen grammar that a program can parse. A page with no sources is a build failure, not a style note.
 - **Citations point at text you can actually open.** Binary sources get a committed sidecar in `brain/raw/extracted/` with `=== page 12 ===` markers, so `p.12` resolves to a real line in a file in the repo. The PDF stays gitignored; the text it produced does not.
 - **Contradictions surface instead of silently overwriting.** When a new source disagrees with what's already there, the agent quotes both, recommends a resolution, and waits.
-- **Your own thinking is first-class.** An `origin: self` `claim` page holds a conclusion *you* reached — no inline citations, but a required `## Basis` of wikilinks to sourced pages. Previously this was a schema violation, which meant the brain could hold only what documents said and never what you concluded from them.
-- **Unknowns are first-class.** Missing data gets named in an `## Open questions` section, not quietly omitted.
-- **Canonical pages are locked.** Your agreed taxonomies and definitions are guardrails the agent cannot edit — data that contradicts them lands in `brain/canonical-challenges.md`, where you can see what was rejected and why, rather than vanishing.
+- **Your own thinking is first-class.** An `origin: self` `claim` page holds a conclusion *you* reached: no inline citations, but a required `## Basis` of wikilinks to sourced pages. Without that page type, the brain could hold only what documents said, never what you concluded from them.
+- **Unknowns are first-class.** Missing data gets named in an `## Open questions` section instead of being omitted.
+- **Canonical pages are locked.** Your agreed taxonomies and definitions are guardrails the agent cannot edit. Data that contradicts them lands in `brain/canonical-challenges.md`, where you can see what was rejected and why.
 
 ## Features
 
-- **Mechanical audit** — `tools/audit.mjs` (Node 22+) checks schema, links, citation grammar, citation targets, provenance against the manifest, orphans, and staleness. Findings carry stable IDs (`CITE-002`, `LINK-001`, …) that the rule files reference by name. Exit `0` clean, `1` violations, `2` tool error. It shares one parser with the site — `tools/lib/wiki-core.mjs`, which both `tools/audit.mjs` and `site/src/lib/wiki.ts` are thin callers of — so what the audit certifies is exactly what the site renders. Full check list in [The Audit](docs/audit.md).
-- **Audit in CI** — the same run on every push, plus `--check-index` to prove the derived index is current. A page that fails does not merge.
-- **AI-assisted ingest** — drop files in `brain/raw/` or pull from GitHub/GitLab repos over MCP. The agent extracts entities, proposes pages, handles contradictions, and cites sources.
-- **Branch-based review** — ingest happens on `ingest/<source-slug>-<sha7>`. You get a git diff, not a terminal summary. Unattended ingest onto a branch is supported; an unattended merge to `main` is not, and there is no flag for it.
-- **Structured wiki** — flat markdown with typed frontmatter, three content tiers (canonical / curated / evidence), `origin: source | self`, and automatic `[[wikilink]]` cross-linking.
-- **Typed relations** — `supports`, `contradicts`, `supersedes`, `depends_on` alongside the untyped `related`. An argument graph, not just a link graph: you can ask what a claim rests on and what disagrees with it, and the audit checks that every edge resolves.
-- **`claim` pages** — the author's conclusions, `origin: self`, titled as sentences, backed by a `## Basis` of wikilinks. The brain holds what you think, with the reasoning attached.
-- **Extracted-source sidecars** — a committed, page-marked text extraction per binary source in `brain/raw/extracted/`. Fingerprinted, cited, greppable, diffable. The original stays out of git.
-- **Derived index** — `brain/.index/pages.tsv` and `aliases.tsv`, generated and committed. Queries grep the index instead of loading the whole catalog, so retrieval costs scale with the answer rather than the corpus. `--check-index` keeps it honest.
-- **Incremental re-ingest** — sources are fingerprinted by content, not filename. Edit a source, drop it back in, and the agent proposes a targeted diff against the pages it already produced instead of skipping it as a duplicate.
-- **Benchmark harness** — a fixture corpus and question set that measure citation validity, contradiction surfacing, and whether the agent declines questions the corpus can't answer. Ships unrun; the numbers are yours to produce.
-- **Query protocol** — ask questions, get answers traceable to the original source, with synthesis explicitly flagged as synthesis and conclusions explicitly flagged as conclusions.
-- **Static site** — an Astro frontend that builds straight from `brain/wiki/`. Backlinks, filtering, dark mode, zero configuration.
-- **Harness portability** — one set of rules in `agent/rules/`, projected into each agent's own format (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/`, `GEMINI.md`) by a single generator. One source of truth, no drift. Claude Code is the reference harness.
-- **Upstream updates** — pull framework improvements with `git merge`. Your content and customisation live in files upstream never touches.
+- **Mechanical audit**: `tools/audit.mjs` (Node 22+) checks schema, links, citation grammar, citation targets, provenance against the manifest, orphans, and staleness. Findings carry stable IDs (`CITE-002`, `LINK-001`, …) that the rule files reference by name. Exit `0` clean, `1` violations, `2` tool error. It shares one parser with the site (`tools/lib/wiki-core.mjs`, which both `tools/audit.mjs` and `site/src/lib/wiki.ts` are thin callers of), so what the audit certifies is exactly what the site renders. Full check list in [The Audit](docs/audit.md).
+- **Audit in CI**: the same run on every push, plus `--check-index` to prove the derived index is current. A page that fails does not merge.
+- **AI-assisted ingest**: drop files in `brain/raw/` or pull from GitHub/GitLab repos over MCP. The agent extracts entities, proposes pages, handles contradictions, and cites sources.
+- **Branch-based review**: ingest happens on `ingest/<source-slug>-<sha7>`. You get a git diff, not a terminal summary. Unattended ingest onto a branch is supported; an unattended merge to `main` is not, and there is no flag for it.
+- **Structured wiki**: flat markdown with typed frontmatter, three content tiers (canonical / curated / evidence), `origin: source | self`, and automatic `[[wikilink]]` cross-linking.
+- **Typed relations**: `supports`, `contradicts`, `supersedes`, `depends_on` alongside the untyped `related`. An argument graph, not just a link graph: you can ask what a claim rests on and what disagrees with it, and the audit checks that every edge resolves.
+- **`claim` pages**: the author's conclusions, `origin: self`, titled as sentences, backed by a `## Basis` of wikilinks.
+- **Extracted-source sidecars**: a committed, page-marked text extraction per binary source in `brain/raw/extracted/`. Fingerprinted, cited, greppable, diffable. The original stays out of git.
+- **Derived index**: `brain/.index/pages.tsv` and `aliases.tsv`, generated and committed. Queries grep the index instead of loading the whole catalog, so retrieval costs scale with the answer rather than the corpus. `--check-index` keeps it honest.
+- **Incremental re-ingest**: sources are fingerprinted by content, not filename. Edit a source, drop it back in, and the agent proposes a targeted diff against the pages it already produced instead of skipping it as a duplicate.
+- **Benchmark harness**: a fixture corpus and question set that measure citation validity, contradiction surfacing, and whether the agent declines questions the corpus can't answer. Ships unrun; the numbers are yours to produce.
+- **Query protocol**: ask questions, get answers traceable to the original source, with synthesis explicitly flagged as synthesis and conclusions explicitly flagged as conclusions.
+- **Static site**: an Astro frontend that builds straight from `brain/wiki/`. Backlinks, filtering, dark mode, zero configuration.
+- **Harness portability**: one set of rules in `agent/rules/`, projected into each agent's own format (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/`, `GEMINI.md`) by a single generator. Claude Code is the reference harness.
+- **Upstream updates**: pull framework improvements with `git merge`. Your content and customisation live in files upstream never touches.
 
 With the [service](#the-service):
 
-- **Background ingest** — a job queue fed by the drop folder, connector schedules and chat submissions; each job runs a locked-down headless agent in its own git worktree, gated by the audit. [Ingest](docs/v2/ingest.md)
-- **Any MCP server as an input** — shipped recipes for Drive, Granola, Linear, Notion, Slack, GitHub, GitLab and web pages; zero config for servers that expose resources; snapshots are fingerprinted so citations stay checkable. [Connectors](docs/v2/connectors.md)
-- **Review inbox and approval channels** — claim-level proposals with source excerpts, decision cards, policy (separation of duties, two-person rule, owner teams), and approval from web, chat link, Slack, email or GitHub PR. [Governance](docs/v2/governance.md)
-- **Almagest as an MCP server** — `search`, `ask`, `get_page` with resolved citations, and `submit_source`, over stdio or HTTP with OIDC or built-in OAuth for claude.ai. [MCP](docs/v2/mcp.md)
-- **Demand tracking** — every request recorded with configurable privacy; demand scores, a re-verify queue, a gap list, and `DEMAND-*` audit warnings. [Telemetry](docs/v2/telemetry.md)
-- **Profiles** — `solo`, `team`, `enterprise` set the defaults (SQLite or Postgres, token or SSO, how strict approval is); none of them can turn approval off. [Security](docs/v2/security.md)
+- **Background ingest**: a job queue fed by the drop folder, connector schedules and chat submissions; each job runs a locked-down headless agent in its own git worktree, gated by the audit. [Ingest](docs/v2/ingest.md)
+- **Any MCP server as an input**: shipped recipes for Drive, Granola, Linear, Notion, Slack, GitHub, GitLab and web pages; zero config for servers that expose resources; snapshots are fingerprinted so citations stay checkable. [Connectors](docs/v2/connectors.md)
+- **Review inbox and approval channels**: claim-level proposals with source excerpts, decision cards, policy (separation of duties, two-person rule, owner teams), and approval from web, chat link, Slack, email or GitHub PR. [Governance](docs/v2/governance.md)
+- **Almagest as an MCP server**: `search`, `ask`, `get_page` with resolved citations, and `submit_source`, over stdio or HTTP with OIDC or built-in OAuth for claude.ai. [MCP](docs/v2/mcp.md)
+- **Demand tracking**: every request recorded with configurable privacy; demand scores, a re-verify queue, a gap list, and `DEMAND-*` audit warnings. [Telemetry](docs/v2/telemetry.md)
+- **Profiles**: `solo`, `team`, `enterprise` set the defaults (SQLite or Postgres, token or SSO, how strict approval is); none of them can turn approval off. [Security](docs/v2/security.md)
 
 ## Quick start
 
@@ -220,30 +220,30 @@ With the [service](#the-service):
 git clone <this-repo> my-brain && cd my-brain
 ```
 
-1. **Configure** `brain.config.yaml` — page types, canonical pages, and whether you want anonymization and page ownership turned on (both ship off).
-2. **Drop files** into `brain/raw/` — PDFs, docs, spreadsheets, transcripts, notes.
-3. **Start your agent** in the repo root — `claude`, `codex`, `cursor-agent`, `gemini`, `agy`, whichever you use. It picks up the rules from the repo, branches, and starts writing pages. Per-harness setup in [Agent Harnesses](docs/agent-harnesses.md).
-4. **Review and merge** — `git diff main...ingest/<branch>`, then merge. That is the gate.
-5. **Read it** — `cd site && npm install && npm run dev`.
-6. **Or let it run itself** — start the [service](#the-service) and review in the inbox instead of in git.
+1. **Configure** `brain.config.yaml`: page types, canonical pages, and whether you want anonymization and page ownership turned on (both ship off).
+2. **Drop files** into `brain/raw/`: PDFs, docs, spreadsheets, transcripts, notes.
+3. **Start your agent** in the repo root: `claude`, `codex`, `cursor-agent`, `gemini`, `agy`, whichever you use. It picks up the rules from the repo, branches, and starts writing pages. Per-harness setup in [Agent Harnesses](docs/agent-harnesses.md).
+4. **Review and merge**: `git diff main...ingest/<branch>`, then merge.
+5. **Read it**: `cd site && npm install && npm run dev`.
+6. **Or let it run itself**: start the [service](#the-service) and review in the inbox instead of in git.
 
 Full walkthrough in [Getting Started](docs/getting-started.md).
 
 ## Documentation
 
-- [Getting Started](docs/getting-started.md) — setup and configuration
-- [Agent Harnesses](docs/agent-harnesses.md) — running it on Claude Code, Codex, Cursor, Gemini CLI, Antigravity, or Copilot
-- [The Audit](docs/audit.md) — every check, what it means, and how to fix it
-- [Page Types](docs/page-types.md) — defining custom wiki page types
-- [Terminal Output](docs/terminal-output.md) — what a run prints, and why
-- [Remote Sources](docs/remote-sources.md) — ingesting from GitHub or GitLab over MCP
-- [The Ingest Manifest](docs/manifest.md) — how re-ingest stays incremental
-- [Benchmarks](docs/benchmarks.md) — measuring whether the wiki actually helps
-- [Multi-Brain](docs/multi-brain.md) — running several knowledge domains side by side
-- [Upstream Updates](docs/upstream-updates.md) — pulling framework improvements
-- [v2 service](docs/v2/spec.md) — [ingest](docs/v2/ingest.md) · [connectors](docs/v2/connectors.md) · [governance](docs/v2/governance.md) · [MCP](docs/v2/mcp.md) · [telemetry](docs/v2/telemetry.md) · [security](docs/v2/security.md)
-- [Contributing](CONTRIBUTING.md) — setup, the checks CI runs, and the invariants to keep
-- [Security](SECURITY.md) — how to report a vulnerability, and what is already known
+- [Getting Started](docs/getting-started.md): setup and configuration
+- [Agent Harnesses](docs/agent-harnesses.md): running it on Claude Code, Codex, Cursor, Gemini CLI, Antigravity, or Copilot
+- [The Audit](docs/audit.md): every check, what it means, and how to fix it
+- [Page Types](docs/page-types.md): defining custom wiki page types
+- [Terminal Output](docs/terminal-output.md): what a run prints, and why
+- [Remote Sources](docs/remote-sources.md): ingesting from GitHub or GitLab over MCP
+- [The Ingest Manifest](docs/manifest.md): how re-ingest stays incremental
+- [Benchmarks](docs/benchmarks.md): measuring whether the wiki actually helps
+- [Multi-Brain](docs/multi-brain.md): running several knowledge domains side by side
+- [Upstream Updates](docs/upstream-updates.md): pulling framework improvements
+- [v2 service](docs/v2/spec.md): [ingest](docs/v2/ingest.md) · [connectors](docs/v2/connectors.md) · [governance](docs/v2/governance.md) · [MCP](docs/v2/mcp.md) · [telemetry](docs/v2/telemetry.md) · [security](docs/v2/security.md)
+- [Contributing](CONTRIBUTING.md): setup, the checks CI runs, and the invariants to keep
+- [Security](SECURITY.md): how to report a vulnerability, and what is already known
 
 ## Structure
 
@@ -283,12 +283,12 @@ Two things exist exactly once, and everything else is generated from them or cal
 ## Requirements
 
 - **An AI coding agent** meeting [`agent/contract.md`](agent/contract.md). Known-good: [Claude Code](https://claude.com/claude-code) (the reference harness), Codex, Cursor, Gemini CLI, Antigravity, Copilot. Setup per harness in [Agent Harnesses](docs/agent-harnesses.md).
-- **Git, and a human who merges.** The agent commits to a branch; `main` moves only when a person merges a reviewed diff — or, with the service, approves the exact version in the review inbox and the service merges for them. There is no auto-merge mode in either.
+- **Git, and a human who merges.** The agent commits to a branch; `main` moves only when a person merges a reviewed diff (or, with the service, approves the exact version in the review inbox and the service merges for them). There is no auto-merge mode in either.
 - **For the service only:** Node.js 22.13+ (it uses the built-in `node:sqlite`) and git 2.38+ (`merge-tree --write-tree`). `node server/bin/almagest.mjs doctor` checks both.
-- **Node.js 22+** — for `tools/audit.mjs` and for the site (the site needs a recent 22.x: Astro sets the floor, currently 22.23.4, recorded in `site/package.json` → `engines`). This is a hard dependency now, not a site-only one: the audit and the site call the same parser (`tools/lib/wiki-core.mjs`) rather than keeping two that would drift apart, and Node cannot import the site's TypeScript, so the shared file is plain ESM. The site still builds from `cd site && npm install && npm run build` on a fresh clone with no root install — the core imports no packages, by design.
-- `shasum -a 256` or `sha256sum` — for source fingerprinting.
-- Bash and coreutils — for `tools/agent-shims.sh` and the benchmark harness, which deliberately need no language runtime at all.
+- **Node.js 22+**: for `tools/audit.mjs` and for the site (the site needs a recent 22.x: Astro sets the floor, currently 22.23.4, recorded in `site/package.json` → `engines`). This is a hard dependency now, not a site-only one: the audit and the site call the same parser (`tools/lib/wiki-core.mjs`) rather than keeping two that would drift apart, and Node cannot import the site's TypeScript, so the shared file is plain ESM. The site still builds from `cd site && npm install && npm run build` on a fresh clone with no root install, because the core imports no packages, by design.
+- `shasum -a 256` or `sha256sum`: for source fingerprinting.
+- Bash and coreutils: for `tools/agent-shims.sh` and the benchmark harness, which deliberately need no language runtime at all.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

@@ -26,18 +26,18 @@ The agent validates the `type` field in every wiki page's frontmatter against th
 | `entity` | A real-world thing: a product, org, person-role, or system |
 | `claim` | **Your** conclusion, not a source's. See below |
 
-`type` and the `type_fields` vocabularies are separate lists. An organisation is `type: entity` with `entity_type: organisation` — never `type: organisation`. Mixing them is `SCHEMA-005`.
+`type` and the `type_fields` vocabularies are separate lists. An organisation is `type: entity` with `entity_type: organisation`, never `type: organisation`. Mixing them is `SCHEMA-005`.
 
 ## The `claim` type
 
 A `claim` page records a conclusion you reached, not a fact a document states.
 
-- Normally `origin: self`, so its body carries **no inline citations**.
+- Normally `origin: self`, so its body carries no inline citations.
 - Required in exchange: a `## Basis` section whose bullets are `[[wikilinks]]` to `origin: source` pages.
-- Title it as a **sentence**, not a noun phrase — "Availability warranties transfer O&M risk to the vendor", not "Warranties". The title is the claim.
+- Title it as a sentence, not a noun phrase: "Availability warranties transfer O&M risk to the vendor", not "Warranties". The title is the claim.
 - Usually `tier: curated`. `confidence: low` on a curated page blocks the ingest commit; if you can't get past `low`, it belongs at evidence tier or in `## Open questions` on an existing page.
 
-Why the type exists: before `origin`, every body claim needed a citation to an ingested source, which made your own judgment a schema violation. `claim` + `origin: self` makes it first-class, and `## Basis` keeps it accountable — an uncited conclusion still has to say what it stands on.
+Why the type exists: without `origin`, every body claim needs a citation to an ingested source, which makes your own judgment a schema violation. `claim` + `origin: self` makes it first-class, and `## Basis` keeps it accountable: an uncited conclusion still has to say what it stands on.
 
 ## `origin` — whose claim is this?
 
@@ -66,11 +66,11 @@ type_fields:
     - "section:## Basis"    # a required BODY section, not a frontmatter key
 ```
 
-An entry prefixed `section:` names a required **body section**. Everything else is a frontmatter key. Frontmatter keys are added to the base template when creating a page of that type; a missing one is `SCHEMA-003`.
+An entry prefixed `section:` names a required body section. Everything else is a frontmatter key. Frontmatter keys are added to the base template when creating a page of that type; a missing one is `SCHEMA-003`.
 
 ## Base fields (all types)
 
-Schema **v2**. Every page gets these regardless of type:
+Schema v2. Every page gets these regardless of type:
 
 | Field | Required | Description |
 |-------|----------|-------------|
@@ -108,7 +108,7 @@ sources:
 [source: unknown]
 ```
 
-`<locator>` is one of `§<section>` · `p.<n>` · `pp.<n>-<m>` · `row <n>` · `slide <n>` · `t <hh:mm:ss>` · `line <n>`. The old prose form — `[source: System Documentation / Architecture, §Failover, p.3]` — is **retired**; the human label lives in `sources[].title`.
+`<locator>` is one of `§<section>` · `p.<n>` · `pp.<n>-<m>` · `row <n>` · `slide <n>` · `t <hh:mm:ss>` · `line <n>`. The old prose form (`[source: System Documentation / Architecture, §Failover, p.3]`) is **retired**; the human label lives in `sources[].title`.
 
 ### Typed relations
 
@@ -129,7 +129,7 @@ relations:
     - "[[site-survey-2026-q2]]"
 ```
 
-`contradicts` is what makes the contradiction protocol machine-checkable — a disputed pair is a graph edge the audit reads and the site renders, instead of a convention nobody can verify after the fact. A `relations` target that does not exist is `LINK-003`.
+`contradicts` is what makes the contradiction protocol machine-checkable: a disputed pair is a graph edge the audit reads and the site renders, instead of a convention nobody can verify after the fact. A `relations` target that does not exist is `LINK-003`.
 
 ## Example: adding a custom type
 
@@ -157,7 +157,7 @@ To add a `process` type for documenting workflows:
 
 ## Worked examples
 
-- `brain/wiki/_example.md` — `origin: source`, object-form `sources`, inline citations
-- `brain/wiki/_example-claim.md` — `type: claim`, `origin: self`, `## Basis`, `depends_on`
+- `brain/wiki/_example.md`: `origin: source`, object-form `sources`, inline citations
+- `brain/wiki/_example-claim.md`: `type: claim`, `origin: self`, `## Basis`, `depends_on`
 
 Delete both when you create your first real page.

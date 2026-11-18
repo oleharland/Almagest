@@ -18,22 +18,22 @@ git remote add origin <your-new-repo-url>
 
 Edit `brain.config.yaml` to match your domain:
 
-- **name** — your knowledge base name
-- **agent.harness** — which coding agent you run, and the model each capability tier maps to. See [Agent Harnesses](agent-harnesses.md)
-- **page_types** — the types of wiki pages you'll create (e.g., topic, concept, decision, entity)
-- **type_fields** — extra frontmatter fields per page type
-- **canonical_pages** — which wiki pages serve as locked reference lists
-- **anonymization.enabled** — off by default. Turn it on if the wiki is shared beyond the people named in it, or if sources contain personal data (see below)
-- **require_owner** / **owner_teams** — off by default. Turn on if you want every page assigned to a team
-- **sources.remote** — repos to pull from (optional, see [Remote Sources](remote-sources.md))
+- **name**: your knowledge base name
+- **agent.harness**: which coding agent you run, and the model each capability tier maps to. See [Agent Harnesses](agent-harnesses.md)
+- **page_types**: the types of wiki pages you'll create (e.g., topic, concept, decision, entity)
+- **type_fields**: extra frontmatter fields per page type
+- **canonical_pages**: which wiki pages serve as locked reference lists
+- **anonymization.enabled**: off by default. Turn it on if the wiki is shared beyond the people named in it, or if sources contain personal data (see below)
+- **require_owner** / **owner_teams**: off by default. Turn on if you want every page assigned to a team
+- **sources.remote**: repos to pull from (optional, see [Remote Sources](remote-sources.md))
 
 ### A note on anonymization
 
 `anonymization.enabled` ships as `false`, so names in your sources are written straight through to the wiki. That is the right default for a personal knowledge base.
 
-Turn it on before ingesting anything containing real personal data — meeting transcripts, CRM exports, support tickets. With it on, the agent runs a named-entity pass over each source, stops on every name it finds, shows you what it found, and waits for approval before writing a role-based replacement.
+Turn it on before ingesting anything containing real personal data (meeting transcripts, CRM exports, support tickets). With it on, the agent runs a named-entity pass over each source, stops on every name it finds, shows you what it found, and waits for approval before writing a role-based replacement.
 
-That pass is **best-effort and nothing more**. A model reading text misses initials, transliterations, names that look like ordinary words. The control is you reading the ingest branch's diff before it merges — `enabled: true` reduces how much you have to catch there; it does not replace the catching. Note that `brain/raw/extracted/` is committed, so read the sidecar in that diff too.
+That pass is **best-effort and nothing more**. A model reading text misses initials, transliterations, names that look like ordinary words. The control is you reading the ingest branch's diff before it merges. `enabled: true` reduces how much you have to catch there; it does not replace the catching. Note that `brain/raw/extracted/` is committed, so read the sidecar in that diff too.
 
 ## 3. Set up remote sources (optional)
 
@@ -44,15 +44,15 @@ If you want to pull content from GitHub or GitLab repos instead of dropping file
    export GITHUB_TOKEN="github_pat_..."      # GitHub
    export GITLAB_TOKEN="glpat-..."           # GitLab
    ```
-2. Point your agent at the MCP servers. Claude Code reads `.mcp.json` automatically and prompts you to approve each server (`/mcp` to manage); other harnesses need the same two entries in their own config — see [Agent Harnesses](agent-harnesses.md)
+2. Point your agent at the MCP servers. Claude Code reads `.mcp.json` automatically and prompts you to approve each server (`/mcp` to manage); other harnesses need the same two entries in their own config. See [Agent Harnesses](agent-harnesses.md)
 3. List the repos to ingest under `sources.remote` in `brain.config.yaml`
 
 See [Remote Sources](remote-sources.md) for full details.
 
 Skip this entirely if you only plan to drop files into `brain/raw/`.
 
-With the v2 service (step 8) this generalises: any MCP server — Google Drive,
-Granola, Linear, Notion, Slack, or anything that exposes MCP resources — can be
+With the v2 service (step 8) this generalises: any MCP server (Google Drive,
+Granola, Linear, Notion, Slack, or anything that exposes MCP resources) can be
 an input under `sources.connectors`, and `sources.remote` entries keep working
 through it. See [Connectors](v2/connectors.md).
 
@@ -77,16 +77,16 @@ claude          # or codex, cursor-agent, gemini — whichever you run
 
 What happens, in order:
 
-1. **Fingerprint.** Every file in `raw/` is hashed and looked up in `brain/manifest.yaml` — new, unchanged, or changed. Unchanged files are skipped without being read. See [The Ingest Manifest](manifest.md)
-2. **Extract to a sidecar.** Every binary source — PDF, deck, spreadsheet, video — is extracted to plain text at `brain/raw/extracted/<filename>.txt`, with `=== page 12 ===` markers, **before** any entity is pulled out of it. That file is committed; the original is not. It is what your wiki pages cite, so a citation stays checkable on a fresh clone with nothing but `grep`
+1. **Fingerprint.** Every file in `raw/` is hashed and looked up in `brain/manifest.yaml` (new, unchanged, or changed). Unchanged files are skipped without being read. See [The Ingest Manifest](manifest.md)
+2. **Extract to a sidecar.** Every binary source (PDF, deck, spreadsheet, video) is extracted to plain text at `brain/raw/extracted/<filename>.txt`, with `=== page 12 ===` markers, before any entity is pulled out of it. That file is committed; the original is not. It is what your wiki pages cite, so a citation stays checkable on a fresh clone with nothing but `grep`
 3. **Extract entities**, deduplicated against `brain/.index/aliases.tsv` so one entity does not become two pages
 4. **Write to a branch.** The agent commits to `ingest/<source-slug>-<sha7>`. It never writes to `brain/wiki/` on `main`
-5. **Audit.** `tools/audit.mjs` runs before the commit. An error blocks it — nothing lands until it passes
-6. **You merge.** Review the diff, merge to `main`. That is the gate
+5. **Audit.** `tools/audit.mjs` runs before the commit. An error blocks it. Nothing lands until it passes
+6. **You merge.** Review the diff, merge to `main`.
 
 Some things still stop and ask, on the branch: a contradiction with an existing page, anything touching a canonical page, a deletion or rename, `confidence: low` on a curated page. Everything else lands on the branch and you read it as a diff.
 
-**Unattended ingest onto a branch is fine. Unattended merge to `main` is not, and there is no flag for it** — the contract is in [`agent/contract.md`](../agent/contract.md), the per-harness detail in [Agent Harnesses](agent-harnesses.md).
+**Unattended ingest onto a branch is fine. Unattended merge to `main` is not, and there is no flag for it**: the contract is in [`agent/contract.md`](../agent/contract.md), the per-harness detail in [Agent Harnesses](agent-harnesses.md).
 
 ## 6. Run the audit
 
@@ -99,7 +99,7 @@ node tools/audit.mjs --check-index  # verify brain/.index/ is current (CI)
 
 Exit `0` clean, `1` violations found, `2` tool error.
 
-The audit is the reason the schema is shaped the way it is. Citations parse (`[source: <id>, p.12]`), source ids resolve against the page's `sources`, and each `sources[].sha256` is compared with the manifest — so `CITE-005` can tell you *"this page cites v1; the manifest is at v2 — 4 citations unverified"* instead of leaving you to guess from a `last_verified` date. Full check list: [The Audit](audit.md).
+The audit is the reason the schema is shaped the way it is. Citations parse (`[source: <id>, p.12]`), source ids resolve against the page's `sources`, and each `sources[].sha256` is compared with the manifest, so `CITE-005` can tell you *"this page cites v1; the manifest is at v2, 4 citations unverified"* instead of leaving you to guess from a `last_verified` date. Full check list: [The Audit](audit.md).
 
 Run it after every ingest and before every merge. In CI, run it plus `--check-index`.
 
@@ -113,12 +113,12 @@ npm run build    # static output in site/dist/
 npm run preview  # serve the built output locally
 ```
 
-The Astro site reads directly from `brain/wiki/` at build time — no separate content step, no database. It renders every page, resolves `[[wikilinks]]`, builds a backlink graph, and flags pages that cite no sources.
+The Astro site reads directly from `brain/wiki/` at build time: no separate content step, no database. It renders every page, resolves `[[wikilinks]]`, builds a backlink graph, and flags pages that cite no sources.
 
 Customise it in two places, both of which survive `git merge upstream/main`:
 
-- `site/site.config.ts` — title, description, how the index groups pages
-- `site/src/styles/theme.css` — colours and typography, as CSS custom property overrides
+- `site/site.config.ts`: title, description, how the index groups pages
+- `site/src/styles/theme.css`: colours and typography, as CSS custom property overrides
 
 `site/dist/` is plain static HTML. Deploy it anywhere that serves files.
 
@@ -135,7 +135,7 @@ See [Upstream Updates](upstream-updates.md) for details.
 
 ## 8. Run the service (optional)
 
-Steps 1–7 are the whole framework with nothing but an agent session and git. The
+Steps 1 to 7 are the whole framework with nothing but an agent session and git. The
 v2 service adds background ingest, any MCP server as an input, a review inbox
 for people who don't read diffs, the brain as an MCP server for your chats, and
 request tracking. It needs Node 22.13+ (it uses the built-in `node:sqlite`);
@@ -165,20 +165,20 @@ environment of the shell it was started from. Export `ALMAGEST_SECRET_KEY` or
 `ALMAGEST_LOGINS` in your shell, start Claude Code (or any agent) there, and the
 agent holds them too: with the secret key it can mint a sign-in link and approve
 its own proposal. The parentheses run each command in a subshell, so the
-variables reach the service and nothing else — not even the terminal you typed
+variables reach the service and nothing else, not even the terminal you typed
 them in. For an always-on service, `deploy/launchd/` and `deploy/systemd/` start
 it with the same file (systemd's `EnvironmentFile=~/.config/almagest/env`) and
 no terminal at all. An agent that can read the file can still use it; only
 running agents as another OS user closes that ([security](v2/security.md),
 Known limit 1).
 
-`hooks install` copies `tools/hooks/` **as committed on `main`** into the git
+`hooks install` copies `tools/hooks/` as committed on `main` into the git
 directory and points `core.hooksPath` there. The hooks never run from the
 working tree: a checkout replaces those files with the branch's copies, and a
 branch could ship hooks that move `main`. Run it once per clone, in your own
 terminal (it refuses inside an agent session), and again whenever `doctor`
-reports the hooks outdated — after a merge that changed `tools/hooks/` or
-`brain_dir` on `main`.
+reports the hooks outdated (after a merge that changed `tools/hooks/` or
+`brain_dir` on `main`).
 
 The API token and the sign-in secret are deliberately different. The token goes
 into chat and hook configuration and can read; only the sign-in secret opens a
@@ -186,7 +186,7 @@ browser session, and only a browser session can approve. Without
 `ALMAGEST_LOGINS`, `node server/bin/almagest.mjs login me` (run the same way, in
 your own terminal) prints a one-time sign-in link instead; it refuses to run
 inside an agent session. Give chats a `contributor` or `viewer` token where you
-can — see [the security status](v2/security.md).
+can; see [the security status](v2/security.md).
 
 `doctor` checks the environment that `serve` relies on, so run it with the
 same variables. A `✗` line names what is missing and how to fix it. Ingest branches off
@@ -201,8 +201,8 @@ reach.
 
 ## Where to go next
 
-- [Agent Harnesses](agent-harnesses.md) — what a harness has to be able to do, and how to set up the one you use
-- [The Ingest Manifest](manifest.md) — how the agent tells a new source from one you edited, what the extracted sidecars are for, and what to do when the record drifts
-- [The Audit](audit.md) — every check, what it detects, and how to clear it
-- [Terminal Output](terminal-output.md) — what a session looks like while it runs
-- [Benchmarks](benchmarks.md) — the harness for measuring whether the compiled wiki actually beats reading the raw sources
+- [Agent Harnesses](agent-harnesses.md): what a harness has to be able to do, and how to set up the one you use
+- [The Ingest Manifest](manifest.md): how the agent tells a new source from one you edited, what the extracted sidecars are for, and what to do when the record drifts
+- [The Audit](audit.md): every check, what it detects, and how to clear it
+- [Terminal Output](terminal-output.md): what a session looks like while it runs
+- [Benchmarks](benchmarks.md): the harness for measuring whether the compiled wiki actually beats reading the raw sources

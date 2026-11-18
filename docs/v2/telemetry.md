@@ -17,7 +17,7 @@ demand*. Audit side: `tools/lib/checks-demand.mjs`, `docs/audit.md` →
 
 ## What is tracked, and why
 
-One **Event** per request, from every surface that reads the brain — the MCP
+One **Event** per request, from every surface that reads the brain: the MCP
 tools (`search`, `get_page`, `ask`, `report_gap`, `feedback`, resource reads),
 the web inbox, the site and the CLI:
 
@@ -36,8 +36,8 @@ the web inbox, the site and the CLI:
 
 Recording is fire-and-forget: `ctx.telemetry.record(partial)` builds the event,
 applies privacy, pushes it onto a bounded in-memory buffer and returns. A
-background drain appends to `store.events`. It **never throws and never blocks**
-— a slow or failing database costs events, counted in `stats()` as `dropped`
+background drain appends to `store.events`. It **never throws and never blocks**:
+a slow or failing database costs events, counted in `stats()` as `dropped`
 (buffer full, oldest dropped first) or `failed` (append rejected), never
 latency or an error in the chat. `telemetry.enabled: false` makes `record` a
 no-op and every demand read return zeros.
@@ -83,7 +83,7 @@ telemetry:
   A keyed hash still groups repeats; it cannot be read back.
 - **Hash tokens too when queries may carry personal data.** With
   `store_tokens: plain` the token set of "salary of John Smith" is
-  `["john","salary","smith"]` — order lost, content not. `hashed` keeps gap
+  `["john","salary","smith"]`: order lost, content not. `hashed` keeps gap
   clustering working (counts, distinct sessions, a stable cluster id) and gives
   up the readable label. `none` gives up gaps entirely.
 - **Set `ALMAGEST_SECRET_KEY`.** Without it the hash key is a fixed default and
@@ -95,14 +95,14 @@ telemetry:
   pseudonymisation (Art. 4(5)), not anonymisation; the event log remains in
   scope. Treat the service database as a processing record: purpose
   (improving the knowledge base, prioritising review), legal basis (usually
-  legitimate interest — document the balancing test), retention.
+  legitimate interest; document the balancing test), retention.
 - **Retention is enforced, not advised.** `store.events.prune` runs daily and
   deletes every event older than `retention_days` (default 90; 30 is a
-  sensible enterprise value — the demand half-life is 14 days, so events older
+  sensible enterprise value: the demand half-life is 14 days, so events older
   than a few half-lives contribute almost nothing anyway).
 - **No raw events in git, ever.** The only telemetry artefact that leaves the
-  database is `.almagest/demand.tsv` — slug, score, rank, hot; no query text,
-  no actors, no timestamps — and `.almagest/` is gitignored. The kv cache
+  database is `.almagest/demand.tsv` (slug, score, rank, hot; no query text,
+  no actors, no timestamps), and `.almagest/` is gitignored. The kv cache
   (`demand/latest`) holds the same aggregates.
 - **Erasure.** Deleting a person's events means deleting rows whose `actorId`
   is `pseudonymize(<their id>)`; with `store_actor: none` there is nothing to
@@ -124,20 +124,20 @@ score(page) = max(0, Σ  weight(event, page) × 0.5^(age_days / half_life_days))
 | `feedback` helpful | +2 |
 | `feedback` unhelpful | −1 |
 
-- **Rank discount** `d(r) = 1 / log2(r + 1)` — the DCG discount: rank 1 → 1,
+- **Rank discount** `d(r) = 1 / log2(r + 1)`, the DCG discount: rank 1 → 1,
   rank 2 → 0.63, rank 3 → 0.5. Appearing at the top of an answer means more
   than appearing third.
 - **Decay** halves a signal's weight every `half_life_days` (default 14), so
   demand follows what people need now, not what they needed in spring.
 - **Session dedupe.** One session touching one page counts once per
   `dedupe_minutes` window (default 10, tumbling, anchored at the first touch).
-  Inside a window the strongest implicit signal is kept — a search hit followed
+  Inside a window the strongest implicit signal is kept: a search hit followed
   by a full read counts as the read, not both. Feedback dedupes separately; the
   latest verdict in a window wins. Events with neither `sessionId` nor
   `actorId` are not deduped.
 - **Clamp.** Unhelpful feedback subtracts, but the total never goes below 0.
-- **Distinct sessions** — how many different sessions contributed positive
-  signal — is the secondary key: at equal score, ten readers outrank one reader
+- **Distinct sessions** (how many different sessions contributed positive
+  signal) is the secondary key: at equal score, ten readers outrank one reader
   ten times.
 
 Weights can be overridden, or given to a new tool, under
@@ -159,13 +159,13 @@ Score = 3.264, from 5 distinct sessions. (This exact case is a unit test:
 
 ### Hot
 
-All of main's pages are ranked — score descending, then distinct sessions,
-then slug — including pages nobody read, so "top 10%" means 10% of the wiki
+All of main's pages are ranked (score descending, then distinct sessions,
+then slug), including pages nobody read, so "top 10%" means 10% of the wiki
 rather than 10% of whatever happened to be opened. A page is **hot** when
 
 - its rank is within the top `100 − hot_percentile` percent (default: top 10%,
   rounded **up**, so a three-page wiki still has one hot page), **and**
-- its score is at least `min_score` (default 3 — roughly three full reads this
+- its score is at least `min_score` (default 3, roughly three full reads this
   fortnight), and above zero.
 
 The floor is what stops a quiet wiki from calling its single most-read page
@@ -177,7 +177,7 @@ Demand is recomputed every `recompute_seconds` (default 300), shortly after a
 `proposal.merged`, and on demand (`ctx.demand.recompute()`, `?refresh=1`, the
 CLI). The result is cached in `store.kv` (`demand` / `latest`, with
 `computedAt`), so a restart serves the last ranking immediately. When the hot
-list changes — not merely the scores — the service emits `demand.updated
+list changes, not merely the scores, the service emits `demand.updated
 { hot }` on the bus. After each recompute it writes `.almagest/demand.tsv`
 (`config.paths.demand`), only when its bytes change.
 
@@ -188,10 +188,10 @@ list changes — not merely the scores — the service emits `demand.updated
 - `score`, `rank`, `hot`, and the hot rule it was judged by
   (`{ percentile, minScore, population }`)
 - `formula` and `halfLifeDays`
-- `byTool` — counted and deduped events per tool, and their summed value
-- `topContributors` — the ten events that moved the score most:
+- `byTool`: counted and deduped events per tool, and their summed value
+- `topContributors`: the ten events that moved the score most:
   `{ eventId, ts, tool, kind, rank, weight, decay, value }`
-- `trend` — raw (undecayed) signal in the latest half-life window against the
+- `trend`: raw (undecayed) signal in the latest half-life window against the
   one before: `{ current, previous, delta, direction: rising | falling | flat }`
 
 That is the whole of the "learning". If a reviewer asks why a page needed two
@@ -207,9 +207,9 @@ approvals, the answer is a list of event ids.
 | Audit warnings | `tools/audit.mjs --demand .almagest/demand.tsv` | `DEMAND-001` hot page past `stale_after_days_hot`; `DEMAND-002` hot page with low/unknown confidence. Warnings unless `audit.severity` lists them as errors. See `docs/audit.md` → *Demand* |
 | Gap list | `ctx.telemetry.gaps()`, `GET /api/gaps`, `/inbox/gaps`, `almagest gaps` | What people asked that no page answered, clustered, with a plain-text suggestion |
 
-Nothing here relaxes a non-negotiable. Demand can make review **stricter** and
-make work **appear**; it never approves, merges, or edits a page. Canonical
-pages are never auto-enqueued — an agent job could not change them.
+Nothing here relaxes a non-negotiable. Demand can make review stricter and
+make work appear; it never approves, merges, or edits a page. Canonical
+pages are never auto-enqueued: an agent job could not change them.
 
 ## Gaps
 
@@ -217,13 +217,13 @@ A **miss** is a `search` or `ask` event with `answered: false` (or no results
 and no verdict), or a `report_gap` event. Misses inside the window
 (`gaps.window_days`, default 30, or `since`) are clustered:
 
-1. Each query's normalised token set — lowercased, accents folded, stopwords
+1. Each query's normalised token set: lowercased, accents folded, stopwords
    dropped, plurals folded (`fees` → `fee`), sorted, unique.
 2. Oldest first, each miss joins the cluster whose anchor (its first miss) it
    is most similar to by Jaccard similarity, if that is at least
    `gaps.similarity` (default 0.5); otherwise it anchors a new cluster.
 3. **Gaps close themselves.** If a later `search` / `ask` with a similar token
-   set *was* answered — someone added the page — every miss in the cluster up
+   set *was* answered (someone added the page), every miss in the cluster up
    to that moment is dropped. A miss after the answer reopens the cluster
    (`reopenedAfter`).
 
@@ -240,7 +240,7 @@ size instead.
 ## Configuration
 
 All optional; every key falls back to the default shown. None of these is in
-the shipped `brain.config.yaml` yet — add the block to opt in to anything other
+the shipped `brain.config.yaml` yet. Add the block to opt in to anything other
 than the defaults.
 
 ```yaml
@@ -334,7 +334,7 @@ rank  slug             score  sessions  hot
 ## Storage
 
 Events live in `store.events` (sqlite by default; Postgres for the enterprise
-profile — `server/src/core/store/postgres.mjs`, JSONB documents, `ts`-indexed,
+profile: `server/src/core/store/postgres.mjs`, JSONB documents, `ts`-indexed,
 schema created on first connect). Scoring reads the events inside
 `retention_days` on each recompute; that is a full scan of a few months of
 requests, which is fine at knowledge-base volumes (tens of thousands of events)

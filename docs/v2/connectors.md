@@ -6,12 +6,12 @@ A connector points the Almagest service at an MCP server and says which of its
 items to ingest. The service connects as an MCP **client**, lists the items,
 fetches each one, renders it to plain text with locator markers, and
 fingerprints the result. Every item that is new or changed relative to the
-manifest **on `main`** becomes a `SourceRef` the ingest runner turns into a job.
+manifest on `main` becomes a `SourceRef` the ingest runner turns into a job.
 From there it is the ordinary ingest: a branch, the audit, a proposal, a human
 who merges.
 
 Nothing here is specific to a vendor. Any server that speaks MCP works, by one
-of three routes — see [Adding any MCP server](#adding-any-mcp-server).
+of three routes. See [Adding any MCP server](#adding-any-mcp-server).
 
 ## How it fits together
 
@@ -100,14 +100,14 @@ sources:
 | Bare URL | `mcp: https://mcp.notion.com/mcp` | Streamable HTTP |
 | Inline object | `{ url, headers }` · `{ type: sse, url }` · `{ command, args, env, cwd }` | as for `.mcp.json` |
 
-An inline object may also carry `name:`. That name — or else the URL without
-its query string, or `stdio:<command>` — is what the snapshot header and the
+An inline object may also carry `name:`. That name (or else the URL without
+its query string, or `stdio:<command>`) is what the snapshot header and the
 manifest's `server` field record. Headers, arguments, env values and query
 strings are never written down: any of them can hold a credential.
 
 `${VAR}` and `${VAR:-default}` expand in every value, exactly as Claude Code
 expands them in `.mcp.json`. In a `.mcp.json` entry, a `${VAR}` with no default
-whose variable is unset is logged as a warning naming the variable — an empty bearer token is the most
+whose variable is unset is logged as a warning naming the variable. An empty bearer token is the most
 common reason a hosted server answers 401.
 
 ### v1 `sources.remote` still works
@@ -120,15 +120,15 @@ id is `<provider>-<repo slug>`. The first sync after upgrading finds the old
 `change: changed` and `supersedes: <old id>`, so the agent updates the existing
 pages and marks the old entry `status: superseded` instead of creating a
 duplicate. From then on the file is a connector source with a committed
-snapshot — which v1 remote sources never had.
+snapshot, which v1 remote sources never had.
 
 ## Sync semantics
 
 `ctx.connectors.sync(id, { since?, full?, dryRun? }) → [SourceRef]`. In order:
 
 1. **Resolve.** Run the recipe's `resolve:` steps (e.g. GitHub's head commit), making `{{vars.*}}` available.
-2. **List.** Call the list tool, follow `next_cursor` until it is empty or repeats (or `has_more` is false), filter by `where:`, de-duplicate by `ref`. `{{since}}` is the stored cursor — the start time of the last clean sync — so recipes that pass it list only what changed.
-3. **Fetch — or not.** If the item's `version` equals the version stored at the last sync *and* the staged snapshot still hashes to the digest stored with it, the fetch is skipped. That is the only thing `version` is ever used for.
+2. **List.** Call the list tool, follow `next_cursor` until it is empty or repeats (or `has_more` is false), filter by `where:`, de-duplicate by `ref`. `{{since}}` is the stored cursor (the start time of the last clean sync), so recipes that pass it list only what changed.
+3. **Fetch, or not.** If the item's `version` equals the version stored at the last sync *and* the staged snapshot still hashes to the digest stored with it, the fetch is skipped. That is the only thing `version` is ever used for.
 4. **Render and fingerprint.** The fetched value becomes the snapshot text (header + body with locator markers), and **sha256 of those bytes is the fingerprint**.
 5. **Compare against `main`.** The manifest is read from `ctx.snapshot` (main's commit, never the checkout's). No entry → `new`. Different digest → `changed`. Same digest → `unchanged`, not returned. Same digest on a `status: missing` entry → `reappeared`.
 6. **Stage.** The snapshot is written (if its bytes changed) to `.almagest/connector-snapshots/<id>/<slug>.txt`; nothing is written to git or the checkout.
@@ -138,8 +138,8 @@ snapshot — which v1 remote sources never had.
 lists from the previous cursor again. `--full` (`{ full: true }`) ignores the
 cursor entirely.
 
-**Items gone upstream are reported, never deleted.** Only a *complete* listing —
-no `{{since}}`, not capped by `max_items` / `max_pages` — can prove an item is
+**Items gone upstream are reported, never deleted.** Only a *complete* listing
+(no `{{since}}`, not capped by `max_items` / `max_pages`) can prove an item is
 gone. The sync then lists every `kind: connector` entry for that connector whose
 `ref` was not seen, in `missing`. The next ingest sets their manifest `status:
 missing`; pages and snapshots stay.
@@ -149,8 +149,8 @@ open is returned again on the next sync, with the same sha256; the runner's job
 dedup on `(kind, source.id, source.sha256)` is what keeps that from becoming a
 second job.
 
-`sync` returns only the refs. `syncDetailed` returns the whole picture —
-`{ refs, unchanged, missing, errors, listed, complete, fetched, reused, since, at }` —
+`sync` returns only the refs. `syncDetailed` returns the whole picture,
+`{ refs, unchanged, missing, errors, listed, complete, fetched, reused, since, at }`,
 and is what `almagest connectors sync` prints.
 
 ### The SourceRef
@@ -177,7 +177,7 @@ const rel = await ctx.connectors.materialize(sourceRef, worktreeDir);
 ```
 
 `materialize` refuses when the staged bytes no longer hash to
-`sourceRef.sha256` — a later sync replaced them — because the job would
+`sourceRef.sha256` (a later sync replaced them) because the job would
 otherwise ingest content nobody fingerprinted for it. Re-sync and re-enqueue.
 `stagedPath(ref)` gives the staging path if a runner wants to copy it itself.
 
@@ -200,10 +200,10 @@ A failed release is rolled back within 30 minutes.
 ```
 
 **What the sha256 covers: every byte of the file, header included.** So the
-file must be deterministic — the same upstream content produces the same bytes
-on every fetch — and the header holds only fields that are a function of the
-item itself (`connector`, `server`, `ref`, `title`). The volatile facts — the
-provider `version`, when it was fetched — live in the manifest and on the
+file must be deterministic (the same upstream content produces the same bytes
+on every fetch) and the header holds only fields that are a function of the
+item itself (`connector`, `server`, `ref`, `title`). The volatile facts (the
+provider `version`, when it was fetched) live in the manifest and on the
 SourceRef, never in the file. `shasum -a 256 <snapshot>` reproduces
 `extracted_sha256` with no tooling, and an edited snapshot is caught by the
 audit (`CITE-005`).
@@ -231,12 +231,12 @@ fields are a judgment call: they usually move only when the content does.
 | `=== t hh:mm:ss ===` | `transcript` | `[source: x, t hh:mm:ss]` |
 | `=== truncated: kept N of M bytes ===` | any, past `max_bytes` | — |
 
-`line <n>` always works too — it counts lines of the whole file.
+`line <n>` always works too. It counts lines of the whole file.
 
 ## Recipe format
 
 A recipe is YAML; there is no code in it. Paths and templates are interpreted
-by `server/src/connectors/mapping.mjs` — no `eval`, no prototype access, no
+by `server/src/connectors/mapping.mjs`, with no `eval`, no prototype access and no
 environment variables.
 
 ```yaml
@@ -287,7 +287,7 @@ fetch:
 
 **Paths.** `a.b`, `a[0]`, `a[-1]`, `a["key with spaces"]`, `a[*].b` (fans out),
 `$` (the whole value). `x | y | z` takes the first alternative that yields a
-non-empty value — recipes use this to cover several plausible result shapes.
+non-empty value, and recipes use this to cover several plausible result shapes.
 
 **Templates.** `{{expr | filter:arg | …}}`. A string that is exactly one
 template keeps the value's type (a list stays a list). Variables: `since`,
@@ -372,7 +372,7 @@ Three paths, in the order to try them.
    almagest connectors test my-connector --fetch   # with recipe: ./server/src/connectors/recipes/my-server.draft.yaml
    mv server/src/connectors/recipes/my-server.draft.yaml server/src/connectors/recipes/my-server.yaml
    ```
-   `init` reads `tools/list` and `resources/list` — it never calls a tool. It
+   `init` reads `tools/list` and `resources/list`. It never calls a tool. It
    recommends `mcp-resources` when resources exist; otherwise it picks a list
    tool (`list*` / `search*` / `query*` / `find*`) and a fetch tool (`get*` /
    `read*` / `fetch*` …) sharing its noun, never anything that looks like a
@@ -386,7 +386,7 @@ Three paths, in the order to try them.
 Most hosted MCP servers (Linear, Notion, Granola, Google, …) use OAuth 2.1 with
 PKCE and dynamic client registration. The service runs the SDK's own client
 flow with an `OAuthClientProvider` whose storage is `store.kv`
-(`connector-oauth`, one record per server), **sealed** with
+(`connector-oauth`, one record per server), sealed with
 `ALMAGEST_SECRET_KEY` (AES-256-GCM, `core/schemas.mjs`). Tokens are never in the
 database in the clear, and never in git.
 
@@ -402,7 +402,7 @@ database in the clear, and never in git.
 The command listens on a loopback port (`127.0.0.1`, random unless
 `oauth.redirect_port` is set), prints the authorization URL, checks the
 `state` on the redirect, exchanges the code, and records `connector.login` in
-the governance audit log. Tokens belong to the **server**, not the connector:
+the governance audit log. Tokens belong to the server, not the connector:
 two connectors on one Notion workspace share a login.
 
 In the running service the provider is non-interactive. An expired access token
@@ -429,7 +429,7 @@ usage error.
 
 - **Snapshots are data.** Every snapshot opens with a fixed header that says
   so, and the ingest rules (`agent/rules/ingest.md` → Remote ingest) tell the
-  agent to treat connector content as untrusted input — never as instructions.
+  agent to treat connector content as untrusted input, never as instructions.
   The runner's tool allowlist (no network, no git, no MCP) is what makes that
   hold even when the content tries.
 - **Forged locators are neutralised.** A line of upstream text shaped like a
@@ -444,8 +444,8 @@ usage error.
 - **Recipes cannot run code.** Paths and templates are interpreted; `__proto__`,
   `constructor` and `prototype` are unreachable; there is no environment access
   from a template. `${VAR}` is expanded once, when the config and `.mcp.json`
-  are loaded — never inside a recipe, and never in anything a server returns.
-- **Configuration is code.** A stdio `mcp` runs a command — exactly like
+  are loaded. It is never expanded inside a recipe or in anything a server returns.
+- **Configuration is code.** A stdio `mcp` runs a command, exactly like
   `.mcp.json`. Treat `brain.config.yaml` changes to `sources.connectors` with
   the same review as a change to `.mcp.json`.
 - **Least privilege.** Give each server the narrowest read-only scope it offers.

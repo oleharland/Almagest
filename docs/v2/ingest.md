@@ -93,14 +93,14 @@ background with Claude Code, and a Codex model name would break it.
 
 Status: `queued → running → succeeded | blocked | failed | cancelled`.
 `blocked` means the run produced decisions and nothing else. A run with nothing
-to review — the agent found the source unchanged, or there was no diff and no
-decision — succeeds with no proposal, and the empty branch it made is deleted.
+to review (the agent found the source unchanged, or there was no diff and no
+decision) succeeds with no proposal, and the empty branch it made is deleted.
 
 **Retries.** A failure is retried (up to `max_attempts`) when it is the kind of
 thing that flakes: the driver crashed or timed out, the run report was missing
 or invalid, a proposal could not be loaded. A failure the runner *found* is not
-retried — the audit failed, the agent wrote outside `brain/`, it touched a
-canonical page, the fingerprint did not match — because running the same agent
+retried (the audit failed, the agent wrote outside `brain/`, it touched a
+canonical page, the fingerprint did not match) because running the same agent
 again on the same input is a way of spending money until the gate gives up. The
 worktree is left as the agent left it, for a person to look at; the next job on
 that branch resets it.
@@ -123,7 +123,7 @@ made under load. Ignored: `processed/`,
 `extracted/`, dotfiles, `.gitkeep`, READMEs, partial downloads (`.crdownload`,
 `.part`, `~`). A file is considered once its size and mtime hold still for
 `watch_stable_ms`; it is then hashed, and **skipped when `main`'s manifest
-already records that sha256** (rule 5 — read from the snapshot of `main`, not
+already records that sha256** (rule 5, read from the snapshot of `main`, not
 from whatever the checkout has open) or when those bytes already had a job.
 Re-noticing the same bytes never retries a failed job; `almagest ingest` does.
 
@@ -137,8 +137,8 @@ is not listening, drained on start and every `spool_interval_seconds`. A bad
 entry is renamed `.failed` and left for a person.
 
 **API and MCP.** `POST /api/jobs` needs a `contributor` role or above
-(viewers get 403) and takes `{ path }` — a file under the drop folder or
-`.almagest/submissions/`, nothing else — or `{ source: { kind: "connector",
+(viewers get 403) and takes `{ path }` (a file under the drop folder or
+`.almagest/submissions/`, nothing else) or `{ source: { kind: "connector",
 connector, ref } }`. A connector source is a pointer only: the service looks the
 item up in what a sync recorded and builds the SourceRef itself; a
 client-supplied `path`, `staged`, `sha256`, `title`, `change` or `supersedes` is
@@ -147,7 +147,7 @@ fingerprint only the service may compute. An item that was never synced is a
 400. Each actor may enqueue `ingest.manual_rate_per_hour` jobs an hour (429
 after that; the `enqueue` hook falls back to the spool). `GET /api/jobs` and
 `GET /api/jobs/:id` need any authenticated actor; `job.error` never quotes the
-run report or the model's output. The API only ever enqueues `ingest` — `revise` and
+run report or the model's output. The API only ever enqueues `ingest`: `revise` and
 `drop-page` carry instructions the agent is told to trust, so they come from
 governance through `ctx`, never from a request body. MCP `submit_source`
 writes into `.almagest/submissions/` and enqueues a local source from there,
@@ -176,9 +176,9 @@ with another harness, write a wrapper script that runs it write-capable inside
 
 ## The prompt and the agent's rules
 
-The agent is pointed at the rules in its worktree — `CLAUDE.md`,
+The agent is pointed at the rules in its worktree: `CLAUDE.md`,
 `agent/rules/ingest.md` (including **Runner mode** at the end) and
-`agent/rules/wiki.md` — not handed a paraphrase. The prompt carries only what
+`agent/rules/wiki.md`, not handed a paraphrase. The prompt carries only what
 the runner knows: the SourceRef, the sha256 the service computed (which the
 agent must use), the connector `change` / `supersedes`, the previous version of
 a changed source, the branch, the proposal, any instructions, and the exact
@@ -207,7 +207,7 @@ short request.
 The checked-in permissions match: `node` is pre-approved only for
 `tools/audit.mjs`, `tools/lib/selftest.mjs` and the read-only CLI subcommands
 (`almagest help`, `doctor`, `hooks check`, `jobs`, `proposals`, `gaps`,
-`connectors list`) — not `login`, `serve`, `ingest`, `hooks install`, `demand`
+`connectors list`), not `login`, `serve`, `ingest`, `hooks install`, `demand`
 or `reverify` (both recompute which pages are hot), or anything that syncs,
 sends or approves; nothing that runs arbitrary code is pre-approved (`python3`,
 `npx tsx`, `xargs`, `cp`, `mv` and `curl` to the local service all ask);
@@ -220,8 +220,8 @@ in read-only or ingest-branch form (`git branch --list`, `--show-current`,
 `git remote add|set-url`, `almagest login`, `almagest hooks install`,
 `git update-ref`, `git checkout -B`, `git switch -C` / `--force-create`,
 `git branch -f` / `--force` / `-M` / `-C`, `git reset --soft|--mixed|--keep|--hard`,
-and any `curl` to `…inbox/login…`. Permission rules match command text only —
-`/usr/bin/git` or a wrapper slips past them — which is why the hooks exist.
+and any `curl` to `…inbox/login…`. Permission rules match command text only:
+`/usr/bin/git` or a wrapper slips past them, which is why the hooks exist.
 
 These hooks bind Claude Code's tool calls only. A person typing in their own
 terminal is not affected, on purpose: a human merging a reviewed diff is the
@@ -236,7 +236,7 @@ node server/bin/almagest.mjs hooks install    # in your own terminal; it refuses
 
 The hooks git runs are **not** `tools/hooks/` in the working tree. A checkout
 replaces every tracked file with the branch's copy, so a hook run from the
-working tree is whichever one the checked-out branch ships — and a branch can
+working tree is whichever one the checked-out branch ships, and a branch can
 ship a pre-commit that clears the agent variables and moves main itself.
 `hooks install` (`installHooks` in `tools/lib/git-hooks.mjs`) instead:
 
@@ -249,7 +249,7 @@ ship a pre-commit that clears the agent variables and moves main itself.
   committed config disagrees. The agent-variable list is already in main's copy;
 - writes them to `<git-common-dir>/almagest/hooks/`, executable (replacing, not
   following, a symlink planted there), and sets `core.hooksPath` to that
-  absolute directory — shared by every worktree of the clone, and resolved
+  absolute directory, shared by every worktree of the clone, and resolved
   for a push into the repository too.
 
 Run it again whenever main's `tools/hooks/` or `brain_dir` changes: until then
@@ -261,16 +261,16 @@ what install would write from main now ("outdated").
 
 The pre-commit hook refuses a commit on `main` that touches
 `brain/wiki/`, and audits any commit that touches `brain/` or
-`brain.config.yaml` — against the **staged** tree (`git checkout-index` into a
+`brain.config.yaml`, against the **staged** tree (`git checkout-index` into a
 temp dir), so an unstaged fix cannot pass a staged mistake. Exit 1 blocks. The
 service's own commits use `--no-verify`: they are on ingest branches and have
 just passed the same audit. The audit it runs is the working tree's
-`tools/audit.mjs` — a deliberate choice, explained in the hook: it gates only
+`tools/audit.mjs`. That is a deliberate choice, explained in the hook: it gates only
 the branch it runs on, main is protected by reference-transaction and by the
 service's own re-audit, and a copy from main would still import
 `node_modules/`, which a checkout can overwrite (git treats ignored files as
 expendable). So code a branch ships does run in pre-commit, as it does under
-`npm run check` — see the residual risk below.
+`npm run check` (see the residual risk below).
 
 The reference-transaction hook (git 2.28+) is the backstop for the
 moves that make no commit: `branch -f`, `checkout -B`, `reset`, `update-ref`,
@@ -306,7 +306,7 @@ Claude Code guards (or one that gets past them) can always edit `.git/`
 directly. It can rewrite `.git/refs/heads/main` or `packed-refs`, forge
 `main-move`, unset `core.hooksPath`, or edit `.git/almagest/hooks/` itself. It
 can also strip its own environment (`env -i`) or re-parent a process so that no
-marker is left — from a script it wrote, from a branch's `tools/audit.mjs` that
+marker is left: from a script it wrote, from a branch's `tools/audit.mjs` that
 pre-commit runs, or from any `npm run` script. No in-repository check survives an adversary with write access to the
 repository. Only OS-level separation closes this: the agent runs as a user, or
 in a container, that cannot write the repository's git directory, and only the
@@ -316,8 +316,8 @@ are what the core promise rests on.
 
 ## Security posture of the unattended agent
 
-The agent reads content nobody vetted — a PDF from a vendor, a Slack export, a
-web page through a connector — with nobody watching. A source can contain text
+The agent reads content nobody vetted (a PDF from a vendor, a Slack export, a
+web page through a connector) with nobody watching. A source can contain text
 written to manipulate it. The design does not rely on the model resisting that.
 It relies on the agent having nothing dangerous to do it with, and on mechanical
 checks after it finishes.
@@ -325,9 +325,9 @@ checks after it finishes.
 **What the agent can do** (claude-code driver, flags verified against Claude
 Code 2.1.x):
 
-- Read, Write, Edit, Glob, Grep — confined to the worktree (`--restricted`).
-- Bash for exactly: `shasum`, `sha256sum`, `wc`, and two exact commands —
-  `<state>/runner/<jobId>/audit` and the same followed by `index` — plus
+- Read, Write, Edit, Glob, Grep: confined to the worktree (`--restricted`).
+- Bash for exactly: `shasum`, `sha256sum`, `wc`, and two exact commands:
+  `<state>/runner/<jobId>/audit` and the same followed by `index`, plus
   `ingest.extra_tools`. That wrapper is a script the runner writes outside the
   worktree for each job: it ignores every argument but a leading `index`, pins
   `--repo` to the worktree and `--config` to a copy of the config taken before
@@ -362,20 +362,20 @@ key names. It keeps what the CLI needs to authenticate to its model provider.
 1. The worktree's `.git` file is still byte-for-byte what git wrote (see
    *Git in the worktree* below). Anything else fails the job, uncommitted.
 2. The run report exists and validates; its sha256 equals the runner's.
-3. The path guard: the files changed — the diff from the branch head the
-   worktree was reset to, to the working tree, plus untracked files — are all
+3. The path guard: the files changed (the diff from the branch head the
+   worktree was reset to, to the working tree, plus untracked files) are all
    in the writable set governance enforces on the branch
    (`governance/paths.mjs`, one definition for both): `brain/wiki/<slug>.md`,
    `.txt` sidecars and snapshots under `brain/raw/extracted/`, text under
    `brain/raw/processed/`, `brain/.index/*.tsv`, `index.md`, the manifest,
    `log.md` and the challenges ledger. Not `brain.config.yaml` (which would let
    it relax the audit), not `tools/`, `agent/`, the shims, no dotfile, and no
-   agent instruction file anywhere — `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
+   agent instruction file anywhere: `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
    `SKILL.md`, `*.mdc`, `.claude/` and the rest (governance → *Only
    knowledge-base files*). The one exception is the original the runner itself
    placed in the drop folder, while it still holds the runner's bytes. No
    canonical page changed.
-4. The audit — the **service's** `tools/audit.mjs` against the worktree, never
+4. The audit: the **service's** `tools/audit.mjs` against the worktree, never
    the worktree's copy. Exit 1: nothing is committed.
 5. `.almagest/` is removed from the worktree before the commit, whatever
    `.gitignore` says.
@@ -392,9 +392,9 @@ including `.git`, the one-line pointer to the git dir. Rewritten to
 usually `main`, with no proposal; pointed at a fake git dir, its config could
 name a `core.fsmonitor` program that git runs as the service user. So the
 runner never lets git read that file. When it prepares a worktree it finds the
-worktree's admin dir (`<common-dir>/worktrees/<name>`) from the repo root —
-`git rev-parse --git-common-dir`, `git worktree list --porcelain` and the admin
-dirs' own back-pointers — checks `.git` is a regular file pointing there, and
+worktree's admin dir (`<common-dir>/worktrees/<name>`) from the repo root
+(`git rev-parse --git-common-dir`, `git worktree list --porcelain` and the admin
+dirs' own back-pointers), checks `.git` is a regular file pointing there, and
 records its bytes. Every git command after that, before and after the agent,
 first checks `.git` is unchanged, then runs with `--git-dir=<admin dir>
 --work-tree=<worktree> -c core.fsmonitor=false -c core.hooksPath=/dev/null`
@@ -419,7 +419,7 @@ prompt.
   sqlite file never run the same job (`claim` is atomic), but can run two jobs
   on one branch at once. Run one service per brain.
 - The audit runs on the whole worktree. If `main` already fails the audit,
-  every ingest fails until it is fixed — on purpose: a branch that does not pass
+  every ingest fails until it is fixed. This is on purpose: a branch that does not pass
   is not a reviewable diff.
 - After a merge, the file you dropped stays untracked in your checkout's
   `brain/raw/`: the runner ingests a copy in its own worktree, and the move to
