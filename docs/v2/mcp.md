@@ -46,6 +46,16 @@ confidence, aliases) and `almagest://page/{slug}` (listable template).
 **Prompt:** `answer-from-brain` (`question`). It tells the model to call `ask`,
 then `get_page` if needed, and cite per `read.md`.
 
+For the person asking, a question ends one of two ways. When a page covers it,
+`ask` returns the relevant sections and the chat writes a cited answer. When
+none does, the tool tells the chat to say so, and the miss goes on the gap list
+(see [telemetry.md](telemetry.md#gaps)).
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/ask-the-brain-dark.png">
+  <img src="../diagrams/ask-the-brain.png" alt="You ask a question in Claude, Cursor or any MCP chat. The chat calls ask on the Almagest MCP server, which searches the reviewed wiki on main. If a page covers the question, the chat writes a cited answer from the pages returned, each claim carrying a source citation. If none does, the chat tells you the brain does not cover it and does not pass general knowledge off as the brain's. Behind the chat, the miss is logged and report_gap adds your context; similar questions cluster into a gap list that curators see at /inbox/gaps. Someone with the contributor role or above fills the gap with submit_source, a person approves the result and main moves, and the next time the question is asked it is answered and the gap closes.">
+</picture>
+
 ### Who a request acts as
 
 Every MCP request runs as `agentActor('mcp:<client>', human)`. The chat model

@@ -55,6 +55,28 @@ Requires Node 22. No dependencies beyond what `site/` already installs (`gray-ma
 
 Warnings never change the exit code. That is deliberate: an orphan page or a stale `last_verified` is a thing to look at, not a thing that should stop a merge.
 
+## When it runs
+
+The audit runs whenever something is about to change the wiki:
+
+- On a commit. The pre-commit hook, once installed with `almagest hooks install`, audits the staged tree and refuses the commit on exit `1`.
+- On a push or pull request. CI runs it again (see [CI](#ci)).
+- In a service job. The v2 service audits what the headless agent wrote before it commits, and once more before it merges an approved proposal.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/audit-schedule-dark.png">
+  <img src="diagrams/audit-schedule.png" alt="Two things start work on a timer: a connector sync on its cron schedule, which queues an ingest job for each changed item, and the demand recompute every 5 minutes, which with auto_reverify on queues a reverify job for hot pages unverified for 30 days or more. Both become an agent job on an ingest/ branch. A commit or push starts the audit directly, through the pre-commit hook and CI. The audit, tools/audit.mjs, commits nothing on an error. A job that passes becomes a proposal with each changed fact beside its source, the service notifies a reviewer through Slack, email or a GitHub PR, and a person reviews and approves the version shown. The service then re-audits and merges, main moves, and the merge triggers a new recompute.">
+</picture>
+
+Two things put work in front of the audit on a timer, both in the v2 service:
+
+- A connector with a `schedule` (a cron expression, or a shorthand such as `@weekly`) syncs on that schedule and queues an ingest job for each item that changed.
+- With `telemetry.auto_reverify: true`, each demand recompute (every 5 minutes by default) queues a `reverify` job for every hot, non-canonical page that is due a re-check, at most once per page per `stale_after_days_hot` window.
+
+Either way the job ends as a proposal, the configured channels (Slack, email, a GitHub pull request) tell a reviewer, and a person approves it.
+
+No timer audits the whole wiki. A page nobody reads raises `STALE-001` once it passes its tier threshold, and that warning is seen only the next time the audit runs for another reason.
+
 ## What it checks
 
 Check IDs are **frozen**. `agent/rules/wiki.md`, `brain.config.yaml`, and the report all reference them by ID, so they do not get renamed.
