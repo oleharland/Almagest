@@ -19,7 +19,7 @@ import { JOB_KINDS, JOB_TRIGGERS, newId, nowIso } from '../core/schemas.mjs';
 import { JobError } from './runner.mjs';
 
 const ACTIVE = ['queued', 'running'];
-const AUTOMATIC = new Set(['watch', 'schedule', 'hook', 'mcp']);
+const AUTOMATIC = new Set(['watch', 'schedule', 'hook', 'mcp', 'lookup']);
 const CLOSED_PROPOSAL = new Set(['merged', 'rejected', 'superseded']);
 const SHUTDOWN = Symbol('shutdown');
 const CANCEL = Symbol('cancel');

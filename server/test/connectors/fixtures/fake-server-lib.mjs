@@ -25,6 +25,7 @@ import {
 
 const TOOLS = [
   { name: 'list_docs', description: 'List docs changed since a time', inputSchema: { type: 'object', properties: { since: { type: 'string' }, cursor: { type: 'string' }, limit: { type: 'number' } } } },
+  { name: 'lookup_docs', description: 'Docs whose title or body contains any word of the query (live-lookup tests)', inputSchema: { type: 'object', properties: { query: { type: 'string' }, scope: { type: 'string' }, limit: { type: 'number' } } } },
   { name: 'get_doc', description: 'Get one doc', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
   { name: 'get_transcript', description: 'Transcript segments of a doc', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
   { name: 'get_rows', description: 'Rows of a doc', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
@@ -54,6 +55,12 @@ export function buildFakeServer(getState, onCall = () => {}) {
         const start = a.cursor ? Number(a.cursor) : 0;
         const page = all.slice(start, start + size).map(({ id, title, updatedAt }) => ({ id, title, updatedAt }));
         return json({ docs: page, nextCursor: start + size < all.length ? String(start + size) : null });
+      }
+      case 'lookup_docs': {
+        const words = String(a.query || '').toLowerCase().split(/\s+/).filter(Boolean);
+        const hits = (s.docs || []).filter((d) => words.some((w) => `${d.title} ${d.body}`.toLowerCase().includes(w)));
+        const size = a.limit || 100;
+        return json({ results: hits.slice(0, size).map(({ id, title, updatedAt }) => ({ id, title, updatedAt })) });
       }
       case 'get_doc': {
         const d = doc(a.id);

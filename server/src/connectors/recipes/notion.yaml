@@ -6,6 +6,10 @@
 # `notion-fetch` returns the page as Notion-flavoured markdown, which renders
 # with section markers on its headings.
 #
+# search: used by live lookup (`lookup: true` on the connector). NOT verified
+# against the real server: it calls `notion-search` with the query terms in
+# place of `select.query`. Check it with `almagest connectors search <id> <words>`.
+#
 # select:
 #   query: "Roadmap"     search text (required by the search tool)
 name: notion
@@ -19,6 +23,17 @@ list:
   version: "timestamp | last_edited_time | lastEditedTime"
   title: "title | name"
   next_cursor: "next_cursor | nextCursor"
+  where:
+    - path: type
+      not: database
+search:
+  tool: notion-search
+  args:
+    query: "{{query}}"
+  items: "results[*] | pages[*] | $[*]"
+  ref: id
+  version: "timestamp | last_edited_time | lastEditedTime"
+  title: "title | name"
   where:
     - path: type
       not: database

@@ -8,6 +8,7 @@
  *   resolve:  [{ tool, args, set: { name: <path> } }]   optional, run once per sync → {{vars.name}}
  *   list:     { tool | method | static, args, items, ref, version?, title?, commit?,
  *               next_cursor?, where?, items_regex?, max_pages? }
+ *   search:   optional, same shape as `list` minus `static` — live lookup. Adds {{query}} and {{terms}}
  *   fetch:    { tool | method, args, text?, title?, mime?, render, render_options? }
  *
  * Where a recipe comes from, in order:
@@ -69,7 +70,7 @@ export function recipeFor(connector, { repoRoot, dir = RECIPES_DIR } = {}) {
     base = readRecipeFile(file);
   }
   const inline = {};
-  for (const k of ['resolve', 'list', 'fetch']) if (connector[k] !== undefined) inline[k] = connector[k];
+  for (const k of ['resolve', 'list', 'search', 'fetch']) if (connector[k] !== undefined) inline[k] = connector[k];
   const merged = deepMerge(base, inline);
   if (Array.isArray(inline.resolve)) merged.resolve = inline.resolve;
   merged.name = merged.name || name;
@@ -96,21 +97,31 @@ function checkCall(problems, where, call, { allowStatic = false, allowNone = fal
   if (call.args !== undefined && (typeof call.args !== 'object' || Array.isArray(call.args))) problems.push(`${where}.args must be a mapping`);
 }
 
+/** The shared checks of a `list` or `search` block. */
+function checkListBlock(problems, where, block, { allowStatic }) {
+  checkCall(problems, where, block, { allowStatic });
+  if (!block.ref) problems.push(`${where}.ref is required — the provider id of each item`);
+  for (const k of ['items', 'ref', 'version', 'title', 'commit', 'mime', 'next_cursor', 'has_more']) checkPath(problems, `${where}.${k}`, block[k]);
+  for (const [i, w] of (block.where || []).entries()) {
+    if (!w || (!w.path && !w.field)) problems.push(`${where}.where[${i}] needs a path or field`);
+    if (w && !['equals', 'not', 'in', 'glob', 'not_glob'].some((op) => w[op] !== undefined)) problems.push(`${where}.where[${i}] needs equals | not | in | glob | not_glob`);
+  }
+  if (block.items_regex !== undefined) {
+    try { new RegExp(block.items_regex, 'g'); } catch (err) { problems.push(`${where}.items_regex: ${err.message}`); }
+  }
+}
+
 export function validateRecipe(recipe, connectorId = '?') {
   const problems = [];
   const list = recipe.list;
   const fetch = recipe.fetch;
   if (!list || typeof list !== 'object') problems.push('`list` is required');
-  else {
-    checkCall(problems, 'list', list, { allowStatic: true });
-    if (!list.ref) problems.push('list.ref is required — the provider id of each item');
-    for (const k of ['items', 'ref', 'version', 'title', 'commit', 'mime', 'next_cursor', 'has_more']) checkPath(problems, `list.${k}`, list[k]);
-    for (const [i, w] of (list.where || []).entries()) {
-      if (!w || (!w.path && !w.field)) problems.push(`list.where[${i}] needs a path or field`);
-      if (w && !['equals', 'not', 'in', 'glob', 'not_glob'].some((op) => w[op] !== undefined)) problems.push(`list.where[${i}] needs equals | not | in | glob | not_glob`);
-    }
-    if (list.items_regex !== undefined) {
-      try { new RegExp(list.items_regex, 'g'); } catch (err) { problems.push(`list.items_regex: ${err.message}`); }
+  else checkListBlock(problems, 'list', list, { allowStatic: true });
+  if (recipe.search !== undefined) {
+    if (!recipe.search || typeof recipe.search !== 'object' || Array.isArray(recipe.search)) problems.push('`search` must be a mapping');
+    else {
+      if (recipe.search.static !== undefined) problems.push('search cannot be `static` — it needs a tool or method that takes the query');
+      checkListBlock(problems, 'search', recipe.search, { allowStatic: false });
     }
   }
   if (!fetch || typeof fetch !== 'object') problems.push('`fetch` is required (use `fetch: { text: <path into the list item> }` when the list already carries the content)');

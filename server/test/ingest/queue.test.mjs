@@ -39,6 +39,20 @@ describe('queue: enqueue', () => {
     await t.stop();
   });
 
+  it('dedups a lookup-triggered ingest against bytes already queued, like any automatic trigger', async () => {
+    const t = await setup();
+    const ref = { kind: 'connector', id: 'drive-spec', connector: 'drive', ref: 'f1', sha256: 'b'.repeat(64), via: 'lookup' };
+    const sync = await t.ctx.ingest.enqueue({ kind: 'ingest', source: ref, trigger: 'schedule', requestedBy: 'svc:ingest' });
+    const lookup = await t.ctx.ingest.enqueue({ kind: 'ingest', source: { ...ref }, trigger: 'lookup', requestedBy: 'svc:lookup' });
+    assert.equal(lookup.id, sync.id, 'same bytes already under review → the existing job');
+    const other = await t.ctx.ingest.enqueue({ kind: 'ingest', source: { ...ref, sha256: 'c'.repeat(64) }, trigger: 'lookup', requestedBy: 'svc:lookup' });
+    assert.notEqual(other.id, sync.id);
+    assert.equal(other.trigger, 'lookup');
+    const again = await t.ctx.ingest.enqueue({ kind: 'ingest', source: { ...ref, sha256: 'c'.repeat(64) }, trigger: 'lookup', requestedBy: 'svc:lookup' });
+    assert.equal(again.id, other.id);
+    await t.stop();
+  });
+
   it('coalesces a queued revise for the same proposal; dedups drop-page on (proposal, slug)', async () => {
     const t = await setup();
     const r1 = await t.ctx.ingest.enqueue({ kind: 'revise', proposalId: 'prp_1', instructions: 'Replace the claim.', trigger: 'decision' });

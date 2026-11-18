@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 
 export const JOB_KINDS = ['ingest', 'revise', 'reverify', 'drop-page'];
 export const JOB_STATUS = ['queued', 'running', 'succeeded', 'failed', 'blocked', 'cancelled'];
-export const JOB_TRIGGERS = ['watch', 'schedule', 'manual', 'mcp', 'hook', 'decision', 'feedback', 'demand'];
+export const JOB_TRIGGERS = ['watch', 'schedule', 'manual', 'mcp', 'hook', 'decision', 'feedback', 'demand', 'lookup'];
 
 export const PROPOSAL_STATUS = ['open', 'changes_requested', 'approved', 'merged', 'merged_unaccepted', 'rejected', 'superseded', 'conflicted'];
 export const CHANGE_ACTIONS = ['create', 'update', 'delete', 'rename'];
