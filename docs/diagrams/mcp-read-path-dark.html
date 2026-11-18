@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Almagest MCP read path (dark)</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #2B2C31;
+      --color-ink:     #F4F4F5;
+      --color-muted:   #A2A3A6;
+      --color-accent:  #7B9EFF;
+      --font-sans:     'Geist Variable', 'Geist', system-ui, sans-serif;
+      --font-mono:     'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace;
+    }
+    body { font-family: var(--font-sans); background: var(--color-paper); color: var(--color-ink); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 3rem 2rem; }
+    .frame { max-width: 1200px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase; color: var(--color-muted); margin-bottom: 0.5rem; }
+    h1 { font-size: clamp(1.5rem, 2.4vw + 0.75rem, 1.75rem); font-weight: 600; letter-spacing: -0.03em; line-height: 1.15; margin-bottom: 1.5rem; }
+    svg { width: 100%; min-width: 960px; display: block; }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Sequence · Almagest</p>
+    <h1>One question answered over MCP</h1>
+    <div class="diagram-container">
+<svg viewBox="0 0 960 592" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="mcp-read-path-dark-title mcp-read-path-dark-desc">
+<title id="mcp-read-path-dark-title">One question answered over MCP</title>
+<desc id="mcp-read-path-dark-desc">Sequence of a chat asking the Almagest MCP server a question: the server reads pages from the snapshot of local main, returns sections with citation rules, records a telemetry event, and the chat can also submit a source, which only queues an ingest job for human review.</desc>
+<defs><marker id="mcp-read-path-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#A2A3A6"/></marker><marker id="mcp-read-path-dark-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7B9EFF"/></marker><marker id="mcp-read-path-dark-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#A2A3A6" stroke-width="1.2"/></marker></defs>
+<rect width="100%" height="100%" fill="#2B2C31"/>
+<line x1="112" y1="80" x2="112" y2="536" stroke="#55565B" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="328" y1="80" x2="328" y2="536" stroke="#55565B" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="528" y1="80" x2="528" y2="536" stroke="#55565B" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="712" y1="80" x2="712" y2="536" stroke="#55565B" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="856" y1="80" x2="856" y2="536" stroke="#55565B" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="40" y1="380" x2="920" y2="380" stroke="#55565B" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="40" y="374" fill="#A2A3A6" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">READ</text>
+<text x="40" y="394" fill="#A2A3A6" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">SUBMIT</text>
+<line x1="114" y1="116" x2="327" y2="116" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#mcp-read-path-dark-arrow)"/>
+<rect x="197" y="98" width="46" height="13" rx="2" fill="#2B2C31"/>
+<text x="220" y="107" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.04em">connect</text>
+<rect x="139" y="121" width="162" height="13" rx="2" fill="#2B2C31"/>
+<text x="220" y="131" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">stdio: none · HTTP: token or JWT</text>
+<line x1="114" y1="164" x2="327" y2="164" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#mcp-read-path-dark-arrow)"/>
+<rect x="182" y="146" width="76" height="13" rx="2" fill="#2B2C31"/>
+<text x="220" y="155" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.04em">ask(question)</text>
+<line x1="330" y1="212" x2="527" y2="212" stroke="#7B9EFF" stroke-width="1.4" marker-end="url(#mcp-read-path-dark-arrow-accent)"/>
+<rect x="397" y="194" width="62" height="13" rx="2" fill="#2B2C31"/>
+<text x="428" y="203" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.04em">read pages</text>
+<rect x="387" y="217" width="82" height="13" rx="2" fill="#2B2C31"/>
+<text x="428" y="227" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">local main only</text>
+<line x1="526" y1="256" x2="329" y2="256" stroke="#A2A3A6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#mcp-read-path-dark-arrow)"/>
+<rect x="402" y="238" width="52" height="13" rx="2" fill="#2B2C31"/>
+<text x="428" y="247" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.04em">sections</text>
+<line x1="326" y1="304" x2="113" y2="304" stroke="#A2A3A6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#mcp-read-path-dark-arrow)"/>
+<rect x="174" y="286" width="92" height="13" rx="2" fill="#2B2C31"/>
+<text x="220" y="295" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.04em">sections + rules</text>
+<rect x="148" y="309" width="144" height="13" rx="2" fill="#2B2C31"/>
+<text x="220" y="319" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">chat writes the cited answer</text>
+<line x1="330" y1="352" x2="711" y2="352" stroke="#A2A3A6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#mcp-read-path-dark-arrow-open)"/>
+<rect x="584" y="334" width="72" height="13" rx="2" fill="#2B2C31"/>
+<text x="620" y="343" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.04em">record event</text>
+<rect x="579" y="357" width="82" height="13" rx="2" fill="#2B2C31"/>
+<text x="620" y="367" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">every tool call</text>
+<line x1="114" y1="408" x2="327" y2="408" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#mcp-read-path-dark-arrow)"/>
+<rect x="182" y="390" width="76" height="13" rx="2" fill="#2B2C31"/>
+<text x="220" y="399" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.04em">submit_source</text>
+<rect x="163" y="413" width="114" height="13" rx="2" fill="#2B2C31"/>
+<text x="220" y="423" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">needs contributor role</text>
+<line x1="330" y1="456" x2="855" y2="456" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#mcp-read-path-dark-arrow)"/>
+<rect x="751" y="438" width="66" height="13" rx="2" fill="#2B2C31"/>
+<text x="784" y="447" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.04em">enqueue job</text>
+<rect x="750" y="461" width="68" height="13" rx="2" fill="#2B2C31"/>
+<text x="784" y="471" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">trigger: mcp</text>
+<line x1="326" y1="504" x2="113" y2="504" stroke="#A2A3A6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#mcp-read-path-dark-arrow)"/>
+<rect x="199" y="486" width="42" height="13" rx="2" fill="#2B2C31"/>
+<text x="220" y="495" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.04em">queued</text>
+<rect x="137" y="509" width="166" height="13" rx="2" fill="#2B2C31"/>
+<text x="220" y="519" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">a human reviews; no approval here</text>
+<rect x="48" y="16" width="128" height="64" rx="6" fill="#2B2C31"/>
+<rect x="48" y="16" width="128" height="64" rx="6" fill="#3E4044" stroke="#88898C" stroke-width="1"/>
+<text x="112" y="38" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Chat client</text>
+<text x="112" y="54" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Claude, Cursor, …</text>
+<text x="112" y="67" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">any MCP client</text>
+<rect x="264" y="16" width="128" height="64" rx="6" fill="#2B2C31"/>
+<rect x="264" y="16" width="128" height="64" rx="6" fill="#3E4044" stroke="#88898C" stroke-width="1"/>
+<text x="328" y="38" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Almagest MCP</text>
+<text x="328" y="54" fill="#BCBCBE" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">almagest mcp · /mcp</text>
+<text x="328" y="67" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">stdio or HTTP</text>
+<rect x="464" y="16" width="128" height="64" rx="6" fill="#2B2C31"/>
+<rect x="464" y="16" width="128" height="64" rx="6" fill="#7B9EFF" stroke="#7B9EFF" stroke-width="1"/>
+<text x="528" y="38" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Snapshot</text>
+<text x="528" y="54" fill="#1A1C21" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">local main</text>
+<text x="528" y="67" fill="#1A1C21" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">never remote or branch</text>
+<rect x="648" y="16" width="128" height="64" rx="6" fill="#2B2C31"/>
+<rect x="648" y="16" width="128" height="64" rx="6" fill="#3E4044" stroke="#88898C" stroke-width="1"/>
+<text x="712" y="38" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Telemetry</text>
+<text x="712" y="54" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">usage events</text>
+<rect x="792" y="16" width="128" height="64" rx="6" fill="#2B2C31"/>
+<rect x="792" y="16" width="128" height="64" rx="6" fill="#3E4044" stroke="#88898C" stroke-width="1"/>
+<text x="856" y="38" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Ingest queue</text>
+<text x="856" y="54" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">ends as a proposal</text>
+<text x="40" y="571" fill="#A2A3A6" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">LEGEND</text>
+<line x1="120" y1="568" x2="148" y2="568" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#mcp-read-path-dark-arrow)"/>
+<text x="156" y="571.5" fill="#A2A3A6" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Call</text>
+<line x1="212" y1="568" x2="240" y2="568" stroke="#A2A3A6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#mcp-read-path-dark-arrow)"/>
+<text x="248" y="571.5" fill="#A2A3A6" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Reply</text>
+<line x1="304" y1="568" x2="332" y2="568" stroke="#A2A3A6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#mcp-read-path-dark-arrow-open)"/>
+<text x="340" y="571.5" fill="#A2A3A6" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Event, no reply</text>
+<rect x="452" y="562" width="14" height="10" rx="2" fill="#7B9EFF" stroke="#7B9EFF" stroke-width="1"/>
+<text x="472" y="571.5" fill="#A2A3A6" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Reads reviewed main only</text>
+</svg>
+    </div>
+  </div>
+</body>
+</html>

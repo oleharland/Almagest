@@ -416,6 +416,11 @@ names there rather than editing the rules.
 
 ## Regenerating the shims
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/one-source-dark.png">
+  <img src="diagrams/one-source.png" alt="Two single sources. agent/rules/ is turned into per-harness pointer files (CLAUDE.md, AGENTS.md, .cursor/rules, GEMINI.md, Copilot instructions) by tools/agent-shims.sh, and CI fails if one drifts. tools/lib/wiki-core.mjs is the one wiki parser: it reads brain/wiki/ and both tools/audit.mjs and the Astro site call it, so the audit certifies exactly what the site renders.">
+</picture>
+
 The canonical rules live in `agent/rules/`, the routing table in
 `agent/routing.md`, the seven non-negotiables in `brain/rules-index.md`, and the
 harness table in `agent/contract.md`. Every harness-specific file is generated

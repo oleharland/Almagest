@@ -17,6 +17,11 @@ queues an ingest that ends as a proposal for a human to review. Its governance
 tools can explain proposals and hand out a confirmation link; they cannot
 approve.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/mcp-read-path-dark.png">
+  <img src="../diagrams/mcp-read-path.png" alt="Sequence diagram of a chat asking the Almagest MCP server a question: the server reads pages only from the snapshot of local main, returns sections and citation rules, and records a telemetry event. The chat's only write is submit_source, which queues an ingest job for human review.">
+</picture>
+
 ## Tools
 
 | Tool | Access | Does |

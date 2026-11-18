@@ -96,6 +96,11 @@ Status: `queued → running → succeeded | blocked | failed | cancelled`.
 to review (the agent found the source unchanged, or there was no diff and no
 decision) succeeds with no proposal, and the empty branch it made is deleted.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/job-lifecycle-dark.png">
+  <img src="../diagrams/job-lifecycle.png" alt="State machine of one background ingest job: queued, claimed into running, retried on a flaky failure, then checked by the service's own audit. Only exit 0 leads to a commit on its ingest branch and a proposal. Unchanged, blocked, failed and cancelled jobs each end in a visible status, and main is never touched.">
+</picture>
+
 **Retries.** A failure is retried (up to `max_attempts`) when it is the kind of
 thing that flakes: the driver crashed or timed out, the run report was missing
 or invalid, a proposal could not be loaded. A failure the runner *found* is not

@@ -11,6 +11,11 @@ token-set clusters. Every number can be recomputed by hand from the events
 `explain()` names, and every effect it has on governance can be traced back to
 those events.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/demand-loop-dark.png">
+  <img src="../diagrams/demand-loop.png" alt="A loop in which requests to the brain are recorded as events and scored into a demand ranking. Hot pages get stricter approval and a re-verify queue, and unanswered questions become a gap list. Both feed review and merge, which updates the wiki pages people read next and triggers a recompute.">
+</picture>
+
 Code: `server/src/telemetry/`. Contract: `docs/v2/spec.md` → *Telemetry and
 demand*. Audit side: `tools/lib/checks-demand.mjs`, `docs/audit.md` →
 *Demand*.

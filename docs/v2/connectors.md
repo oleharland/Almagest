@@ -15,6 +15,11 @@ of three routes. See [Adding any MCP server](#adding-any-mcp-server).
 
 ## How it fits together
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/connector-flow-dark.png">
+  <img src="../diagrams/connector-flow.png" alt="Flow diagram: the Almagest service fetches an item from any MCP server, renders and fingerprints it, compares the digest with the manifest on main, and hands a new or changed item to an ingest job that commits a snapshot. The agent only reads that committed snapshot to write cited pages, and the audit re-hashes it.">
+</picture>
+
 ```
 MCP server ──list──▶ items (ref, version, title)
            ──fetch─▶ one item ──render──▶ text with === markers ===

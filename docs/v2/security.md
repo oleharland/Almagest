@@ -11,6 +11,11 @@ approved the exact version (headSha) they were shown.** Agents (the headless
 ingest agent and every chat connected over MCP) can never approve. No profile
 and no setting relaxes this.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/trust-boundaries-dark.png">
+  <img src="../diagrams/trust-boundaries.png" alt="Trust boundaries on the way to main: the sandboxed ingest agent and chats or API tokens can never approve and are refused at the service boundary. A person with an approver role approves one exact headSha, the service runs its own path check and audit, and only that approved, audited merge reaches main. An unrestricted shell can still reach .git and the service's secrets, which only OS-level separation closes.">
+</picture>
+
 ## What enforces it
 
 | Layer | Mechanism | Where |

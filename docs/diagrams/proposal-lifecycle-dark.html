@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Proposal lifecycle</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #2B2C31;
+      --color-ink:     #F4F4F5;
+      --color-muted:   #A2A3A6;
+      --color-accent:  #7B9EFF;
+      --font-sans:     'Geist Variable', 'Geist', system-ui, sans-serif;
+      --font-mono:     'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1200px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-sans);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 1.75rem);
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 960px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">State machine · Almagest</p>
+    <h1>The life of a proposal</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="proposal-lifecycle-dark-title proposal-lifecycle-dark-desc">
+        <title id="proposal-lifecycle-dark-title">Proposal lifecycle</title>
+        <desc id="proposal-lifecycle-dark-desc">State machine of one governance proposal: an agent submits it as open; only a signed-in person approving the headSha they saw, followed by the service re-running the audit, moves it to merged; reviewers can request changes, merges can clash, and proposals can be turned down, superseded or merged on GitHub without being accepted.</desc>
+        <defs>
+          <marker id="proposal-lifecycle-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#A2A3A6"/></marker>
+          <marker id="proposal-lifecycle-dark-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7B9EFF"/></marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#2B2C31"/>
+        <text x="480" y="36" fill="#BCBCBE" font-size="14" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle" font-style="italic">Only a person can approve, and only the version they saw.</text>
+        <text x="52" y="76" fill="#A2A3A6" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.18em">SENT BACK TO THE AGENT</text>
+        <line x1="52" y1="84" x2="228" y2="84" stroke="rgba(244,244,245,0.13)" stroke-width="1"/>
+        <text x="392" y="76" fill="#A2A3A6" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.18em">IN REVIEW</text>
+        <line x1="392" y1="84" x2="568" y2="84" stroke="rgba(244,244,245,0.13)" stroke-width="1"/>
+        <text x="732" y="76" fill="#A2A3A6" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.18em">OUTCOMES</text>
+        <line x1="732" y1="84" x2="908" y2="84" stroke="rgba(244,244,245,0.13)" stroke-width="1"/>
+        <path d="M 480,110 V 140" fill="none" stroke="#A2A3A6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#proposal-lifecycle-dark-arrow)"/>
+        <path d="M 568,168 H 732" fill="none" stroke="#7B9EFF" stroke-width="1.4" marker-end="url(#proposal-lifecycle-dark-arrow-accent)"/>
+        <path d="M 392,232 H 228" fill="none" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#proposal-lifecycle-dark-arrow)"/>
+        <path d="M 228,248 H 392" fill="none" stroke="#A2A3A6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#proposal-lifecycle-dark-arrow)"/>
+        <path d="M 392,328 H 228" fill="none" stroke="#A2A3A6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#proposal-lifecycle-dark-arrow)"/>
+        <path d="M 228,344 H 392" fill="none" stroke="#A2A3A6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#proposal-lifecycle-dark-arrow)"/>
+        <path d="M 568,248 H 732" fill="none" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#proposal-lifecycle-dark-arrow)"/>
+        <path d="M 568,328 H 732" fill="none" stroke="#A2A3A6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#proposal-lifecycle-dark-arrow)"/>
+        <path d="M 568,408 H 732" fill="none" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#proposal-lifecycle-dark-arrow)"/>
+        <rect x="508.0" y="119" width="84" height="12" rx="2" fill="#2B2C31"/>
+        <text x="550" y="128" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">AGENT SUBMITS</text>
+        <rect x="606.0" y="150" width="88" height="12" rx="2" fill="#2B2C31"/>
+        <text x="650" y="159" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">HUMAN APPROVES</text>
+        <text x="650" y="186" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">on the headSha they saw,</text>
+        <text x="650" y="199" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">then the audit re-runs</text>
+        <rect x="266.0" y="214" width="88" height="12" rx="2" fill="#2B2C31"/>
+        <text x="310" y="223" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">REQUEST CHANGE</text>
+        <rect x="268.0" y="254" width="84" height="12" rx="2" fill="#2B2C31"/>
+        <text x="310" y="263" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">AGENT REVISES</text>
+        <rect x="272.0" y="310" width="76" height="12" rx="2" fill="#2B2C31"/>
+        <text x="310" y="319" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">MERGE FAILS</text>
+        <rect x="268.0" y="350" width="84" height="12" rx="2" fill="#2B2C31"/>
+        <text x="310" y="359" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">AGENT REDOES</text>
+        <rect x="616.0" y="230" width="68" height="12" rx="2" fill="#2B2C31"/>
+        <text x="650" y="239" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">TURN DOWN</text>
+        <rect x="606.0" y="310" width="88" height="12" rx="2" fill="#2B2C31"/>
+        <text x="650" y="319" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NEWER PROPOSAL</text>
+        <rect x="607.0" y="390" width="86" height="12" rx="2" fill="#2B2C31"/>
+        <text x="650" y="399" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">REFUSED MERGE</text>
+        <circle cx="480" cy="104" r="6" fill="#F4F4F5"/>
+        <rect x="392" y="140" width="176" height="296" rx="6" fill="#2B2C31"/>
+        <rect x="392" y="140" width="176" height="296" rx="6" fill="#3E4044" stroke="#88898C" stroke-width="1"/>
+        <text x="408" y="160" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">Waiting for review</text>
+        <text x="408" y="174" fill="#BCBCBE" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">open</text>
+        <line x1="408" y1="186" x2="552" y2="186" stroke="rgba(244,244,245,0.13)" stroke-width="0.8"/>
+        <text x="408" y="212" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">Approval is pinned to the</text>
+        <text x="408" y="225" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">headSha the reviewer saw.</text>
+        <text x="408" y="250" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">A new commit voids</text>
+        <text x="408" y="263" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">every earlier approval.</text>
+        <text x="408" y="288" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">An agent never approves.</text>
+        <rect x="52" y="212" width="176" height="56" rx="6" fill="#2B2C31"/>
+        <rect x="52" y="212" width="176" height="56" rx="6" fill="#3E4044" stroke="#88898C" stroke-width="1"/>
+        <text x="140.0" y="231" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Being revised</text>
+        <text x="140.0" y="245" fill="#BCBCBE" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">changes_requested</text>
+        <text x="140.0" y="258" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">reviewer asked for changes</text>
+        <rect x="52" y="308" width="176" height="56" rx="6" fill="#2B2C31"/>
+        <rect x="52" y="308" width="176" height="56" rx="6" fill="#3E4044" stroke="#88898C" stroke-width="1"/>
+        <text x="140.0" y="327" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Clash, being redone</text>
+        <text x="140.0" y="341" fill="#BCBCBE" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">conflicted</text>
+        <text x="140.0" y="354" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">main moved, or audit failed</text>
+        <rect x="732" y="140" width="176" height="56" rx="6" fill="#2B2C31"/>
+        <rect x="732" y="140" width="176" height="56" rx="6" fill="#7B9EFF" stroke="#7B9EFF" stroke-width="1"/>
+        <text x="820.0" y="159" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Merged</text>
+        <text x="820.0" y="173" fill="#1A1C21" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">merged</text>
+        <text x="820.0" y="186" fill="#1A1C21" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">added to the knowledge base</text>
+        <rect x="732" y="220" width="176" height="56" rx="6" fill="#2B2C31"/>
+        <rect x="732" y="220" width="176" height="56" rx="6" fill="#3E4044" stroke="#F4F4F5" stroke-width="1.5"/>
+        <text x="820.0" y="239" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Turned down</text>
+        <text x="820.0" y="253" fill="#BCBCBE" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">rejected</text>
+        <text x="820.0" y="266" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">a person closed it</text>
+        <rect x="732" y="300" width="176" height="56" rx="6" fill="#2B2C31"/>
+        <rect x="732" y="300" width="176" height="56" rx="6" fill="#3E4044" stroke="#F4F4F5" stroke-width="1.5"/>
+        <text x="820.0" y="319" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Replaced</text>
+        <text x="820.0" y="333" fill="#BCBCBE" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">superseded</text>
+        <text x="820.0" y="346" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">newer proposal, same source</text>
+        <rect x="732" y="380" width="176" height="56" rx="6" fill="#2B2C31"/>
+        <rect x="732" y="380" width="176" height="56" rx="6" fill="#3E4044" stroke="#F4F4F5" stroke-width="1.5"/>
+        <text x="820.0" y="399" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Not accepted</text>
+        <text x="820.0" y="413" fill="#BCBCBE" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">merged_unaccepted</text>
+        <text x="820.0" y="426" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">merged on GitHub, main stays put</text>
+        <line x1="40" y1="468" x2="920" y2="468" stroke="rgba(244,244,245,0.13)" stroke-width="0.8"/>
+        <text x="40" y="496" fill="#A2A3A6" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.14em">LEGEND</text>
+        <path d="M 112,493 H 140" fill="none" stroke="#A2A3A6" stroke-width="1.2" marker-end="url(#proposal-lifecycle-dark-arrow)"/>
+        <text x="152" y="496" fill="#A2A3A6" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">a person acts</text>
+        <path d="M 256,493 H 284" fill="none" stroke="#A2A3A6" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#proposal-lifecycle-dark-arrow)"/>
+        <text x="296" y="496" fill="#A2A3A6" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">agent or service acts</text>
+        <path d="M 446,493 H 474" fill="none" stroke="#7B9EFF" stroke-width="1.4" marker-end="url(#proposal-lifecycle-dark-arrow-accent)"/>
+        <text x="486" y="496" fill="#A2A3A6" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">human approval, then audit re-run</text>
+        <rect x="690" y="488" width="14" height="10" rx="2" fill="#3E4044" stroke="#F4F4F5" stroke-width="1.5"/>
+        <text x="710" y="496" fill="#A2A3A6" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">closed without merging</text>
+        </svg>
+    </div>
+  </div>
+</body>
+</html>

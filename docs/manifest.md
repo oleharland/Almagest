@@ -2,6 +2,11 @@
 
 `brain/manifest.yaml` is a machine-readable record of every source ever ingested into a brain. It exists for one reason: **incremental re-ingest**. Before the agent does any work on a source it looks the source up in the manifest and gets one of three answers (new, unchanged, or changed), and only the first and the third cost anything.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/reingest-decision-dark.png">
+  <img src="diagrams/reingest-decision.png" alt="Flowchart: a source is checked against the manifest by sha256 first and path second. A matching sha256 is unchanged and skipped. A matching path with a different sha256 is changed and re-ingested as a diff, with the sources sha256 updated on every citing page. No match is new and fully ingested.">
+</picture>
+
 The manifest is maintained by the agent. You will rarely edit it by hand, and the only good reason to do so is repairing drift.
 
 It records two things that make a citation checkable years later: the fingerprint of the source as ingested, and, for binaries, the path and digest of the committed text sidecar the pages actually cite.

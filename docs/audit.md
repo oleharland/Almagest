@@ -4,6 +4,11 @@
 
 It is a deterministic Node program, not the agent reading pages, so the same twenty checks run identically on your laptop, in the agent's ingest loop, and in CI, and the exit code means the same thing in all three.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/citation-chain-dark.png">
+  <img src="diagrams/citation-chain.png" alt="A claim on wiki/retention-policy.md cites [source: q3-review, p.12]. CITE-001 and CITE-003 check the citation; CITE-002 checks that q3-review is in the page's sources; PROV-001 checks that the source path, a committed text sidecar, exists; PROV-003 and CITE-005 check the source against its manifest.yaml entry and fingerprint. The original PDF is gitignored. Whether page 12 actually says what the claim says is checked by you, in the diff review.">
+</picture>
+
 ## Why it is a program
 
 Checks written as prose in `agent/rules/wiki.md`, as an instruction to the agent to go and look, fail three ways:

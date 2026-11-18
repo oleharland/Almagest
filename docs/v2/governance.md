@@ -76,6 +76,11 @@ page “Pricing”."*
   *challenge* in `brain/canonical-challenges.md`, where a person can weigh it.
   The page itself stays as it is.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/proposal-lifecycle-dark.png">
+  <img src="../diagrams/proposal-lifecycle.png" alt="State diagram of a governance proposal: an agent submits it as open. Only a signed-in person approving the exact headSha they saw, followed by the service re-running the audit, moves it to merged. Change requests, merge clashes, turning down, replacement and refused GitHub merges lead to other states.">
+</picture>
+
 ### Approving from elsewhere
 
 - **From a chat** (Claude, ChatGPT, … via Almagest's MCP server): ask the chat

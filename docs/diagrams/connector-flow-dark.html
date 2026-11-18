@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connector flow</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #2B2C31;
+      --color-ink:     #F4F4F5;
+      --color-muted:   #BCBCBE;
+      --color-accent:  #7B9EFF;
+      --font-sans:     'Geist Variable', 'Geist', system-ui, sans-serif;
+      --font-mono:     'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1200px; width: 100%; min-width: 0; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-sans);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 1.75rem);
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 960px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Data flow · Almagest</p>
+    <h1>Connector flow</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="connector-flow-dark-title connector-flow-dark-desc">
+        <title id="connector-flow-dark-title">Connector flow</title>
+        <desc id="connector-flow-dark-desc">The Almagest service fetches an MCP server item, renders it to text and fingerprints it, compares the digest with the manifest on main, and hands a new or changed item to an ingest job; the agent only reads the committed snapshot, and the audit re-hashes it.</desc>
+        <defs>
+        <marker id="connector-flow-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#A2A3A6"/></marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#2B2C31"/>
+        <line x1="40" y1="24" x2="920" y2="24" stroke="#55565B" stroke-width="1"/>
+        <text x="52" y="64" fill="#A2A3A6" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.18em">MCP SERVER</text>
+        <text x="52" y="78" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">where the item lives</text>
+        <line x1="40" y1="112" x2="920" y2="112" stroke="#55565B" stroke-width="1"/>
+        <text x="52" y="184" fill="#A2A3A6" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.18em">SERVICE</text>
+        <text x="52" y="198" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">runs the connector</text>
+        <line x1="40" y1="264" x2="920" y2="264" stroke="#55565B" stroke-width="1"/>
+        <text x="52" y="318" fill="#A2A3A6" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.18em">AGENT</text>
+        <text x="52" y="332" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">no MCP, no network</text>
+        <line x1="40" y1="380" x2="920" y2="380" stroke="#55565B" stroke-width="1"/>
+        <text x="52" y="434" fill="#A2A3A6" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.18em">AUDIT</text>
+        <text x="52" y="448" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">code, not AI</text>
+        <line x1="152" y1="24" x2="152" y2="496" stroke="#55565B" stroke-width="1"/>
+        <path d="M 244,100 V 128" stroke="#A2A3A6" stroke-width="1.2" fill="none" marker-end="url(#connector-flow-dark-arrow)"/>
+        <rect x="252" y="106" width="76" height="12" rx="2" fill="#2B2C31"/>
+        <text x="290.0" y="115" fill="#BCBCBE" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">LIST · FETCH</text>
+        <path d="M 320,164 H 360" stroke="#A2A3A6" stroke-width="1.2" fill="none" marker-end="url(#connector-flow-dark-arrow)"/>
+        <path d="M 512,164 H 552" stroke="#A2A3A6" stroke-width="1.2" fill="none" marker-end="url(#connector-flow-dark-arrow)"/>
+        <path d="M 704,164 H 744" stroke="#A2A3A6" stroke-width="1.2" fill="none" marker-end="url(#connector-flow-dark-arrow)"/>
+        <path d="M 628,200 V 232" stroke="#A2A3A6" stroke-width="1.2" fill="none" stroke-dasharray="5,4" marker-end="url(#connector-flow-dark-arrow)"/>
+        <rect x="636" y="210" width="60" height="12" rx="2" fill="#2B2C31"/>
+        <text x="666.0" y="219" fill="#BCBCBE" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">UNCHANGED</text>
+        <path d="M 820,200 V 276" stroke="#A2A3A6" stroke-width="1.2" fill="none" marker-end="url(#connector-flow-dark-arrow)"/>
+        <rect x="832" y="234" width="72" height="12" rx="2" fill="#2B2C31"/>
+        <text x="868.0" y="243" fill="#BCBCBE" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">MATERIALIZE</text>
+        <path d="M 720,316 H 600" stroke="#A2A3A6" stroke-width="1.2" fill="none" marker-end="url(#connector-flow-dark-arrow)"/>
+        <rect x="638.0" y="294" width="44" height="12" rx="2" fill="#2B2C31"/>
+        <text x="660.0" y="303" fill="#BCBCBE" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">READS</text>
+        <path d="M 820,356 V 420" stroke="#A2A3A6" stroke-width="1.2" fill="none" marker-end="url(#connector-flow-dark-arrow)"/>
+        <rect x="832" y="382" width="52" height="12" rx="2" fill="#2B2C31"/>
+        <text x="858.0" y="391" fill="#BCBCBE" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">RE-HASH</text>
+        <rect x="168" y="36" width="152" height="64" rx="6" fill="#2B2C31"/>
+        <rect x="168" y="36" width="152" height="64" rx="6" fill="#2B2C31" stroke="#88898C" stroke-width="1"/>
+        <text x="244.0" y="58" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">MCP server item</text>
+        <text x="244.0" y="74" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Drive · Granola · Linear</text>
+        <text x="244.0" y="87" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Slack · GitHub · …</text>
+        <rect x="168" y="128" width="152" height="72" rx="6" fill="#2B2C31"/>
+        <rect x="168" y="128" width="152" height="72" rx="6" fill="#3E4044" stroke="#88898C" stroke-width="1"/>
+        <text x="244.0" y="150" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Fetch the item</text>
+        <text x="244.0" y="166" fill="#BCBCBE" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">recipes/&lt;name&gt;.yaml</text>
+        <text x="244.0" y="179" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">MCP client, read-only</text>
+        <rect x="360" y="128" width="152" height="72" rx="6" fill="#2B2C31"/>
+        <rect x="360" y="128" width="152" height="72" rx="6" fill="#3E4044" stroke="#88898C" stroke-width="1"/>
+        <text x="436.0" y="150" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Render and hash</text>
+        <text x="436.0" y="166" fill="#BCBCBE" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">=== section: … ===</text>
+        <text x="436.0" y="179" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">sha256 of every byte</text>
+        <rect x="552" y="128" width="152" height="72" rx="6" fill="#2B2C31"/>
+        <rect x="552" y="128" width="152" height="72" rx="6" fill="#3E4044" stroke="#88898C" stroke-width="1"/>
+        <text x="628.0" y="150" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Compare with main</text>
+        <text x="628.0" y="166" fill="#BCBCBE" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">manifest.yaml</text>
+        <text x="628.0" y="179" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">same sha256 = unchanged</text>
+        <rect x="744" y="128" width="152" height="72" rx="6" fill="#2B2C31"/>
+        <rect x="744" y="128" width="152" height="72" rx="6" fill="#3E4044" stroke="#88898C" stroke-width="1"/>
+        <text x="820.0" y="150" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Ingest job</text>
+        <text x="820.0" y="166" fill="#BCBCBE" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">SourceRef · staged copy</text>
+        <text x="820.0" y="179" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">new or changed only</text>
+        <rect x="720" y="276" width="200" height="80" rx="6" fill="#2B2C31"/>
+        <rect x="720" y="276" width="200" height="80" rx="6" fill="#7B9EFF" stroke="#7B9EFF" stroke-width="1"/>
+        <text x="820.0" y="298" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Committed snapshot</text>
+        <text x="820.0" y="314" fill="#1A1C21" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">brain/raw/extracted/</text>
+        <text x="820.0" y="327" fill="#1A1C21" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">&lt;id&gt;/&lt;slug&gt;.txt</text>
+        <text x="820.0" y="340" fill="#1A1C21" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">the text pages cite</text>
+        <rect x="432" y="280" width="168" height="72" rx="6" fill="#2B2C31"/>
+        <rect x="432" y="280" width="168" height="72" rx="6" fill="#3E4044" stroke="#88898C" stroke-width="1"/>
+        <text x="516.0" y="302" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Cited wiki page</text>
+        <text x="516.0" y="318" fill="#BCBCBE" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">[source: id, §section]</text>
+        <text x="516.0" y="331" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">copies the SourceRef sha256</text>
+        <rect x="720" y="420" width="200" height="64" rx="6" fill="#2B2C31"/>
+        <rect x="720" y="420" width="200" height="64" rx="6" fill="#3E4044" stroke="#88898C" stroke-width="1"/>
+        <text x="820.0" y="442" fill="#F4F4F5" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Audit checks it</text>
+        <text x="820.0" y="458" fill="#BCBCBE" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">CITE-005 · PROV-003</text>
+        <text x="820.0" y="471" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">snapshot hash · entry fields</text>
+        <text x="168" y="304" fill="#F4F4F5" font-size="14" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-style="italic">The agent has no MCP,</text>
+        <text x="168" y="324" fill="#F4F4F5" font-size="14" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-style="italic">no network, and never</text>
+        <text x="168" y="344" fill="#F4F4F5" font-size="14" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-style="italic">computes the fingerprint.</text>
+        <line x1="40" y1="512" x2="920" y2="512" stroke="#55565B" stroke-width="0.8"/>
+        <text x="40" y="540" fill="#A2A3A6" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.14em">LEGEND</text>
+        <rect x="120" y="531" width="14" height="10" rx="2" fill="#2B2C31" stroke="#88898C" stroke-width="1"/>
+        <text x="140" y="539.5" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">Provider item</text>
+        <rect x="256" y="531" width="14" height="10" rx="2" fill="#3E4044" stroke="#88898C" stroke-width="1"/>
+        <text x="276" y="539.5" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">Step</text>
+        <rect x="324" y="531" width="14" height="10" rx="2" fill="#7B9EFF" stroke="#7B9EFF" stroke-width="1"/>
+        <text x="344" y="539.5" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">What citations point at</text>
+        <path d="M 520,536 H 548" stroke="#A2A3A6" stroke-width="1.2" fill="none" marker-end="url(#connector-flow-dark-arrow)"/>
+        <text x="556" y="539.5" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">Data flow</text>
+        <path d="M 640,536 H 668" stroke="#A2A3A6" stroke-width="1.2" stroke-dasharray="5,4" fill="none" marker-end="url(#connector-flow-dark-arrow)"/>
+        <text x="676" y="539.5" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">Stops, nothing written</text>
+        </svg>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,5 +1,12 @@
 # Getting Started
 
+One ingest from start to finish. The steps below set it up.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/ingest-flow-dark.png">
+  <img src="diagrams/ingest-flow.png" alt="Swimlane of one ingest. You drop a source into brain/raw/. The agent fingerprints it against the manifest (unchanged sources are skipped), extracts a page-marked text sidecar, and drafts pages on an ingest branch, stopping to ask you about contradictions, canonical conflicts, deletions, merges, renames and low-confidence pages. tools/audit.mjs checks every page before the commit; exit 1 sends it back to the agent, exit 0 lets it commit to the branch. You review the diff and merge, which is the only way anything reaches the cited wiki pages on main.">
+</picture>
+
 ## 1. Fork or clone
 
 ```bash

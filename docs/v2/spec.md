@@ -19,6 +19,11 @@ adds five things:
 | 4 | Almagest as MCP | `server/src/mcp/` | Read the brain from any chat, local (stdio) or remote (HTTP) |
 | 5 | Telemetry | `server/src/telemetry/` | Every request tracked; demand drives review strictness, re-verification and gap discovery |
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/service-flow-dark.png">
+  <img src="../diagrams/service-flow.png" alt="Swimlane of the service loop around the same repo. Files dropped in brain/raw/, connectors that sync any MCP server (Drive, Granola, Linear, Slack…) on a schedule, and a chat's submit_source become jobs; each source is fingerprinted with sha256 and unchanged ones are skipped. A headless agent ingests each job in its own worktree on an ingest/&lt;source&gt;-&lt;sha7&gt; branch, with no git, network or MCP access. The service then runs its own copy of tools/audit.mjs; exit 1 means no commit, otherwise it commits to the branch. The branch becomes a proposal in the review inbox, with each new or changed fact beside the passage it cites and questions as decision cards. Only a person can approve, through the web inbox, a chat confirmation link, Slack, email or a GitHub PR; the approval is pinned to the version they saw, and an agent can never give one. The service re-audits and merges into the cited wiki pages in brain/wiki/ on main, which any chat (Claude, Cursor, …) searches and cites through the Almagest MCP server. Every request is recorded as demand: hot pages get stricter approval and are re-verified sooner, unanswered questions become a gap list, and both feed back into review.">
+</picture>
+
 **Git stays the store.** `brain/wiki/` on `main` is still the source of truth;
 the service holds no second copy of the knowledge. The service's own database
 holds only operational state: jobs, proposals, decisions, approvals, events,
