@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Re-ingest decision</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #F4F4F5;
+      --color-ink:     #1A1C21;
+      --color-muted:   #3E4044;
+      --color-accent:  #3B5DEF;
+      --font-sans:     'Geist Variable', 'Geist', system-ui, sans-serif;
+      --font-mono:     'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1200px; width: 100%; min-width: 0; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-sans);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 1.75rem);
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 960px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Flowchart · Almagest</p>
+    <h1>Re-ingest decision</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 440" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="reingest-decision-title reingest-decision-desc">
+        <title id="reingest-decision-title">Re-ingest decision</title>
+        <desc id="reingest-decision-desc">A source is matched against brain/manifest.yaml by sha256 first and path second: a matching sha256 is unchanged and skipped, a matching path with a different sha256 is changed and re-ingested as a diff, and no match is new and fully ingested.</desc>
+        <defs>
+        <marker id="reingest-decision-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#6F7074"/></marker>
+        <marker id="reingest-decision-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#3B5DEF"/></marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#F4F4F5"/>
+        <path d="M 200,100 H 300" stroke="#6F7074" stroke-width="1.2" fill="none" marker-end="url(#reingest-decision-arrow)"/>
+        <path d="M 500,100 H 620" stroke="#6F7074" stroke-width="1.2" fill="none" marker-end="url(#reingest-decision-arrow)"/>
+        <rect x="546" y="81" width="28" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="560" y="90" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">YES</text>
+        <path d="M 400,150 V 218" stroke="#6F7074" stroke-width="1.2" fill="none" marker-end="url(#reingest-decision-arrow)"/>
+        <rect x="412" y="175" width="24" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="424" y="184" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+        <path d="M 300,268 H 240" stroke="#6F7074" stroke-width="1.2" fill="none" marker-end="url(#reingest-decision-arrow)"/>
+        <rect x="256" y="249" width="28" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="270" y="258" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+        <path d="M 500,268 H 620" stroke="#3B5DEF" stroke-width="1.5" fill="none" marker-end="url(#reingest-decision-arrow-accent)"/>
+        <rect x="546" y="249" width="28" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="560" y="258" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">YES</text>
+        <text x="400" y="36" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">remote: match id, then compare commit</text>
+        <rect x="40" y="76" width="160" height="48" rx="24" fill="#F4F4F5"/>
+        <rect x="40" y="76" width="160" height="48" rx="24" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="120" y="97" fill="#1A1C21" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle" font-weight="600">Source seen</text>
+        <text x="120" y="111" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">in brain/raw/</text>
+        <path d="M 400,50 L 500,100 L 400,150 L 300,100 Z" fill="#F4F4F5"/>
+        <path d="M 400,50 L 500,100 L 400,150 L 300,100 Z" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="400" y="97" fill="#1A1C21" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle" font-weight="600"><tspan font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" font-weight="500">sha256</tspan> matches</text>
+        <text x="400" y="113" fill="#1A1C21" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle" font-weight="600">an entry?</text>
+        <path d="M 400,218 L 500,268 L 400,318 L 300,268 Z" fill="#F4F4F5"/>
+        <path d="M 400,218 L 500,268 L 400,318 L 300,268 Z" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="400" y="265" fill="#1A1C21" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle" font-weight="600"><tspan font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" font-weight="500">path</tspan> matches</text>
+        <text x="400" y="281" fill="#1A1C21" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle" font-weight="600">an entry?</text>
+        <rect x="620" y="44" width="300" height="112" rx="6" fill="#F4F4F5"/>
+        <rect x="620" y="44" width="300" height="112" rx="6" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="636" y="68" fill="#1A1C21" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-weight="600">Unchanged</text>
+        <text x="636" y="84" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">skipped: wiki and entry untouched</text>
+        <text x="636" y="106" fill="#3E4044" font-size="10" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">sha256 / commit identical</text>
+        <text x="636" y="120" fill="#3E4044" font-size="10" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">no-op line in log.md</text>
+        <text x="636" y="140" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">new path, same hash = rename (previous_paths)</text>
+        <rect x="40" y="224" width="200" height="88" rx="6" fill="#F4F4F5"/>
+        <rect x="40" y="224" width="200" height="88" rx="6" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="56" y="248" fill="#1A1C21" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-weight="600">New</text>
+        <text x="56" y="264" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">no entry has this sha256 or path</text>
+        <text x="56" y="286" fill="#3E4044" font-size="10" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">full ingest</text>
+        <text x="56" y="300" fill="#3E4044" font-size="10" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">new manifest entry</text>
+        <rect x="620" y="208" width="300" height="120" rx="6" fill="#F4F4F5"/>
+        <rect x="620" y="208" width="300" height="120" rx="6" fill="#EEF1FE" stroke="#3B5DEF" stroke-width="1.5"/>
+        <text x="636" y="232" fill="#1A1C21" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-weight="600">Changed</text>
+        <text x="636" y="248" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">same source, different sha256: diff re-ingest</text>
+        <text x="636" y="270" fill="#3E4044" font-size="10" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">byte diff vs committed sidecar</text>
+        <text x="636" y="284" fill="#3E4044" font-size="10" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">entry updated in place</text>
+        <text x="636" y="298" fill="#3E4044" font-size="10" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">sources[].sha256 on every citing page</text>
+        <text x="636" y="316" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">left stale, CITE-005 keeps failing</text>
+        <text x="480" y="366" fill="#3E4044" font-size="14" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle" font-style="italic">Filename never decides. An edited file keeps its name; only its fingerprint gives it away.</text>
+        <line x1="40" y1="392" x2="920" y2="392" stroke="rgba(26,28,33,0.10)" stroke-width="0.8"/>
+        <text x="40" y="420" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.14em">LEGEND</text>
+        <path d="M 120,417 H 148" stroke="#3B5DEF" stroke-width="1.5" fill="none" marker-end="url(#reingest-decision-arrow-accent)"/>
+        <text x="160" y="420" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">edited source: the case the manifest exists for</text>
+        <path d="M 424,417 H 452" stroke="#6F7074" stroke-width="1.2" fill="none" marker-end="url(#reingest-decision-arrow)"/>
+        <text x="464" y="420" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">other branches</text>
+        <text x="600" y="420" fill="#3E4044" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">mono</text>
+        <text x="632" y="420" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">= manifest field, path or audit ID</text>
+        </svg>
+    </div>
+  </div>
+</body>
+</html>

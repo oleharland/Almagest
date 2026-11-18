@@ -9,10 +9,10 @@ writes straight to `main` produces work nobody ever reads a diff of. Both are
 harness properties, not model properties. The contract is written against
 capabilities for that reason.
 
-Claude Code is the reference harness — the one the framework was built in. Codex
+Claude Code is the reference harness, the one the framework was built in. Codex
 has additionally been given a source file and write permission with no human
 present: it read the rules, proposed pages, and stopped for approval without
-writing anything. That run predates the branch model — it verified the old
+writing anything. That run predates the branch model: it verified the old
 in-session gate, not the branch-and-commit flow. Antigravity has been watched read the repo instructions and
 follow the routing table, and nothing further. Every other harness on this page
 is described from its documented behaviour.
@@ -46,12 +46,12 @@ on an `ingest/<source-slug>-<sha7>` branch and commits there; `main` moves only
 when a person merges a diff they have read. No rule file, no hook, and no config
 flag enforces that last step, and there is no auto-merge mode.
 
-This replaces the old gate — an in-session "yes" before every write. The reason
-it changed is worth stating, because it reads at first like a loosening.
+This replaces the old gate, an in-session "yes" before every write. It reads at
+first like a loosening, so the reason for the change is worth stating.
 
 The old gate protected against *the agent writing without permission*. That was
 never the dangerous failure. The dangerous failure is the agent writing
-something **plausible and wrong**, and a human reading a terminal summary box at
+something plausible and wrong, and a human reading a terminal summary box at
 11pm and typing `y`. A batch summary is the weakest review surface available: it
 is the agent's own account of its own work, compressed by the same model that
 did the work. A diff is the strongest surface there is, and this project has
@@ -83,34 +83,34 @@ meet a contradiction, so these are never written to the branch at all:
 **What a harness must therefore be able to do:** create a branch, `git add`,
 `git commit`. What it must *not* be able to do: push to `main`, merge its own
 pull request, or run with a `--auto-merge` equivalent. A harness that writes
-into a working tree on `main` fails this requirement — not because it wrote
-without asking, but because there is then no diff for anyone to read.
+into a working tree on `main` fails this requirement, not because it wrote
+without asking but because there is then no diff for anyone to read.
 
 **Nothing mechanically enforces that, and you should know why.** CI carries a
 *Wiki write gate* job that looks for commits touching `brain/wiki/` on `main`'s
-first-parent line with no merge above them. It is marked `continue-on-error` —
-**advisory, never blocking** — because a squash merge produces byte-for-byte the
+first-parent line with no merge above them. It is marked `continue-on-error`,
+**advisory, never blocking**, because a squash merge produces byte-for-byte the
 same shape as a direct push, so blocking on it would reject legitimate reviewed
 merges. It will tell you that something looks like a direct write; it cannot
 tell you that it was one. The real enforcement is branch protection on your
 remote and not wiring your agent to merge. Configure both; the job is a
 smoke alarm, not a lock.
 
-Unattended runs are now supported, and this is what makes remote sources
+Unattended runs are supported, and this is what makes remote sources
 ([Remote Sources](remote-sources.md)) worth having: a nightly sync that ingests
 onto a branch and leaves you a diff is a sync. One you have to sit and watch is
 a manual ingest with extra network.
 
 ### The Node requirement
 
-`tools/audit.mjs` needs **Node 22+**. This is a real new dependency — until now
+`tools/audit.mjs` needs **Node 22+**. This is a real new dependency: until now
 `shasum` was the only hard tooling requirement, and the framework's bash-only
 posture was a feature.
 
-The trade, stated rather than hidden: the audit has to parse frontmatter and
+The trade: the audit has to parse frontmatter and
 wikilinks *exactly* the way the site does, or it will certify pages the site
 then renders differently, and the audit becomes a second opinion instead of a
-check. The alternative was a second parser in awk — two implementations of the
+check. The alternative was a second parser in awk, two implementations of the
 same grammar, drifting apart at their own pace. That is the precise failure
 `tools/agent-shims.sh` exists to prevent, and importing it into the correctness
 tool would have been perverse.
@@ -126,7 +126,7 @@ tools/lib/wiki-core.mjs      ← the only implementation. Plain ESM,
                                     Parses nothing.
 ```
 
-Note the direction — the site wraps the core, not the reverse. It has to be
+Note the direction: the site wraps the core, not the reverse. It has to be
 `.mjs` rather than `.ts` for exactly the reason this section exists: bare Node
 22 will not import TypeScript, so a `.ts` core could not be the audit's loader
 at all.
@@ -143,16 +143,16 @@ Scope, so the constraint is not over-read:
 | `benchmarks/` | bash + coreutils — the no-language-runtime constraint still holds there, deliberately | nothing |
 
 **`cd site && npm install && npm run build` still works on a fresh clone, with
-no root install.** That is a deliberate property, not an accident.
+no root install.** That is deliberate.
 `wiki-core.mjs` sits above both package roots, so a bare `import 'gray-matter'`
 inside it would resolve against the *repo* root and break exactly that command.
 It therefore imports no packages at all: `gray-matter` and `marked` are passed
 into `loadWiki` by whichever caller is running. The CI `site` job deliberately
 skips the root `npm ci` so the property keeps being tested rather than merely
-believed. If you extend the core, add a parameter — never an import.
+believed. If you extend the core, add a parameter, never an import.
 
 If Node is unavailable in your environment, everything except the audit still
-runs — but you lose the mechanical half of non-negotiables 2 and 4, and with it
+runs, but you lose the mechanical half of non-negotiables 2 and 4, and with it
 the claim in this repo's tagline. Run the audit somewhere else (CI does) rather
 than treating it as optional.
 
@@ -170,20 +170,20 @@ Harnesses pick up repository rules in one of two ways.
 
 A harness that reads nested `AGENTS.md` files sits between the two: `brain/AGENTS.md`
 is a generated reader pointer, so opening anything under `brain/` brings the
-query protocol with it — the same thing `brain/CLAUDE.md` does for Claude Code.
+query protocol with it, the same thing `brain/CLAUDE.md` does for Claude Code.
 It covers reading only. Ingest and wiki writes still route by instruction.
 
 ### How the weak path degrades, exactly
 
 On a weak harness the always-on file carries three things:
 
-- the **routing table** — which rule file to read before which operation
+- the **routing table**: which rule file to read before which operation
 - the **seven non-negotiables**, inline. They are short and too important to be
   a pointer.
 - a line naming [`agent/contract.md`](../agent/contract.md)
 
 It does not carry the rules themselves. Those stay in `agent/rules/`, in one
-copy. A second copy drifts, and then you have two rulebooks that disagree — the
+copy. A second copy drifts, and then you have two rulebooks that disagree, the
 failure this whole design exists to prevent.
 
 What you lose: **guaranteed loading**. Routing becomes an instruction, and an
@@ -191,9 +191,9 @@ instruction can be skipped when the context is long or the request is urgent.
 
 What you keep: the correct rules, one copy of them, the same seven
 non-negotiables in front of the agent at all times, and `tools/audit.mjs`
-downstream of all of it — a page written without the rules usually fails a
+downstream of all of it: a page written without the rules usually fails a
 check, and a failing check blocks the commit. The audit is not a substitute for
-loading the rules, but it is a backstop the old design did not have.
+loading the rules, but it is a backstop.
 
 Mitigations, in order of effectiveness:
 
@@ -202,7 +202,7 @@ Mitigations, in order of effectiveness:
 2. Check the first proposal against the rule file yourself. Once per harness is
    usually enough to tell whether it read it.
 3. Read the branch diff before merging, and run `tools/audit.mjs` yourself if
-   the run did not. A branch you do not merge costs nothing — `git branch -D` is
+   the run did not. A branch you do not merge costs nothing: `git branch -D` is
    the whole cleanup.
 
 ## Known-good harnesses
@@ -223,7 +223,7 @@ The table above is generated from `agent/contract.md` by `tools/agent-shims.sh`.
 Edit it there.
 
 **Untested** means the shim files are generated and the setup below follows the
-harness's published behaviour — no ingest has been run on it here. **Rule
+harness's published behaviour, and no ingest has been run on it here. **Rule
 loading verified** means one step further and no more: the harness was seen to
 read the repo instructions and open the rule file the routing table named. It
 says nothing about whether it then followed the rules. Treat the first ingest on
@@ -243,8 +243,8 @@ node tools/audit.mjs    # should exit 0 on a clean brain
 
 Whatever the harness, the shape of a run is the same: it branches, writes,
 audits, commits, and stops. You read `git diff main...ingest/<branch>` and merge.
-Per-harness differences below are about rule loading and MCP, not about the gate
-— the gate is git.
+Per-harness differences below are about rule loading and MCP, not about the gate.
+The gate is git.
 
 ### Claude Code
 
@@ -257,7 +257,7 @@ claude
 Root `CLAUDE.md` loads always. `.claude/rules/brain-ingest.md` loads on
 `brain/raw/**`, `.claude/rules/brain-wiki.md` on `brain/wiki/**`, and
 `brain/CLAUDE.md` on `brain/` files. Each is a pointer; the agent reads through
-to the canonical file in `agent/rules/`. MCP servers come from `.mcp.json` —
+to the canonical file in `agent/rules/`. MCP servers come from `.mcp.json`. Run
 `/mcp` to approve them.
 
 ### Cursor
@@ -266,13 +266,13 @@ to the canonical file in `agent/rules/`. MCP servers come from `.mcp.json` —
 carry `globs:` frontmatter, so ingest and wiki rules load on path the same way
 Claude Code's do. `AGENTS.md` is read as well and supplies the routing table.
 
-MCP servers go in `.cursor/mcp.json` — the same two entries as `.mcp.json`,
+MCP servers go in `.cursor/mcp.json`, the same two entries as `.mcp.json`,
 under Cursor's own schema.
 
 ### Codex
 
 `agent.harness: codex`. Weak loading: `AGENTS.md` is the file it picks up on its
-own. Nested ones count — `brain/AGENTS.md` points at the query protocol, so
+own. Nested ones count: `brain/AGENTS.md` points at the query protocol, so
 reading from the wiki is covered. Ingest and wiki writes are not: name the rule
 file you want read in your first message.
 
@@ -299,7 +299,7 @@ MCP servers go in `~/.gemini/settings.json` under `mcpServers`.
 `~/.gemini/antigravity-cli/bin/` is a wrapper that execs it.
 
 **It is not the Gemini CLI.** Different binary, different flags, different
-config, and a different benchmark driver — `--driver antigravity`, never
+config, and a different benchmark driver: `--driver antigravity`, never
 `gemini-cli`.
 
 ```bash
@@ -308,7 +308,7 @@ agy
 
 Weak loading. It reads `AGENTS.md`; on this repo it found the routing table and
 opened `agent/rules/ingest.md` from it. Whether the file is auto-injected is
-unconfirmed — in a scratch directory holding a decoy `AGENTS.md` it reported
+unconfirmed: in a scratch directory holding a decoy `AGENTS.md` it reported
 having no project instructions, which would mean it opens the file rather than
 being handed it. Either way, name the rule file you want read in your first
 message.
@@ -316,7 +316,7 @@ message.
 MCP servers are managed through the CLI rather than a config file you edit:
 `agy mcp add`, `agy mcp list`. `agy models` prints the model names `--model`
 accepts, which is what belongs in the `antigravity` profile in
-`brain.config.yaml`. Run it — the names are not what you would guess. The
+`brain.config.yaml`. Run it; the names are not what you would guess. The
 reasoning-effort suffix is part of the model name (`gemini-3.7-flash-low`,
 `gemini-3.1-pro-high`), the list is per-account, and it is not Gemini-only: the
 account this was verified against also offered `claude-sonnet-4-6`,
@@ -324,8 +324,8 @@ account this was verified against also offered `claude-sonnet-4-6`,
 
 Three operational notes from running it here:
 
-- **It reads your home directory on startup**, before touching the project —
-  a global-config lookup. In `--print` mode that read hits the permission
+- **It reads your home directory on startup**, before touching the project
+  (a global-config lookup). In `--print` mode that read hits the permission
   check first and aborts the run if denied.
 - **Quota is enforced per account and the error is terminal**, not a retry:
   `Individual quota reached. Please upgrade your subscription to increase your
@@ -342,7 +342,7 @@ Three operational notes from running it here:
 > real: check out `ingest/<slug>-<sha7>` before invoking it, and never point it
 > at a working tree on `main`. The flag removes the harness's own prompts; it
 > does not remove the audit, the blocking cases, or your merge. What it does
-> remove is any limit on what else it may touch in the repo — so give it a
+> remove is any limit on what else it may touch in the repo, so give it a
 > worktree, not your only checkout. The benchmark driver passes the flag against
 > a disposable arena copy, which remains the safest pattern.
 
@@ -350,10 +350,10 @@ Three operational notes from running it here:
 
 `agent.harness: copilot`. Weak loading via `.github/copilot-instructions.md`.
 
-Both surfaces now qualify. The editor's agent mode proposes each edit to you.
+Both surfaces qualify. The editor's agent mode proposes each edit to you.
 The autonomous coding agent that runs on a pull request is, structurally,
-exactly the branch model: it commits to a branch and a human merges the PR —
-which is the gate, stated in GitHub's own vocabulary. Two things to confirm
+exactly the branch model: it commits to a branch and a human merges the PR,
+which is the gate stated in GitHub's own vocabulary. Two things to confirm
 before pointing it at `brain/`: that the repo does **not** have auto-merge
 enabled for its PRs, and that the audit runs as a required status check so a
 failing page cannot be merged.
@@ -408,13 +408,18 @@ agent:
 
 **Advisory, not dispatch.** Most harnesses cannot switch model mid-task. If
 yours cannot, run the whole session on the model sized for the heaviest tier it
-will hit — which for any ingest is `judgment`, because every ingest can turn up
+will hit, which for any ingest is `judgment`, because every ingest can turn up
 a contradiction.
 
 A harness not listed under `profiles` uses `generic`. Fill in your two model
 names there rather than editing the rules.
 
 ## Regenerating the shims
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/one-source-dark.png">
+  <img src="diagrams/one-source.png" alt="Two single sources. agent/rules/ is turned into per-harness pointer files (CLAUDE.md, AGENTS.md, .cursor/rules, GEMINI.md, Copilot instructions) by tools/agent-shims.sh, and CI fails if one drifts. tools/lib/wiki-core.mjs is the one wiki parser: it reads brain/wiki/ and both tools/audit.mjs and the Astro site call it, so the audit certifies exactly what the site renders.">
+</picture>
 
 The canonical rules live in `agent/rules/`, the routing table in
 `agent/routing.md`, the seven non-negotiables in `brain/rules-index.md`, and the
@@ -426,9 +431,9 @@ tools/agent-shims.sh generate   # write or refresh every shim
 tools/agent-shims.sh check      # regenerate to a temp dir and diff; exit 1 on drift
 ```
 
-Bash and coreutils only — no node, no python. That has not changed: the Node 22+
+Bash and coreutils only, with no node and no python. The Node 22+
 requirement is `tools/audit.mjs`'s, not the shim generator's. `generate` is
-idempotent — running it twice produces identical bytes, so `check` is safe in a
+idempotent: running it twice produces identical bytes, so `check` is safe in a
 pre-commit hook or CI, and it runs there alongside the audit.
 
 Twelve files: eleven generated whole, plus this page, which is hand-written with
@@ -504,7 +509,7 @@ Generated from `agent/contract.md`. Edit it there.
 | A failing audit blocks a commit | The exit code is mechanical and CI enforces it. Whether an agent honours it mid-session is unmeasured |
 | Any harness ingests correctly end to end | **Nothing.** Not measured here |
 
-No benchmark results are published for any harness, including Claude Code — see
-[Benchmarks](benchmarks.md). The harness exists; the numbers are yours to
+No benchmark results are published for any harness, including Claude Code (see
+[Benchmarks](benchmarks.md)). The harness exists; the numbers are yours to
 produce. A cross-harness comparison is the one thing that would turn the
 untested rows of the table above into measured ones.

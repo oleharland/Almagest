@@ -1,6 +1,6 @@
 # Almagest v2 — the service layer
 
-Status: **implemented** — every module below exists in `server/` and is under
+Status: **implemented**. Every module below exists in `server/` and is under
 test. This file stays the contract between the modules: a change to a contract
 defined here changes this file in the same commit. What is and is not yet
 enforced against a hostile agent is in [security.md](security.md).
@@ -8,7 +8,7 @@ enforced against a hostile agent is in [security.md](security.md).
 ## What v2 adds, and what it does not change
 
 v1 is a git repo plus rules plus an audit. Every guarantee lives in git and in
-`tools/audit.mjs`. v2 wraps that in a long-running service — `server/` — that
+`tools/audit.mjs`. v2 wraps that in a long-running service, `server/`, that
 adds five things:
 
 | # | Workstream | Module | One line |
@@ -19,6 +19,11 @@ adds five things:
 | 4 | Almagest as MCP | `server/src/mcp/` | Read the brain from any chat, local (stdio) or remote (HTTP) |
 | 5 | Telemetry | `server/src/telemetry/` | Every request tracked; demand drives review strictness, re-verification and gap discovery |
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/service-flow-dark.png">
+  <img src="../diagrams/service-flow.png" alt="Swimlane of the service loop around the same repo. Files dropped in brain/raw/, connectors that sync any MCP server (Drive, Granola, Linear, Slack…) on a schedule, and a chat's submit_source become jobs; each source is fingerprinted with sha256 and unchanged ones are skipped. A headless agent ingests each job in its own worktree on an ingest/&lt;source&gt;-&lt;sha7&gt; branch, with no git, network or MCP access. The service then runs its own copy of tools/audit.mjs; exit 1 means no commit, otherwise it commits to the branch. The branch becomes a proposal in the review inbox, with each new or changed fact beside the passage it cites and questions as decision cards. Only a person can approve, through the web inbox, a chat confirmation link, Slack, email or a GitHub PR; the approval is pinned to the version they saw, and an agent can never give one. The service re-audits and merges into the cited wiki pages in brain/wiki/ on main, which any chat (Claude, Cursor, …) searches and cites through the Almagest MCP server. Every request is recorded as demand: hot pages get stricter approval and are re-verified sooner, unanswered questions become a gap list, and both feed back into review.">
+</picture>
+
 **Git stays the store.** `brain/wiki/` on `main` is still the source of truth;
 the service holds no second copy of the knowledge. The service's own database
 holds only operational state: jobs, proposals, decisions, approvals, events,
@@ -28,7 +33,7 @@ connector cursors, the governance audit log.
 
 - *No unreviewed writes.* An approval in any channel is a **human** actor
   approving a proposal whose diff they were shown; the service then performs the
-  merge under that actor's identity. `actor.kind === 'agent'` can never approve —
+  merge under that actor's identity. `actor.kind === 'agent'` can never approve:
   enforced in code (`core/auth.mjs` → `assertCanApprove`), not in config, and
   there is no flag for it. A proposal with zero human approvals cannot merge.
 - *The audit gates.* The **runner** runs `tools/audit.mjs` on the ingest
@@ -56,7 +61,7 @@ defaults; every individual key can still be overridden.
 
 An entrepreneur runs `solo` on a laptop or a single container. An enterprise runs
 `enterprise` in its own VPC with Postgres and SSO. Nothing in the code branches on
-the profile name — the profile only fills defaults (`core/config.mjs`) — with
+the profile name; the profile only fills defaults (`core/config.mjs`), with
 one exception, marked "required" above: `enterprise` with any
 `service.auth.provider` other than `oidc` is a config error, and the service
 refuses to start (`configErrors` in `core/config.mjs`; `doctor` reports it).
@@ -90,7 +95,7 @@ server/                       its own package, like site/ — plain ESM .mjs + J
 deploy/                       Dockerfile, compose, launchd, systemd (integration phase)
 ```
 
-Why `.mjs` and not TypeScript: the same reason `tools/` is — bare Node runs it,
+Why `.mjs` and not TypeScript: the same reason `tools/` is. Bare Node runs it,
 and `tools/lib/wiki-core.mjs` is imported directly. The service **must** use
 `wiki-core.mjs` (via `loadWiki`) to read pages. There is still exactly one
 frontmatter and wikilink parser in the repo.
@@ -113,7 +118,7 @@ ctx.mcp        = await mcp.create(ctx);
 Each module exports `create(ctx)` returning its service object, and may register
 HTTP routes on `ctx.http`, subscribe to `ctx.bus`, and add CLI subcommands by
 exporting `commands` (see `bin/almagest.mjs`). A module never imports another
-module's internals — only the service object on `ctx`. Unit tests construct a
+module's internals, only the service object on `ctx`. Unit tests construct a
 `ctx` with the memory store and stub services (`server/test/helpers.mjs`).
 
 ## Entities
@@ -133,7 +138,7 @@ All entities are plain JSON objects. Ids are `<prefix>_<ulid-ish>` from
 
 Only `kind: 'human'` with role `reviewer`, `owner` or `admin` can approve. An MCP
 session is **always** an agent actor acting *on behalf of* a human
-(`actor.onBehalfOf`), even when the bearer token belongs to a human — a chat model
+(`actor.onBehalfOf`), even when the bearer token belongs to a human: a chat model
 holds that token, not the person.
 
 ### SourceRef
@@ -151,7 +156,7 @@ holds that token, not the person.
 
 A `kind: connector` ref also carries `server`, `change` (`new` | `changed` |
 `reappeared`), `snapshot` (`commit` | `ephemeral`), `label`, `tier`, and
-optionally `commit` and `supersedes` (a v1 `kind: remote` manifest id) — see
+optionally `commit` and `supersedes` (a v1 `kind: remote` manifest id). See
 `docs/v2/connectors.md` → The SourceRef.
 
 ### Job (ingest owns the lifecycle)
@@ -186,11 +191,11 @@ Dedup: enqueueing a job whose `(kind, source.id, source.sha256)` matches a
 - a source-less `reverify` dedups on `(kind, slug)`;
 - `drop-page` dedups on `(proposalId, slug)`;
 - a `revise` still **queued** for the same proposal absorbs the new
-  `instructions` (appended) instead of being collapsed or duplicated — two
+  `instructions` (appended) instead of being collapsed or duplicated: two
   decisions resolved back to back must both reach the agent;
 - an `ingest` from an automatic trigger (`watch`, `schedule`, `hook`, `mcp`)
   also returns a finished job for the same bytes whose proposal is not yet
-  merged / rejected / superseded, or that found nothing to review — a connector
+  merged / rejected / superseded, or that found nothing to review: a connector
   re-listing an item under review every 15 minutes spawns no new jobs.
   `manual` skips this: `almagest ingest <path>` is how a person forces a re-run.
 
@@ -370,7 +375,7 @@ ctx.telemetry   .reverifyQueue() → [{ slug, title, score, lastVerified, overdu
 has an open proposal (a `revise` or `drop-page` job) updates that proposal: new
 `headSha`, recomputed `changes`, `audit` and `required`. Every approval records
 the `headSha` it was given for, and **an approval only counts while it matches
-the current `headSha`** — a reviewer approves a specific diff, not a branch name
+the current `headSha`**: a reviewer approves a specific diff, not a branch name
 that can move under them.
 
 ## Config additions (`brain.config.yaml`)
@@ -466,11 +471,11 @@ telemetry:
 ## Background ingest
 Triggers → `ctx.ingest.enqueue`:
 
-- **watch** — `fs.watch` on `sources.local.path` (debounced, ignores `processed/`
+- **watch**: `fs.watch` on `sources.local.path` (debounced, ignores `processed/`
   and `extracted/`), fingerprinted with sha256 before enqueue.
-- **schedule** — each connector's `schedule`; calls `ctx.connectors.sync`, enqueues
+- **schedule**: each connector's `schedule`; calls `ctx.connectors.sync`, enqueues
   one job per new or changed SourceRef.
-- **manual / mcp / hook** — CLI, MCP `submit_source`, Claude Code hooks.
+- **manual / mcp / hook**: CLI, MCP `submit_source`, Claude Code hooks.
 
 Runner, per job:
 
@@ -485,7 +490,7 @@ Runner, per job:
    prompt (rules + "runner mode" addendum + `instructions`), a **locked-down tool
    allowlist** (read/write/edit inside the worktree, `shasum`, and a per-job
    audit wrapper outside the worktree that takes no arguments and is pinned to
-   the worktree — never `node tools/audit.mjs:*`, whose flags reach anywhere;
+   the worktree, never `node tools/audit.mjs:*`, whose flags reach anywhere;
    **no** git, **no** network, **no** MCP), the budget and the
    timeout. Source content is untrusted input; the prompt says so, and the tool
    allowlist is what makes it true.
@@ -496,7 +501,7 @@ Runner, per job:
    or to a canonical page fails the job, uncommitted.
 5. Run `node tools/audit.mjs index` then `node tools/audit.mjs --json`, both
    with `--repo <worktree>`, using the **service's own checkout** of
-   `tools/audit.mjs` — never a copy inside the worktree, which the agent could
+   `tools/audit.mjs`, never a copy inside the worktree, which the agent could
    have edited. Exit 1 → job `failed`, worktree kept for inspection, no commit,
    no proposal.
 6. Commit on the branch as `svc:ingest` with the requesting actor as co-author.
@@ -513,7 +518,7 @@ Hooks (`bin/almagest.mjs hook <name>`, all fast, none needs the server running):
 
 Plus the git hooks `tools/hooks/pre-commit` (audit + main guard) and
 `tools/hooks/reference-transaction` (every move of `main`), installed per clone
-from `main` into `.git/almagest/hooks/` by `almagest hooks install` — never run
+from `main` into `.git/almagest/hooks/` by `almagest hooks install`, never run
 from the working tree, which any checkout rewrites.
 Plus `deploy/launchd/` and `deploy/systemd/` to keep `almagest serve` running.
 
@@ -527,7 +532,7 @@ The service is an MCP **client**. For each connector it:
 3. **Fetches** each item and renders it to text with locator markers
    (`=== section: … ===`, `=== t hh:mm:ss ===` for transcripts, `=== row n ===`).
 4. Stages the snapshot under `.almagest/connector-snapshots/<connector-id>/` and
-   fingerprints it — sha256 of every snapshot byte (header included; the header
+   fingerprints it: sha256 of every snapshot byte (header included; the header
    holds nothing volatile) is the change detector. The runner copies it to
    `brain/raw/extracted/<connector-id>/<slug>.txt` in the job's worktree with
    `materialize()`, never on `main`. Provider `version` is an optimisation that
@@ -536,13 +541,13 @@ The service is an MCP **client**. For each connector it:
 
 Recipes (`server/src/connectors/recipes/<name>.yaml`) are declarative: which tool
 lists, which tool fetches, how to map results to `ref` / `version` / `title` /
-text. Shipped: `mcp-resources` (generic — any server that exposes MCP resources
+text. Shipped: `mcp-resources` (generic: any server that exposes MCP resources
 works with zero config), `github`, `gitlab`, `google-drive`, `granola`, `linear`,
 `notion`, `slack`, `web-fetch`. `custom` lets a config entry inline its own
 `list` / `fetch` mapping. `almagest connectors init <mcp>` inspects `tools/list`
 and drafts a recipe for a human to review.
 
-Manifest: a new `kind: connector` entry type — `connector`, `server`, `ref`,
+Manifest: a new `kind: connector` entry type: `connector`, `server`, `ref`,
 `version`, `sha256` (of the snapshot), `path` and `extracted` (both the snapshot
 path), `extracted_sha256` (same digest), optional `commit`, `snapshot`, `label`.
 The audit's PROV and CITE-005 checks accept it, and CITE-005 additionally
@@ -550,20 +555,20 @@ re-hashes committed snapshots (connectors owns those changes in `tools/lib/check
 and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
 
 ## Governance
-- **Proposal builder** — diff `baseSha..headSha` over `brain/wiki/`, parse both
+- **Proposal builder**: diff `baseSha..headSha` over `brain/wiki/`, parse both
   sides with `wiki-core`, compute claim-level changes and source excerpts, attach
   demand from `ctx.demand`, compute `required` from policy.
-- **Policy engine** — the profile's rules plus `governance.rules` (appended, not
+- **Policy engine**: the profile's rules plus `governance.rules` (appended, not
   replaced: rules only add, so appending can never weaken the profile;
   `inherit_profile_rules: false` is the logged opt-out). Built-in, not
   configurable: `approvals >= 1` from a human at the current `headSha`; agents
   cannot approve; every review action needs a browser session + CSRF (or a
-  signed Slack / GitHub request) — bearer tokens are read-only; one person
+  signed Slack / GitHub request); bearer tokens are read-only; one person
   counts once (identity registry, by email); open decisions block merge; audit
   exit 1 blocks merge; canonical pages are never modified by a proposal; files
   outside the knowledge-base paths (`governance/paths.mjs`) block merge. See
   [security.md](security.md).
-- **Merge** — `git merge-tree --write-tree main <branch>` → `commit-tree` with
+- **Merge**: `git merge-tree --write-tree main <branch>` → `commit-tree` with
   two parents, author = approving actor, committer = `svc:governance` →
   re-audit the merge tree → move `main` by compare-and-swap (`update-ref` with
   the old value), or `merge --ff-only` inside a worktree that has `main` checked
@@ -574,21 +579,21 @@ and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
   pushes `main`.
 - **Channels** (`governance/channels/<kind>.mjs`, interface
   `{ kind, notify(busEvent), routes?(http), canApprove }`):
-  - `web` — the review inbox, server-rendered HTML at `/inbox`. Queue ordered by
+  - `web`: the review inbox, server-rendered HTML at `/inbox`. Queue ordered by
     open decisions, then hot pages, then age. Per-proposal page: claim cards with
     source excerpts, per-page accept/reject, decision cards, approve / request
     changes. Also `/inbox/reverify` and `/inbox/gaps` (from telemetry) and
     `/inbox/activity` (the audit log).
-  - `mcp` — chat can list and explain proposals and ask to approve; the service
+  - `mcp`: chat can list and explain proposals and ask to approve; the service
     answers with a confirmation link that opens the full review page in an
     authenticated web session (no one-click button). The chat never approves.
-  - `slack` — notification with buttons carrying the headSha; the interactive
+  - `slack`: notification with buttons carrying the headSha; the interactive
     endpoint verifies the Slack signature and resolves the Slack user to a known
     person by email. With `require_sso_for_approval`, buttons only link.
-  - `email` — digest with signed, single-use, expiring (24 h) links into the
+  - `email`: digest with signed, single-use, expiring (24 h) links into the
     web inbox; `sendmail` or an HTTPS mail API, no SMTP.
-  - `github-pr` — the v1 workflow: push the branch, open a PR, treat a merge
-    webhook as the approval of the GitHub user who merged — only when the merged
+  - `github-pr`: the v1 workflow: push the branch, open a PR, treat a merge
+    webhook as the approval of the GitHub user who merged; only when the merged
     head equals the reviewed `headSha`.
 
 ## Almagest MCP server
@@ -615,31 +620,31 @@ metadata so MCP clients discover the IdP. With `service.git.remote` set, the
 service fetches into the repo it runs in and re-pins its `main` snapshot on an
 interval and on `POST /hooks/git` (HMAC-signed). For a deployment with no local
 clone, the container image clones the brain at start (`deploy/docker/`).
-Stdio is the read side only — no ingest runner, watcher or timers.
+Stdio is the read side only: no ingest runner, watcher or timers.
 
 ## Telemetry and demand
 
 - `ctx.telemetry.record` appends Events; failures are logged, never thrown.
-- **Demand score** per slug: Σ weight × 0.5^(age / half_life) over events —
+- **Demand score** per slug: Σ weight × 0.5^(age / half_life) over events:
   `get_page` 1.0, `ask` hit 0.6, `search` top-3 hit 0.3, `feedback` +2 / −1.
   Recomputed on an interval, cached in `store.kv`, published as `demand.updated`.
 - **Hot** = top `hot_percentile` and ≥ `min_score`. Hot pages get stricter policy
   (governance), a shorter re-verify threshold, and appear in `/inbox/reverify`.
-- **Gaps** — `search`/`ask` calls with no result above threshold, plus
+- **Gaps**: `search`/`ask` calls with no result above threshold, plus
   `report_gap`, clustered by normalised token overlap → `/inbox/gaps` and
   `ctx.telemetry.gaps()`. A gap can be turned into a `submit_source` or a
   connector suggestion.
-- **Audit integration** — the service exports `.almagest/demand.tsv`
+- **Audit integration**: the service exports `.almagest/demand.tsv`
   (gitignored; aggregates only, no query text). `tools/audit.mjs --demand <file>`
   enables two warnings: `DEMAND-001` hot page past `stale_after_days_hot`;
   `DEMAND-002` hot page with `confidence: low | unknown`. Without the flag the
   audit behaves exactly as v1.
 - Retention: `store.events.prune` daily per `retention_days`. Raw events never
   enter git.
-- **Explainability** — `ctx.telemetry.explain(slug)` returns the events and
+- **Explainability**: `ctx.telemetry.explain(slug)` returns the events and
   weights behind a score (top contributors, counts per tool, deduped events, the
-  trend against the previous half-life window). Every demand effect — a stricter
-  approval, a re-verify entry, a DEMAND-* warning — is traceable to events.
+  trend against the previous half-life window). Every demand effect (a stricter
+  approval, a re-verify entry, a DEMAND-* warning) is traceable to events.
 - HTTP (auth `any`): `GET /api/demand?top=N`, `GET /api/demand/:slug` (explain),
   `GET /api/gaps`, `GET /api/reverify`. CLI: `almagest demand [--top N]`,
   `almagest gaps`, `almagest reverify`. Long form, formula worked through,
@@ -648,7 +653,7 @@ Stdio is the read side only — no ingest runner, watcher or timers.
 ## Testing
 
 `node --test server/test/` with the memory store and the `fake` ingest driver.
-Each workstream ships unit tests for its module and at least one test that goes
+Each module ships its own unit tests and at least one test that goes
 through `ctx` the way the composition root wires it. The end-to-end test (Phase
 2) drives: file dropped → job → proposal → decision resolved → approve → merged
 on `main` → `search` over MCP finds it → event recorded → demand updated.

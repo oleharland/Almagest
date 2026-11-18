@@ -1,12 +1,17 @@
 # The Audit Tool
 
-`tools/audit.mjs` checks that the wiki says only what it can back up. It reads `brain/wiki/`, `brain/manifest.yaml`, `brain/index.md`, and `brain.config.yaml`, reports every violation it finds, and **never changes a file** — except in `index` mode, which writes `brain/.index/` and nothing else.
+`tools/audit.mjs` checks that the wiki says only what it can back up. It reads `brain/wiki/`, `brain/manifest.yaml`, `brain/index.md`, and `brain.config.yaml`, reports every violation it finds, and **never changes a file** except in `index` mode, which writes `brain/.index/` and nothing else.
 
-It is a deterministic Node program, not the agent reading pages. That distinction is the point: the same twenty checks run identically on your laptop, in the agent's ingest loop, and in CI, and the exit code means the same thing in all three.
+It is a deterministic Node program, not the agent reading pages, so the same twenty checks run identically on your laptop, in the agent's ingest loop, and in CI, and the exit code means the same thing in all three.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/citation-chain-dark.png">
+  <img src="diagrams/citation-chain.png" alt="A claim on wiki/retention-policy.md cites [source: q3-review, p.12]. CITE-001 and CITE-003 check the citation; CITE-002 checks that q3-review is in the page's sources; PROV-001 checks that the source path, a committed text sidecar, exists; PROV-003 and CITE-005 check the source against its manifest.yaml entry and fingerprint. The original PDF is gitignored. Whether page 12 actually says what the claim says is checked by you, in the diff review.">
+</picture>
 
 ## Why it is a program
 
-The checks it runs were previously prose in `agent/rules/wiki.md` — an instruction to the agent to go and look. That fails three ways:
+Checks written as prose in `agent/rules/wiki.md`, as an instruction to the agent to go and look, fail three ways:
 
 - **Non-deterministic.** The same wiki audits differently on two runs, and differently again on a different model.
 - **Unrunnable in CI.** A pull request cannot ask a rules file whether the citations resolve.
@@ -26,7 +31,7 @@ The audit does not reimplement frontmatter parsing, wikilink resolution, the bac
 
 The core lives under `tools/` rather than under `site/` for a blunt reason: Node 22 cannot import TypeScript, so a `.mjs` tool cannot depend on a `.ts` loader. The dependency points from the typed wrapper down to the plain-ESM core, never the other way.
 
-The consequence is what matters: **what the audit validates is exactly what the site renders.** A page that audits clean and renders wrong is a bug in one shared parser, not a divergence between two.
+So what the audit validates is exactly what the site renders. A page that audits clean and renders wrong is a bug in one shared parser, not a divergence between two.
 
 ## Running it
 
@@ -111,11 +116,11 @@ The grammar these parse against:
 
 These five are the drift detector for the three records that must agree: the wiki, the manifest, and the index. Repair follows `agent/rules/ingest.md` → *Drifted manifest*, whose precedence rule is `wiki/` > `index.md` > `manifest.yaml`.
 
-`PROV-004` and `PROV-005` are the two directions of one drift and are deliberately not the same severity. An `index.md` row naming a page that does not exist **asserts something false** — a reader is sent to a page that isn't there. A page with no row asserts nothing; it is bookkeeping that has not caught up. Failing a build on the second would punish tidiness rather than truth, so it is a warning.
+`PROV-004` and `PROV-005` are the two directions of one drift and are deliberately not the same severity. An `index.md` row naming a page that does not exist **asserts something false**: a reader is sent to a page that isn't there. A page with no row asserts nothing; it is bookkeeping that has not caught up. Failing a build on the second would punish tidiness, so it is a warning.
 
 #### Connector sources (`kind: connector`)
 
-A source fetched over MCP by the v2 service ([v2/connectors.md](v2/connectors.md)) is cited through its committed snapshot, `brain/raw/extracted/<connector-id>/<slug>.txt` — the same way a binary is cited through its sidecar, and found in the manifest the same way, by `extracted` path. Three things are specific to it:
+A source fetched over MCP by the v2 service ([v2/connectors.md](v2/connectors.md)) is cited through its committed snapshot, `brain/raw/extracted/<connector-id>/<slug>.txt`. It is cited the same way a binary is cited through its sidecar, and found in the manifest the same way, by `extracted` path. Three things are specific to it:
 
 | Check | Connector behaviour |
 |---|---|
@@ -132,7 +137,7 @@ A source fetched over MCP by the v2 service ([v2/connectors.md](v2/connectors.md
 | `CANON-001` | Outstanding entries in `brain/canonical-challenges.md` | warning |
 | `STALE-001` | `last_verified` past threshold | warning |
 
-`CANON-001` is informational by design. An open challenge means evidence contradicts a canonical page and a human has not yet ruled — that is a queue, not a failure. It stays visible in every audit run until the row's status changes.
+`CANON-001` is informational by design. An open challenge means evidence contradicts a canonical page and a human has not yet ruled. That is a queue, not a failure. It stays visible in every audit run until the row's status changes.
 
 ### Demand — are the pages people rely on fit to be relied on? (opt-in: `--demand`)
 
@@ -141,27 +146,27 @@ A source fetched over MCP by the v2 service ([v2/connectors.md](v2/connectors.md
 | `DEMAND-001` | A **hot** page whose `last_verified` is older than `telemetry.stale_after_days_hot` (default 30), never verified, or not an ISO date | warning |
 | `DEMAND-002` | A **hot** page with `confidence: low` or `confidence: unknown` | warning |
 
-These two run **only** when you pass `--demand <file>`. Without the flag the audit's output and exit code are byte-for-byte what they were before the checks existed — the selftest proves it by running the dirty fixture both ways and comparing the non-demand findings.
+These two run **only** when you pass `--demand <file>`. Without the flag the audit's output and exit code are byte-for-byte what they were before the checks existed. The selftest proves it by running the dirty fixture both ways and comparing the non-demand findings.
 
-**What "hot" means here.** The audit does not compute demand; it has no request log. The v2 service (`server/`, telemetry) records every request, scores each page — a decayed, weighted count of reads, `ask`/`search` hits and feedback — and exports the result to `.almagest/demand.tsv`. A page is hot when it is in the top `telemetry.demand.hot_percentile` of the wiki **and** clears `telemetry.demand.min_score`. The audit reads the `hot` column of that file and trusts it. The formula, with a worked example, is in `docs/v2/telemetry.md`.
+**What "hot" means here.** The audit does not compute demand; it has no request log. The v2 service (`server/`, telemetry) records every request, scores each page (a decayed, weighted count of reads, `ask`/`search` hits and feedback), and exports the result to `.almagest/demand.tsv`. A page is hot when it is in the top `telemetry.demand.hot_percentile` of the wiki **and** clears `telemetry.demand.min_score`. The audit reads the `hot` column of that file and trusts it. The formula, with a worked example, is in `docs/v2/telemetry.md`.
 
 **Why they exist.** `STALE-001` treats every curated page alike: 90 days. But a page fifty people read this week and a page nobody has opened since it was written are not the same risk. A wrong answer on a hot page is repeated to every one of those readers. `DEMAND-001` holds the pages people actually rely on to a shorter re-verification cycle; `DEMAND-002` flags the ones that are popular but rest on weak evidence.
 
 **What fires.** For every page whose slug the file marks `hot` (slugs the wiki no longer has are ignored):
 
-- `DEMAND-001` — `last_verified` missing, not `YYYY-MM-DD`, or more than `stale_after_days_hot` days before today. The message carries the score, the rank and how far past the threshold the page is: `hot page (score 21.5, rank 1) last verified 2020-01-01 — 2201 days, 2171 past the 30-day hot threshold`.
-- `DEMAND-002` — `confidence` is `low` or `unknown`.
+- `DEMAND-001`: `last_verified` missing, not `YYYY-MM-DD`, or more than `stale_after_days_hot` days before today. The message carries the score, the rank and how far past the threshold the page is: `hot page (score 21.5, rank 1) last verified 2020-01-01 — 2201 days, 2171 past the 30-day hot threshold`.
+- `DEMAND-002`: `confidence` is `low` or `unknown`.
 
-A page can raise both. A page that is not hot raises neither, whatever its age or confidence — `STALE-001` still covers it on the ordinary tier threshold.
+A page can raise both. A page that is not hot raises neither, whatever its age or confidence. `STALE-001` still covers it on the ordinary tier threshold.
 
 **How to fix.**
 
-- `DEMAND-001`: re-verify the page against its cited sources and update `last_verified` — on an `ingest/` branch, like any other wiki edit. `almagest reverify` (or `GET /api/reverify`, or `/inbox/reverify`) lists the due pages, most urgent first; with `telemetry.auto_reverify: true` the service enqueues the re-verification jobs itself.
-- `DEMAND-002`: corroborate the page with a stronger source and raise `confidence`, or route it to its owner. Do not raise `confidence` without new evidence to make the warning go away — that is the one fix that makes things worse.
+- `DEMAND-001`: re-verify the page against its cited sources and update `last_verified` on an `ingest/` branch, like any other wiki edit. `almagest reverify` (or `GET /api/reverify`, or `/inbox/reverify`) lists the due pages, most urgent first; with `telemetry.auto_reverify: true` the service enqueues the re-verification jobs itself.
+- `DEMAND-002`: corroborate the page with a stronger source and raise `confidence`, or route it to its owner. Do not raise `confidence` without new evidence to make the warning go away. That is the one fix that makes things worse.
 
-**The file.** Tab-separated, header row exactly `slug\tscore\trank\thot`, one row per page with demand, `hot` is `true` or `false`. Aggregates only — no query text, no actors, no events — so it is safe to hand to CI; it lives under `.almagest/`, which is gitignored, because it is per-instance operational state and not knowledge. A relative `--demand` path resolves against `--repo`, the same as `--config` and `--manifest`. A missing file, a wrong header or a malformed row is a tool error — **exit 2** with the file and line — never a silent "nothing is hot".
+**The file.** Tab-separated, header row exactly `slug\tscore\trank\thot`, one row per page with demand, `hot` is `true` or `false`. Aggregates only (no query text, no actors, no events), so it is safe to hand to CI; it lives under `.almagest/`, which is gitignored, because it is per-instance operational state and not knowledge. A relative `--demand` path resolves against `--repo`, the same as `--config` and `--manifest`. A missing file, a wrong header or a malformed row is a tool error (**exit 2** with the file and line), never a silent "nothing is hot".
 
-**Severity.** Like every ID, `DEMAND-001` and `DEMAND-002` take their severity from `audit.severity`. Unlike the other checks, an ID the config does not list defaults to **warning**, not error, so a v1 `brain.config.yaml` that predates them keeps passing. Listing `DEMAND-001` under `errors` makes a stale hot page fail the build — a reasonable choice for an enterprise brain whose hot pages answer customers.
+**Severity.** Like every ID, `DEMAND-001` and `DEMAND-002` take their severity from `audit.severity`. Unlike the other checks, an ID the config does not list defaults to **warning**, not error, so a v1 `brain.config.yaml` that predates them keeps passing. Listing `DEMAND-001` under `errors` makes a stale hot page fail the build, a reasonable choice for an enterprise brain whose hot pages answer customers.
 
 ## Template pages are partly exempt — read this
 
@@ -169,7 +174,7 @@ A page can raise both. A page that is not hot raises neither, whatever its age o
 
 This is a real hole and it is documented here rather than buried because someone could hide a page in it.
 
-Why it exists: `brain/wiki/_example.md` and `brain/wiki/_example-claim.md` ship with the framework to show schema v2. They cite a source that does not exist, because a template cannot ship with a real ingested PDF and a matching `manifest.yaml` entry. Without the exemption, every fresh fork fails CI on day one over two files the user has not written — and the first experience of the audit becomes "this tool is broken."
+Why it exists: `brain/wiki/_example.md` and `brain/wiki/_example-claim.md` ship with the framework to show schema v2. They cite a source that does not exist, because a template cannot ship with a real ingested PDF and a matching `manifest.yaml` entry. Without the exemption, every fresh fork fails CI on day one over two files the user has not written, and the first experience of the audit becomes "this tool is broken."
 
 What the exemption does **not** cover. Everything else still applies to `_`-prefixed pages:
 
@@ -180,7 +185,7 @@ What the exemption does **not** cover. Everything else still applies to `_`-pref
 | `CITE-001` · `CITE-002` · `CITE-003` · `CITE-004` · `CITE-006` | `CITE-005` — `sha256` disagrees with the manifest |
 | `CANON-001` · `STALE-001` | |
 
-So a template page must still have valid frontmatter, resolving wikilinks, parseable citations naming an `id` in its own `sources`, and a `## Basis` if it is `origin: self`. Only the three checks that reach outside the page — to the filesystem and the manifest — are skipped.
+So a template page must still have valid frontmatter, resolving wikilinks, parseable citations naming an `id` in its own `sources`, and a `## Basis` if it is `origin: self`. Only the three checks that reach outside the page (to the filesystem and the manifest) are skipped.
 
 **Never use a leading underscore on a real page.** It is not a "draft" or "private" marker; it means "this page's provenance is not checked." A real page with unverifiable provenance is exactly the thing the audit exists to catch. Delete both examples once you have written your first real page.
 
@@ -207,13 +212,13 @@ telemetry:
 
 `DEMAND-001` / `DEMAND-002` may be listed under `severity.errors` or `severity.warnings` like any other ID; left out, they are warnings.
 
-Moving an ID between `errors` and `warnings` changes what fails a build. Do it deliberately — demoting a `CITE-*` check to a warning means the wiki can assert things it cannot back up and still go green.
+Moving an ID between `errors` and `warnings` changes what fails a build. Do it deliberately: demoting a `CITE-*` check to a warning means the wiki can assert things it cannot back up and still go green.
 
 ## The derived index
 
-`node tools/audit.mjs index` writes `brain/.index/`, which is **committed, not gitignored** — the same idiom as the generated harness shims, and verified in CI with `--check-index`. Output is deterministic: sorted by slug, tab-separated, `\n` line endings, no timestamps, so it diffs cleanly and never churns.
+`node tools/audit.mjs index` writes `brain/.index/`, which is **committed, not gitignored**, the same idiom as the generated harness shims, and verified in CI with `--check-index`. Output is deterministic: sorted by slug, tab-separated, `\n` line endings, no timestamps, so it diffs cleanly and never churns.
 
-`brain/.index/pages.tsv` — header row, then one row per page:
+`brain/.index/pages.tsv` has a header row, then one row per page:
 
 ```
 slug	title	type	tier	status	origin	confidence	aliases	tags	source_ids	backlinks	last_verified
@@ -221,9 +226,9 @@ slug	title	type	tier	status	origin	confidence	aliases	tags	source_ids	backlinks	
 
 Multi-value cells are `|`-separated. Empty cells are empty strings, never `-`.
 
-`brain/.index/aliases.tsv` — header `alias\tslug`, one row per alias **and** one per title (lowercased).
+`brain/.index/aliases.tsv` has the header `alias\tslug`, then one row per alias **and** one per title (lowercased).
 
-That second file is the one that pays for itself. Entity dedup during ingest — "does a page for this thing already exist?" — becomes a single `grep` against a sorted file, instead of a model reading `index.md` and deciding.
+The second file is what entity dedup uses during ingest. "Does a page for this thing already exist?" becomes a single `grep` against a sorted file, instead of a model reading `index.md` and deciding.
 
 ## CI
 
@@ -240,7 +245,7 @@ Two jobs, both cheap:
 
 The agent **runs the tool**. It does not perform the checks by hand and does not argue with the exit code.
 
-- Before committing to an `ingest/<slug>-<sha7>` branch, run the audit. **Any error-severity finding blocks the commit entirely** — fix the finding or drop the page from the batch.
+- Before committing to an `ingest/<slug>-<sha7>` branch, run the audit. **Any error-severity finding blocks the commit entirely**: fix the finding or drop the page from the batch.
 - On "audit the wiki", run it and present the report.
 - After any fix session, run it again before proposing the diff.
 

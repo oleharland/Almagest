@@ -1,14 +1,14 @@
 # Almagest as an MCP server
 
-Use the brain from any chat — Claude Code, Claude Desktop, claude.ai, Cursor, or
-any MCP client — without opening the repo. Two ways in:
+Use the brain from any chat (Claude Code, Claude Desktop, claude.ai, Cursor, or
+any MCP client) without opening the repo. Two ways in:
 
 | | Transport | Who it's for | Auth |
 |---|---|---|---|
 | **Local** | stdio — `almagest mcp` | you, on a machine with a clone | none needed (it's your clone); optional `ALMAGEST_TOKEN` |
 | **Remote** | Streamable HTTP at `https://<host>/mcp` | any chat, no clone | bearer token, built-in OAuth (solo), or your IdP's JWTs (team / enterprise) |
 
-Both serve the same tools over the same snapshot: **main's commit**, read from a
+Both serve the same tools over the same snapshot: main's commit, read from a
 detached worktree (`.almagest/snapshots/main`). Never the checkout, never an
 ingest branch. When main moves, the search index rebuilds on the next request.
 
@@ -16,6 +16,11 @@ The MCP server never writes to `main`. Its one write path, `submit_source`,
 queues an ingest that ends as a proposal for a human to review. Its governance
 tools can explain proposals and hand out a confirmation link; they cannot
 approve.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/mcp-read-path-dark.png">
+  <img src="../diagrams/mcp-read-path.png" alt="Sequence diagram of a chat asking the Almagest MCP server a question: the server reads pages only from the snapshot of local main, returns sections and citation rules, and records a telemetry event. The chat's only write is submit_source, which queues an ingest job for human review.">
+</picture>
 
 ## Tools
 
@@ -38,13 +43,13 @@ actorId }`. `client` is the MCP `clientInfo.name`.
 
 **Resources:** `almagest://index` (every page: slug, title, type, tier,
 confidence, aliases) and `almagest://page/{slug}` (listable template).
-**Prompt:** `answer-from-brain` (`question`) — tells the model to call `ask`,
+**Prompt:** `answer-from-brain` (`question`). It tells the model to call `ask`,
 then `get_page` if needed, and cite per `read.md`.
 
 ### Who a request acts as
 
-Every MCP request runs as `agentActor('mcp:<client>', human)` — the chat model
-holds the token, not the person (spec → Actor). The **human's** roles decide
+Every MCP request runs as `agentActor('mcp:<client>', human)`. The chat model
+holds the token, not the person (spec → Actor). The human's roles decide
 what is listed:
 
 - `viewer` → read tools only.
@@ -60,7 +65,7 @@ token refuses to start), otherwise a local `usr_local` with role
 `mcp.stdio_role` (default `owner`).
 
 Stdio is the read side only: it serves the tools and records telemetry, but runs
-no ingest runner, folder watcher or background timers — `submit_source` queues a
+no ingest runner, folder watcher or background timers. `submit_source` queues a
 job that `almagest serve` picks up. Every chat that spawns `almagest mcp` would
 otherwise start its own runner on the same brain.
 
@@ -138,20 +143,20 @@ service:
 
 A request to `/mcp` without valid credentials gets `401` and
 `WWW-Authenticate: Bearer resource_metadata="<base_url>/.well-known/oauth-protected-resource"`
-(plus `error="invalid_token"` when a token was sent) — that is how MCP clients
+(plus `error="invalid_token"` when a token was sent). That is how MCP clients
 discover where to log in.
 
 ### Built-in OAuth (solo + claude.ai)
 
 claude.ai custom connectors speak OAuth, so a static token cannot be pasted
 into them. In token mode the service runs a minimal OAuth 2.1 authorization
-server: dynamic client registration, an authorize page where **you paste your
-Almagest token** to consent, PKCE S256 (required, nothing else accepted),
+server: dynamic client registration, an authorize page where you paste your
+Almagest token to consent, PKCE S256 (required, nothing else accepted),
 single-use codes, short-lived access tokens, rotating refresh tokens (replaying
 a rotated one revokes the whole grant). Codes and tokens are stored hashed in
 `store.kv`.
 
-Issued access tokens work on `/mcp` only — never on the web inbox, where
+Issued access tokens work on `/mcp` only, never on the web inbox, where
 approvals happen. The person behind a token is re-resolved from
 `ALMAGEST_TOKENS` on every request: remove someone from that list and every
 token issued to them stops working immediately.
@@ -177,7 +182,7 @@ claude mcp add --scope user almagest -- node /abs/path/almagest/server/bin/almag
 claude mcp add --scope user almagest -e ALMAGEST_TOKEN=<contributor token> -- node /abs/path/almagest/server/bin/almagest.mjs mcp --repo /abs/path/almagest
 ```
 
-Remote (HTTP) — OAuth is offered automatically (`/mcp` → Authenticate):
+Remote (HTTP), where OAuth is offered automatically (`/mcp` → Authenticate):
 
 ```bash
 claude mcp add --scope user --transport http almagest https://brain.example.com/mcp
@@ -206,7 +211,7 @@ the URL, exactly as for claude.ai below.
 
 ### claude.ai (custom connector)
 
-1. The service must be reachable over **public HTTPS** (a VPS, a container
+1. The service must be reachable over public HTTPS (a VPS, a container
    behind a reverse proxy, or a tunnel such as `cloudflared tunnel --url
    http://127.0.0.1:4747` for a laptop). Set `service.http.base_url` to that
    public URL.
@@ -241,7 +246,7 @@ speaks stdio can reach a remote brain through a bridge such as
 
 ## Remote deployments
 
-The snapshot always follows the **local** `main`, the one only reviewed merges
+The snapshot always follows the local `main`, the one only reviewed merges
 move. It never follows `<remote>/<main>`: commits pushed straight to the
 remote, or merged there without passing the service's checks, have not been
 reviewed here, and chats must not cite them. With `service.git.remote` set,
@@ -263,8 +268,8 @@ every merge the service performs.
 - **The MCP never writes to main.** `submit_source` creates a file under
   `.almagest/submissions/` and a job; the job runs on its own branch, gated by
   the audit, and ends as a proposal. `request_approval` returns a link a human
-  must open in their own signed-in browser session. Agents cannot approve —
-  enforced in `core/auth.mjs` → `assertCanApprove`, not in config.
+  must open in their own signed-in browser session. Agents cannot approve;
+  that is enforced in `core/auth.mjs` → `assertCanApprove`, not in config.
 - **URL fetch is off by default.** When enabled, every hop is checked: http(s)
   only, no credentials, DNS resolved and every address checked against
   private / loopback / link-local / CGNAT / metadata (`169.254.169.254`,

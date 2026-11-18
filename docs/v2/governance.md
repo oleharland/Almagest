@@ -14,7 +14,7 @@ Code: `server/src/governance/`. Contract: [`spec.md`](spec.md) → Governance.
 ### What you see
 
 Open the **review inbox** (`/inbox` on your Almagest server). Each entry is one
-proposal — the agent's work on one source:
+proposal, the agent's work on one source:
 
 > **New material from “Q3 board deck”**
 > 3 new facts, 1 updated fact about Acme and Pricing · 1 question needs you
@@ -24,15 +24,16 @@ pages, then the oldest.
 
 Open one and you see, page by page, every **fact** that would be added, changed
 or removed. Next to each fact is the **passage from the source** it claims to
-come from — "Source: Q3 board deck, page 3", followed by what page 3 actually
+come from: "Source: Q3 board deck, page 3", followed by what page 3 actually
 says. You are checking one thing: *does the source say this?* You never need
 to read a diff.
 
 If the passage can't be found, the card says so ("We couldn't find that spot
-in the source — check it by hand"). Treat that as a reason to look closer.
+in the source. Check it by hand before you approve."). Treat that as a reason
+to look closer.
 
 Below the pages, **Other files** lists everything else the proposal adds or
-changes — the index, the manifest, the log, sidecars under `brain/raw/` — with
+changes (the index, the manifest, the log, sidecars under `brain/raw/`) with
 its size and what it says: the first 40 lines of a new file, the added lines
 of a changed one. Approving the proposal approves these too.
 
@@ -54,7 +55,7 @@ page “Pricing”."*
 ### Things that are always true
 
 - **Only people approve, signed in.** A chat assistant, a script or the agent
-  itself can never approve, whatever the settings say — and neither can an
+  itself can never approve, whatever the settings say, and neither can an
   access token, even yours: approving happens in your signed-in browser (or by
   a Slack button / GitHub merge Almagest can verify was you).
 - **You approve what you saw.** Every Approve button carries the exact version
@@ -68,25 +69,30 @@ page “Pricing”."*
   wiki pages, sources and the knowledge base's own records (the audit tool,
   the service, the configuration, git settings …) can never be approved.
 - **Questions first.** A proposal with an unanswered question can't be added.
-- **The automatic checks must pass** — on the proposal, and again on the result
+- **The automatic checks must pass**: on the proposal, and again on the result
   of combining it with the current knowledge base.
 - **Locked reference pages** (canonical pages) are never changed by a proposal.
   If new material disagrees with one, the disagreement is written down as a
   *challenge* in `brain/canonical-challenges.md`, where a person can weigh it.
   The page itself stays as it is.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../diagrams/proposal-lifecycle-dark.png">
+  <img src="../diagrams/proposal-lifecycle.png" alt="State diagram of a governance proposal: an agent submits it as open. Only a signed-in person approving the exact headSha they saw, followed by the service re-running the audit, moves it to merged. Change requests, merge clashes, turning down, replacement and refused GitHub merges lead to other states.">
+</picture>
+
 ### Approving from elsewhere
 
 - **From a chat** (Claude, ChatGPT, … via Almagest's MCP server): ask the chat
   to approve and it gives you a link with a code like `K7Q2-9XMA-PD4T`. The
-  link opens the full review — the same page as from the inbox, with a note
-  that the chat asked — and you approve there. The chat cannot do it for you.
+  link opens the full review (the same page as from the inbox, with a note
+  that the chat asked), and you approve there. The chat cannot do it for you.
   Codes work once and expire after 15 minutes.
 - **From Slack**: notifications have Approve / Request changes / Open buttons.
   Approve works only if your Slack account is linked to your Almagest account.
 - **From email**: links in the email open the inbox. A personal link signs you
   in once ("Continue as Ada"); opening it never approves anything by itself.
-- **From GitHub**: for teams that prefer pull requests — merging the PR counts
+- **From GitHub**: for teams that prefer pull requests: merging the PR counts
   as your approval.
 
 ---
@@ -237,7 +243,7 @@ governance:
       require: { approvals: 2, distinct_teams: 2 }
 ```
 
-**Conditions (`when`)** — all listed conditions must hold:
+**Conditions (`when`)**: all listed conditions must hold:
 
 | Key | Matches | Scope |
 |---|---|---|
@@ -290,11 +296,11 @@ These are code, not config. No rule, profile or flag changes them.
 1. A proposal needs **at least one approval from a human with an approver
    role**, given for its **current version** (`headSha`). Approvals for an
    earlier version are kept in the record and shown, but do not count.
-2. **Agents and services never approve** — `assertCanApprove` in
+2. **Agents and services never approve**: `assertCanApprove` in
    `core/auth.mjs` is the first line of every action. A chat session is always
    an agent acting for someone.
-3. With **separation of duties** on, the submitter — and the human an agent
-   submitted for (`onBehalfOf`) — cannot approve.
+3. With **separation of duties** on, the submitter, and the human an agent
+   submitted for (`onBehalfOf`), cannot approve.
 4. **Open questions block the merge.**
 5. **The automatic checks gate twice**: the runner's audit must have exit 0,
    and the service re-runs its *own* `tools/audit.mjs` on the merge result in a
@@ -303,13 +309,13 @@ These are code, not config. No rule, profile or flag changes them.
    `canonical_conflict` question whose only options are *record a challenge*
    (a row appended to `brain/canonical-challenges.md` on the proposal's branch,
    never a wiki edit) and *dismiss*; either way the page change is taken out.
-7. Every action — approve, reject, request changes, answer, take a page out,
-   merge, a policy violation — is written to the **append-only audit log**
+7. Every action (approve, reject, request changes, answer, take a page out,
+   merge, a policy violation) is written to the **append-only audit log**
    (`/inbox/activity`) with who, which channel and which version.
 8. **Review actions need a verified path, never a token.** Approve, accept a
    page, reject, take a page out, answer a question, ask for changes and retry
-   all require a signed-in browser session with its CSRF token — on the inbox
-   forms and on the JSON API alike — or the signed Slack / GitHub webhook
+   all require a signed-in browser session with its CSRF token (on the inbox
+   forms and on the JSON API alike) or the signed Slack / GitHub webhook
    path. Bearer tokens (`ALMAGEST_TOKENS`, OIDC access tokens, MCP OAuth
    tokens) can read proposals and nothing more, and an API token cannot sign
    in to the inbox to get a session either (*Sign-in*). This is checked at the
@@ -328,10 +334,10 @@ These are code, not config. No rule, profile or flag changes them.
     id ↔ email (`store.kv` → `governance.identity`). Approvals are counted by
     person (email when known, else id), and separation of duties compares the
     submitter by every id and email they are known by. Channel mappings
-    resolve to that person by email — see *Channels*.
-11. **Only knowledge-base files.** The branch diff — checked when the proposal
+    resolve to that person by email; see *Channels*.
+11. **Only knowledge-base files.** The branch diff (checked when the proposal
     is built, again by the policy engine, and once more inside the merge on
-    both the branch diff and the merge result right before main moves — may
+    both the branch diff and the merge result right before main moves) may
     only touch: `brain/wiki/<slug>.md` (no subfolders),
     `brain/raw/extracted/**/*.txt` (sidecars and connector snapshots, nothing
     else), `brain/raw/processed/**` (text only), `brain/index.md`, the
@@ -340,9 +346,9 @@ These are code, not config. No rule, profile or flag changes them.
     agent/, brain.config.yaml, .github/, .gitattributes …) block the proposal
     for good, with an entry in the activity log. So does, **anywhere** in the
     tree and in any letter case, a file an agent harness loads as
-    instructions — `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `AGENT.md`,
+    instructions (`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `AGENT.md`,
     `GEMINI.md`, `SKILL.md`, `copilot-instructions.md`, `.cursorrules`,
-    `.windsurfrules`, `.clinerules`, any `*.mdc` — or anything under a
+    `.windsurfrules`, `.clinerules`, any `*.mdc`) or anything under a
     `.claude/`, `.codex/`, `.gemini/`, `.cursor/` or `.github/` directory: a
     poisoned source must not leave instructions in `raw/` for the next
     interactive session to obey. A wiki page can't take one of those names
@@ -357,11 +363,11 @@ These are code, not config. No rule, profile or flag changes them.
 When the last requirement is met, the approval that completed it triggers the
 merge (one at a time, under a lock):
 
-1. `git merge-tree --write-tree main <branch>` — computed without touching any
+1. `git merge-tree --write-tree main <branch>`: computed without touching any
    checkout.
 2. Two proposals made from the same main always both touch the bookkeeping
    files; those clashes are resolved mechanically (`bookkeeping.mjs`):
-   - **the manifest** by a structured 3-way merge of `sources[]` by `id` —
+   - **the manifest** by a structured 3-way merge of `sources[]` by `id`:
      entries either side added are kept, a one-sided change wins, the same id
      changed differently on both sides is a real conflict. The result is
      written in block style whatever style the file used.
@@ -374,7 +380,7 @@ merge (one at a time, under a lock):
 
    Any other conflict marks the proposal *clashes with recent changes* and the
    agent is asked to redo it on top of main (a `revise` job with
-   `reason: 'conflict'`) — at most one waiting per reviewed version, and at
+   `reason: 'conflict'`), at most one waiting per reviewed version, and at
    most **two** per proposal. After that the inbox says it needs a person (ask
    for specific changes, or turn it down and add the source again); asking for
    changes resets the count.
@@ -440,8 +446,8 @@ in, not from the mapping:
   them"). The mapping's `id`, `roles` and `teams` are ignored.
 - Under tokens, `id` must name someone in `ALMAGEST_TOKENS`; their roles apply.
   Add `email` to tie the account to that person across channels.
-- When counting people matters — `separation_of_duties`, or any rule with
-  `approvals` or `distinct_teams` above 1 — a mapping without an `email`, or
+- When counting people matters (`separation_of_duties`, or any rule with
+  `approvals` or `distinct_teams` above 1), a mapping without an `email`, or
   (tokens) with an `id` nobody holds, stops startup.
 
 An unknown `kind` or a kind listed twice stops startup. A channel whose
@@ -449,12 +455,12 @@ secrets are missing starts with a warning and stays quiet. Notifications run
 in the background: a failed Slack post or mail is logged and never blocks the
 action that caused it.
 
-**web** — the inbox (`/inbox`, `/inbox/p/:id`, `/inbox/reverify`,
+**web**: the inbox (`/inbox`, `/inbox/p/:id`, `/inbox/reverify`,
 `/inbox/gaps`, `/inbox/activity`) and a JSON mirror:
 `GET /api/proposals[?status=open,approved&limit=50]`, `GET /api/proposals/:id`
 (any signed-in actor, agents included), and `POST /api/proposals/:id/approve |
 reject | request-changes | retry`, `POST /api/proposals/:id/pages/:slug/reject`,
-`POST /api/decisions/:id/resolve`. Every action — form or JSON — needs a
+`POST /api/decisions/:id/resolve`. Every action, form or JSON, needs a
 signed-in browser session plus its CSRF token (`csrf` form field, or the
 `x-almagest-csrf` header), and approve / accept / resolve need the `headSha`
 the person was shown. **Bearer tokens can only read**: an agent that has a
@@ -464,7 +470,7 @@ filesystem paths (worktrees, staging). Every page is sent with a
 strict Content-Security-Policy (no external resources; only the page's own
 nonce'd style and script), `X-Frame-Options: DENY` and `no-referrer`.
 
-**mcp** — `ctx.governance.createConfirmation(prpId, human, 'approve' |
+**mcp**: `ctx.governance.createConfirmation(prpId, human, 'approve' |
 'reject')` returns `{ url, code, expiresAt }`. `/inbox/confirm/<code>` has no
 buttons of its own: signed in, it redirects to the full review page
 (`/inbox/p/<id>?confirm=<code>`), which says who the chat asked for and
@@ -473,23 +479,23 @@ there, on the version they see; the action is recorded with channel `mcp` and
 the code is used up. Codes are stored only as their sha256, work once, and
 expire.
 
-**slack** — POST `/channels/slack/actions` (Slack app → Interactivity request
+**slack**: POST `/channels/slack/actions` (Slack app → Interactivity request
 URL). Requests are verified with `X-Slack-Signature` (v0 HMAC), must be under
 five minutes old and are refused if replayed. Slack users not listed in
 `users` cannot approve; listed ones are resolved to a person as above. The
 button carries the version the message showed and approves only that one.
-With `require_sso_for_approval`, messages carry no Approve button — only a
+With `require_sso_for_approval`, messages carry no Approve button, only a
 link into the inbox.
 
-**email** — personal links are HMAC-signed, single-use and expire
+**email**: personal links are HMAC-signed, single-use and expire
 (`link_ttl_hours`, default 24). Opening one shows "Continue as …"; pressing it
-signs the recipient — resolved to a person as above — in once. With
+signs the recipient (resolved to a person as above) in once. With
 `require_sso_for_approval` (on in the enterprise profile), links only lead to
 the sign-in page. Header values are stripped of line breaks (no header
 injection). There is deliberately no SMTP library: use `sendmail` (Postfix,
 msmtp, …) or an HTTPS mail API.
 
-**github-pr** — pushes each proposal branch to `service.git.remote` and opens a
+**github-pr**: pushes each proposal branch to `service.git.remote` and opens a
 PR whose body is the plain-language summary plus the inbox link. Webhook:
 POST `/channels/github/webhook` (content type JSON, event *Pull requests*),
 verified with `X-Hub-Signature-256`; each `X-GitHub-Delivery` is acted on
@@ -504,15 +510,15 @@ to accept a commit, not an order to move main. In this order:
    merging GitHub user must map (through `users`) to a human with an approver
    role, separation of duties applies, the PR's head must be the reviewed
    version (`headSha`), and with that approval every requirement must be met.
-2. Only then is **`merge_commit_sha`** fetched from the remote — that commit,
+2. Only then is **`merge_commit_sha`** fetched from the remote: that commit,
    never the remote's tip.
 3. Its parents must be exactly **(local main, reviewed head)**. A squash or
    rebase merge has no such parents and cannot be checked.
 4. It must change only the knowledge base's writable files (the path check).
 5. **Its content must equal the merge of the reviewed head**: the commit's
    tree must be exactly what `git merge-tree --write-tree <local main>
-   <reviewed head>` produces. Correct parents say nothing about content — a
-   hand-made merge commit can carry any edit — so a merge commit that changes,
+   <reviewed head>` produces. Correct parents say nothing about content: a
+   hand-made merge commit can carry any edit, so a merge commit that changes,
    adds or removes anything beyond that merge is refused (reason `content`,
    naming the files), and so is a head that does not merge cleanly onto main,
    since how GitHub settled the clash was never reviewed. GitHub's merge
@@ -523,18 +529,18 @@ to accept a commit, not an order to move main. In this order:
    are exactly current. Index files may only be changed there, never added or
    removed.
 6. It must pass the **same path check and audit re-run** as an inbox merge
-   (`merge.mjs` → `verifyCandidate`), unchanged — a stale derived index fails
+   (`merge.mjs` → `verifyCandidate`), unchanged: a stale derived index fails
    rather than being rebuilt.
 7. Local main moves to it by compare-and-swap; the proposal is `merged`.
 
 If any step fails, local main does not move. The proposal becomes
-**`merged_unaccepted`** — "Merged on GitHub, not accepted here" in the inbox —
+**`merged_unaccepted`** ("Merged on GitHub, not accepted here" in the inbox)
 with `merge.accepted: false` and `merge.reason` (`policy` · `head` · `paths` ·
 `content` · `audit` · `shape` · `checkout` · `busy` · `error`) plus a message, and a
 **policy violation** in the activity log. An administrator reconciles it by
 hand (bring the change in through a new proposal, or revert it on GitHub).
 GitHub's **branch protection** is defence in depth: turn it on and mirror your
-rules there, so a bad merge is stopped before it reaches the remote — but the
+rules there, so a bad merge is stopped before it reaches the remote, but the
 service does not rely on it.
 
 ### CLI
@@ -564,7 +570,7 @@ approver at the time); `required.pages` (per-page requirements) and
 (`found` · `not-found` · `source-missing` · `unknown-source` · `no-citation`);
 `needsManualLook` + `preview` (a new page with no facts the inbox could pair
 with a source); plus `submitters`, `otherFiles` (each with `bytes`, `lines`,
-`binary`, and a `preview` of up to 40 lines — `previewOf: start` for a new
+`binary`, and a `preview` of up to 40 lines: `previewOf: start` for a new
 file, `added` for the lines a change adds), `files` (every changed path
 with mode and binary flag), `outside` (paths outside the writable set),
 `revision`, `revisedBecause`, `conflictRevise`, `mergeError`, `feedback`,

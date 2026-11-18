@@ -2,7 +2,7 @@
 
 A multi-arm benchmark for the thing Almagest actually claims to do: produce
 answers you can check. It measures what compiling buys, against a competitor
-that is allowed to search — and what compiling costs when the compiled page is
+that is allowed to search, and what compiling costs when the compiled page is
 wrong or out of date.
 
 **No results have been published.** The tables below ship empty, and the harness
@@ -14,7 +14,7 @@ is built so that they can only be filled in by running it. See
 ## The question it answers
 
 > Does compiling sources into an Almagest wiki change how an agent answers
-> questions about them — and in which direction?
+> questions about them, and in which direction?
 
 Six arms, the same questions, the same model, the same scoring, the same
 answering protocol:
@@ -34,15 +34,15 @@ than resolving them, flag synthesis, decline when the corpus cannot answer.
 **The baseline is not a strawman.** It is told to do exactly what the treatment
 arm is told to do. The only variable is whether the material has been compiled.
 
-That constraint costs the benchmark headline numbers — a baseline told nothing
-about citations would score far worse — and it is the reason the comparison is
+That constraint costs the benchmark headline numbers (a baseline told nothing
+about citations would score far worse), and it is the reason the comparison is
 worth anything at all.
 
 `poisoned` and `drift` reuse `prompts/treatment.md` unchanged. If they had
 prompts of their own they would differ from `treatment` in two ways at once and
 neither difference could be attributed to anything.
 
-The default is still `--arm both` — `baseline` and `treatment`. `--arm all`
+The default is still `--arm both`, which is `baseline` and `treatment`. `--arm all`
 adds the retrieval and poisoned arms. The drift arms need their own question
 set; see [Drift](#drift--is-a-stale-page-repeated).
 
@@ -51,7 +51,7 @@ set; see [Drift](#drift--is-a-stale-page-repeated).
 The obvious benchmark is speed and accuracy. Both matter, and both are here. But
 a knowledge base that answered fast and correctly while inventing its citations
 would pass that benchmark and fail its users, and citation integrity is the
-whole of Almagest's claim. So the metric set is built around **trust**:
+whole of Almagest's claim. So the metric set is built around trust:
 
 | Metric | Question it answers | Scored by |
 |--------|--------------------|-----------|
@@ -81,7 +81,7 @@ exists to make impossible.
 *introduces*. Compiling is a write, and a wrong write is durable: a false claim
 inside a wiki page has correct frontmatter, a real document ID, a real section
 number, and no hedging, so it reads as more authoritative than the source that
-contradicts it. The baseline arms structurally cannot fail this way — they have
+contradicts it. The baseline arms structurally cannot fail this way: they have
 no compiled layer to be wrong. If you are deciding whether to adopt any of this,
 this is the number to ask for, and it is why the `poisoned` and `drift` arms
 exist. Full definition and limits in [`rubric.md`](rubric.md).
@@ -99,21 +99,21 @@ each cited to a section that says otherwise; an **amended** version of one
 source, same filename and different bytes, for the drift arms; and a
 **generator** that pads the corpus to 50 or 500 documents deterministically.
 
-Details in [`fixtures/README.md`](fixtures/README.md). Everything is invented —
+Details in [`fixtures/README.md`](fixtures/README.md). Everything is invented:
 no real organisation, product, or person appears, and no personal names appear
 at all.
 
 Fixtures live entirely inside `benchmarks/`. The harness never reads from or
 writes to `brain/`, so running it cannot touch your knowledge base.
 
-The fixture is a **complete Almagest brain** — `wiki/`, `index.md`, and
+The fixture is a complete Almagest brain: `wiki/`, `index.md`, and
 `manifest.yaml`, laid out the way a real one is and written to schema v2. Both
 wikis audit clean under `tools/audit.mjs`, and `selftest.sh` checks that they
 still do. The treatment arm is supposed to demonstrate what a compiled Almagest
 wiki does for an agent, and a wiki that failed Almagest's own correctness tool
 would not be one.
 
-That the **poisoned** wiki also audits clean is not a gap in the audit. Every
+That the poisoned wiki also audits clean is not a gap in the audit. Every
 check it runs is mechanical, and a well-formed lie violates none of them: a
 citation naming a real section that flatly contradicts the claim is valid by
 every definition a program can apply without reading the document. The audit
@@ -124,7 +124,7 @@ bounds the form of a claim; the poisoned arm measures the gap that leaves.
 Five documents is below the size at which retrieval is a constraint. An agent
 reads the whole corpus, so a five-document result can show a summarisation
 benefit and cannot show a retrieval benefit, which is most of what compilation
-is claimed to buy. One point is not a curve.
+is claimed to buy.
 
 `--scale` runs the same question set against progressively larger corpora:
 
@@ -155,7 +155,7 @@ and the report says so in its own Comparability block.
 
 Incremental re-ingest is a headline feature of Almagest and was, until now,
 entirely unmeasured. `fixtures/drift/` holds version 2.0 of a document already
-in the corpus — same filename, same agreement reference, different sha256 — that
+in the corpus (same filename, same agreement reference, different sha256) that
 changes a capacity figure, a commissioning date, a damages cap, and adds an
 obligation the wiki still records as absent.
 
@@ -167,7 +167,7 @@ benchmarks/run.sh --questions benchmarks/questions-drift.yaml \
 The drift arms see a different corpus, so the same question has a different
 correct answer than it does in the main set. Two ground truths under one
 question id would be a bug waiting to be quoted, so the drift questions live in
-their own file with their own ids, and `run.sh` **refuses** to run a drift arm
+their own file with their own ids, and `run.sh` refuses to run a drift arm
 against the main question set or a main arm against the drift set.
 
 A stale page and a wrong page score on the same metric. From the reader's seat
@@ -181,14 +181,14 @@ in the same tone with the same citation.
 ### Requirements
 
 Bash, awk, sed, find, cp, and the CLI of whichever agent harness you point it
-at. Nothing to install — no language runtime, no package manager. That is a hard
+at. Nothing to install: no language runtime, no package manager. That is a hard
 constraint: Almagest is markdown and an AI coding agent, with Node only for the
 site, and a benchmark that needed `pip install` would not be part of the same
 project.
 
 ### Which agent
 
-`run.sh` reaches an agent through a **driver** — one script per harness in
+`run.sh` reaches an agent through a driver: one script per harness in
 `drivers/`, picked with `--driver` (default `claude-code`). A driver declares
 what its CLI can genuinely enforce: the tool allowlist, a spend cap, a JSON
 schema for the judge. Anything it reports as `no` is warned about at preflight,
@@ -201,7 +201,7 @@ Interface and rules for writing your own: `drivers/README.md`.
 
 **Running this spends real money.** Each question is sent to the API once per
 arm; `--judge` sends each captured answer once more. Arms multiply, `--scale`
-does not — a bigger corpus costs more tokens per call, not more calls.
+does not: a bigger corpus costs more tokens per call, not more calls.
 
 The shipped main set is **19 questions**; the drift set is **4**.
 
@@ -251,7 +251,7 @@ benchmarks/run.sh --questions benchmarks/questions-drift.yaml \
 ```
 
 Each run writes to `benchmarks/results/<run-id>/`, which is gitignored. Runs
-never overwrite each other — the directory is timestamped.
+never overwrite each other, because the directory is timestamped.
 
 ### Options worth knowing
 
@@ -282,11 +282,11 @@ declines to mention that search exists. The honest competitor is raw documents
 plus a retrieval instruction, and without that arm the treatment arm is beating
 a straw man.
 
-It does **not** replace the bare baseline, for three reasons:
+It does not replace the bare baseline, for three reasons:
 
 1. **They isolate different variables.** `baseline` differs from `treatment` in
    exactly one thing: whether the material has been compiled. `baseline-retrieval`
-   differs in two — compilation *and* several paragraphs of retrieval coaching —
+   differs in two (compilation *and* several paragraphs of retrieval coaching),
    so a `baseline-retrieval` vs `treatment` delta cannot separate "compiling
    helped" from "prompting helped". Both comparisons are worth having and
    neither substitutes for the other.
@@ -299,7 +299,7 @@ It does **not** replace the bare baseline, for three reasons:
    not. That gap *is* the retrieval-pressure measurement, and it needs both arms
    to exist.
 
-Note that the tool allowlist is identical across all arms — every arm has
+The tool allowlist is identical across all arms: every arm has
 `Read,Grep,Glob`. The bare baseline is not tool-deprived, it is un-prompted.
 That is the difference being measured, and it is a smaller difference than
 "gave one arm a search tool" would be.
@@ -317,11 +317,11 @@ All of it is in `run.env` and repeated in `report.md`.
 
 ### What the arms cannot be compared on
 
-The `poisoned` arm's **contradiction** row is contaminated by design. The fourth
+The `poisoned` arm's contradiction row is contaminated by design. The fourth
 planted error closes the corpus's only contradiction, which three of the main
 questions also probe. On that arm those three are not a control. The trade was
-deliberate — there is one contradiction in the fixture, and testing whether a
-compiled page can close one is worth more than three comparable cells — and it
+deliberate: there is one contradiction in the fixture, and testing whether a
+compiled page can close one is worth more than three comparable cells. It
 is restated wherever the metric is defined.
 
 ---
@@ -349,7 +349,7 @@ data for.
 | Median latency | _not yet run_ | _not yet run_ | _not yet run_ | _not yet run_ |
 | Cost per question | _not yet run_ | _not yet run_ | _not yet run_ | _not yet run_ |
 
-**Run configuration:** _not yet run_ — driver and driver version, model, judge
+**Run configuration:** _not yet run_. Driver and driver version, model, judge
 model, date, question-set hash, `--scale`, `--scale-seed`, and every capability
 the driver reported `no` go here, copied from `report.md`'s metadata and
 comparability blocks.
@@ -404,7 +404,7 @@ the tables above.
 | `d04` | an absence the amendment closed | _not yet run_ | _not yet run_ |
 
 > **Format illustration only.** A filled table has the shape below. The `<value>`
-> tokens are placeholders and are not results — nothing on this page has been
+> tokens are placeholders and are not results. Nothing on this page has been
 > measured.
 >
 > | | baseline | treatment |
@@ -420,16 +420,16 @@ the tables above.
 Read this section before quoting any number this harness produces.
 
 1. **It does not measure Almagest's ingest.** The treatment arm reads a *gold
-   wiki* — hand-compiled from the fixtures to the letter of the wiki rules. So a
-   treatment result is an **upper bound**: it says what a correctly compiled
+   wiki*, hand-compiled from the fixtures to the letter of the wiki rules. So a
+   treatment result is an upper bound: it says what a correctly compiled
    wiki buys you, not whether the ingest pipeline produces one. Measuring ingest
-   quality is a different benchmark and this is not it.
+   quality is a different benchmark.
 
 2. **Nineteen questions is a small sample.** One question flipping moves a
-   percentage by roughly five points, and a per-category rate by far more — the
+   percentage by roughly five points, and a per-category rate by far more: the
    compiled-error propagation rate has a denominator of four, so one flip is 25
    points. Differences smaller than that are noise. There is no confidence
-   interval here because the harness makes one call per question — it does not
+   interval here because the harness makes one call per question. It does not
    repeat runs.
 
 3. **The judge is a model.** Score the same answers twice and the numbers move.
@@ -453,7 +453,7 @@ Read this section before quoting any number this harness produces.
 6. **The planted errors were written by the same hand as the questions.** Four
    deliberately catchable errors are not a sample of the errors a real ingest
    makes, and in the fixture the contradicting source is sitting in the same
-   arena — often it would not be. The compiled-error propagation rate says
+   arena, which it often would not be. The compiled-error propagation rate says
    whether propagation happens under generous conditions, not how often it
    happens in the field. Read a good score there as a ceiling.
 
@@ -506,12 +506,12 @@ Read this section before quoting any number this harness produces.
 ## Extending it
 
 - **Add a question:** append to `questions.yaml` following the format in its
-  header, then run `selftest.sh` — it checks that every `expected_sources` and
+  header, then run `selftest.sh`. It checks that every `expected_sources` and
   `expected_pages` entry resolves.
 - **Add an arm:** register it in `MAIN_ARMS` in `lib/common.sh` and give it
   entries in `arm_prompt` and `arm_wiki`. If it needs a prompt of its own, ask
   first whether the new arm then differs from its comparator in more than one
-  way — that is how a benchmark stops measuring what it says it measures.
+  way. That is how a benchmark stops measuring what it says it measures.
 - **Plant another error:** edit `fixtures/wiki-poisoned/`, add a row to
   `fixtures/poison-manifest.tsv`, add a `poisoned_claim` question naming its
   `poison_id`, then run `selftest.sh`. It verifies the literals in both

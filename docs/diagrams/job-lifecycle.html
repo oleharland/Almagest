@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Almagest job lifecycle</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #F4F4F5;
+      --color-ink:     #1A1C21;
+      --color-muted:   #55565B;
+      --color-accent:  #3B5DEF;
+      --font-sans:     'Geist Variable', 'Geist', system-ui, sans-serif;
+      --font-mono:     'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1200px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-sans);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 1.75rem);
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 960px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">State machine · Almagest</p>
+    <h1>Life of a background ingest job</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 440" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="job-lifecycle-title job-lifecycle-desc">
+        <title id="job-lifecycle-title">Life of a background ingest job</title>
+        <desc id="job-lifecycle-desc">State machine of one background ingest job: queued, claimed into running, retried on a flaky failure, then audited by the service’s own audit; only exit 0 leads to a commit on its ingest branch and a proposal, while unchanged, blocked, failed and cancelled jobs each end in a visible status. A job never touches main.</desc>
+        <defs>
+          <marker id="job-lifecycle-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#6F7074"/></marker>
+          <marker id="job-lifecycle-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#3B5DEF"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#F4F4F5"/>
+        <path d="M 112,40 V 72" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#job-lifecycle-arrow)"/>
+        <path d="M 184,100 H 248" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#job-lifecycle-arrow)"/>
+        <path d="M 248,128 H 184" fill="none" stroke="#6F7074" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#job-lifecycle-arrow)"/>
+        <path d="M 440,108 H 504" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#job-lifecycle-arrow)"/>
+        <path d="M 696,108 H 760" fill="none" stroke="#3B5DEF" stroke-width="1.4" marker-end="url(#job-lifecycle-arrow-accent)"/>
+        <path d="M 72,144 V 256" fill="none" stroke="#6F7074" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#job-lifecycle-arrow)"/>
+        <path d="M 272,144 V 192 Q 272,200 264,200 H 158 Q 150,200 150,208 V 256" fill="none" stroke="#6F7074" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#job-lifecycle-arrow)"/>
+        <path d="M 344,144 V 256" fill="none" stroke="#6F7074" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#job-lifecycle-arrow)"/>
+        <path d="M 416,144 V 192 Q 416,200 424,200 H 552 Q 560,200 560,208 V 256" fill="none" stroke="#6F7074" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#job-lifecycle-arrow)"/>
+        <path d="M 632,144 V 256" fill="none" stroke="#6F7074" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#job-lifecycle-arrow)"/>
+        <path d="M 672,144 V 192 Q 672,200 680,200 H 832 Q 840,200 840,208 V 256" fill="none" stroke="#6F7074" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#job-lifecycle-arrow)"/>
+        <text x="124" y="60" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">ENQUEUE</text>
+        <text x="216" y="92" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">CLAIM</text>
+        <text x="216" y="140" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">RETRY</text>
+        <text x="472" y="100" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">REPORT OK</text>
+        <text x="728" y="100" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">EXIT 0</text>
+        <text x="82" y="212" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">CANCEL</text>
+        <text x="211" y="192" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">CANCEL</text>
+        <text x="354" y="216" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">NO CHANGES</text>
+        <text x="488" y="192" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NO RETRY</text>
+        <text x="622" y="200" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="end" letter-spacing="0.06em">EXIT ≠ 0</text>
+        <text x="756" y="192" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">DECISIONS ONLY</text>
+        <circle cx="112" cy="34" r="6" fill="#1A1C21"/>
+        <rect x="40" y="72" width="144" height="72" rx="6" fill="#F4F4F5"/>
+        <rect x="40" y="72" width="144" height="72" rx="6" fill="#FFFFFF" stroke="#88898C" stroke-width="1"/>
+        <text x="112.0" y="99" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Waiting</text>
+        <text x="112.0" y="115" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">queued</text>
+        <text x="112.0" y="128" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">same bytes, same job</text>
+        <rect x="248" y="72" width="192" height="72" rx="6" fill="#F4F4F5"/>
+        <rect x="248" y="72" width="192" height="72" rx="6" fill="#FFFFFF" stroke="#88898C" stroke-width="1"/>
+        <text x="344.0" y="92" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Running</text>
+        <text x="344.0" y="108" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">running</text>
+        <text x="344.0" y="122" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">agent in its own git worktree</text>
+        <text x="344.0" y="134" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">tools: no git, no network</text>
+        <rect x="504" y="72" width="192" height="72" rx="6" fill="#F4F4F5"/>
+        <rect x="504" y="72" width="192" height="72" rx="6" fill="#FFFFFF" stroke="#88898C" stroke-width="1"/>
+        <text x="600.0" y="92" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Audit gate</text>
+        <text x="600.0" y="108" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">tools/audit.mjs</text>
+        <text x="600.0" y="122" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">the service’s own copy</text>
+        <text x="600.0" y="134" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">must exit 0 before any commit</text>
+        <rect x="760" y="72" width="160" height="72" rx="6" fill="#F4F4F5"/>
+        <rect x="760" y="72" width="160" height="72" rx="6" fill="#3B5DEF" stroke="#3B5DEF" stroke-width="1"/>
+        <text x="840.0" y="92" fill="#FFFFFF" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Committed</text>
+        <text x="840.0" y="108" fill="#FFFFFF" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">succeeded</text>
+        <text x="840.0" y="122" fill="#FFFFFF" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">on its own ingest/… branch</text>
+        <text x="840.0" y="134" fill="#FFFFFF" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">proposal → review inbox</text>
+        <rect x="40" y="256" width="144" height="72" rx="6" fill="#F4F4F5"/>
+        <rect x="40" y="256" width="144" height="72" rx="6" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="112.0" y="283" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Cancelled</text>
+        <text x="112.0" y="299" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">cancelled</text>
+        <text x="112.0" y="312" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">while queued or running</text>
+        <rect x="248" y="256" width="192" height="72" rx="6" fill="#F4F4F5"/>
+        <rect x="248" y="256" width="192" height="72" rx="6" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="344.0" y="283" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Nothing to review</text>
+        <text x="344.0" y="299" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">succeeded</text>
+        <text x="344.0" y="312" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">no proposal, empty branch deleted</text>
+        <rect x="504" y="256" width="192" height="72" rx="6" fill="#F4F4F5"/>
+        <rect x="504" y="256" width="192" height="72" rx="6" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="600.0" y="276" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Failed</text>
+        <text x="600.0" y="292" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">failed</text>
+        <text x="600.0" y="306" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">worktree kept to inspect</text>
+        <text x="600.0" y="318" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">error stays on the job</text>
+        <rect x="760" y="256" width="160" height="72" rx="6" fill="#F4F4F5"/>
+        <rect x="760" y="256" width="160" height="72" rx="6" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="840.0" y="276" fill="#1A1C21" font-size="12" font-weight="600" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">Needs a decision</text>
+        <text x="840.0" y="292" fill="#55565B" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle">blocked</text>
+        <text x="840.0" y="306" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">decisions only, no pages</text>
+        <text x="840.0" y="318" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="middle">→ Decision cards</text>
+        <text x="40" y="372" fill="#1A1C21" font-size="14" font-style="italic" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">A job never touches main: its only commit lands on its own ingest/… branch.</text>
+        <line x1="40" y1="388" x2="920" y2="388" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="40" y="415" fill="#55565B" font-size="8" font-weight="500" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">LEGEND</text>
+        <circle cx="127" cy="411" r="4" fill="#1A1C21"/><text x="137" y="414.5" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Enqueued</text>
+        <rect x="208" y="406" width="14" height="10" rx="2" fill="#FFFFFF" stroke="#88898C" stroke-width="1"/>
+        <text x="228" y="414.5" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Phase</text>
+        <rect x="272" y="406" width="14" height="10" rx="2" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="292" y="414.5" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Terminal status, no commit</text>
+        <rect x="444" y="406" width="14" height="10" rx="2" fill="#3B5DEF" stroke="#3B5DEF" stroke-width="1"/>
+        <text x="464" y="414.5" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Terminal status with a commit</text>
+        <line x1="620" y1="412" x2="648" y2="412" stroke="#6F7074" stroke-width="1.2" marker-end="url(#job-lifecycle-arrow)"/>
+        <text x="656" y="414.5" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Normal path</text>
+        <line x1="740" y1="412" x2="768" y2="412" stroke="#6F7074" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#job-lifecycle-arrow)"/>
+        <text x="776" y="414.5" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif">Retry or exit</text>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>

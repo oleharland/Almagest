@@ -1,6 +1,6 @@
 # Terminal Output
 
-What an Almagest session looks like while it runs. Formats only — the rules that
+What an Almagest session looks like while it runs. Formats only. The rules that
 change agent behaviour live in `agent/rules/ingest.md` → *Terminal output* and
 `agent/rules/wiki.md`, and are repeated at the bottom of this page for reference.
 
@@ -80,7 +80,7 @@ The sidecar is written before any entity extraction, so it gets its own lines.
   👉 Awaiting approval...
 ```
 
-An unchanged source never gets a block of its own — one line is enough:
+An unchanged source never gets a block of its own. One line is enough:
 
 ```
   ⏭️ [2/3] capability-matrix.xlsx — unchanged (sha 4f2a10c…), skipping
@@ -186,7 +186,7 @@ An audit error blocks the commit entirely. Nothing lands, including the clean pa
 ## Audit
 
 `tools/audit.mjs` prints this. Findings carry their check ID so the rule files and
-the report say the same word — the IDs are frozen; see `docs/audit.md`.
+the report say the same word. The IDs are frozen; see `docs/audit.md`.
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -248,14 +248,14 @@ Clean run:
 Everything above is shape. These change behaviour, and they are stated in the rule
 files:
 
-- **Verdict before work** — every file states new / changed / unchanged before any
+- **Verdict before work**: every file states new / changed / unchanged before any
   extraction output, so the reader can see what was skipped and why.
-- **Always show progress** — `[n/total]` on every file.
-- **Truncate hashes to 7 characters** followed by `…` — `b72fbfb…`, never the full
+- **Always show progress**: `[n/total]` on every file.
+- **Truncate hashes to 7 characters** followed by `…`: `b72fbfb…`, never the full
   64. The full digest lives in `manifest.yaml` and in each page's
   `sources[].sha256`.
-- **Surface contradictions inline** — quote both claims with their citations,
+- **Surface contradictions inline**: quote both claims with their citations,
   recommend a resolution, then stop.
-- **Group approval** — present every change for a file or batch, then pause once.
+- **Group approval**: present every change for a file or batch, then pause once.
   Never one prompt per page.
-- **No wall of text** — one piece of information per line.
+- **No wall of text**: one piece of information per line.

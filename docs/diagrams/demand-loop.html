@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Demand loop</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #F4F4F5;
+      --color-ink:     #1A1C21;
+      --color-muted:   #3E4044;
+      --color-accent:  #3B5DEF;
+      --font-sans:     'Geist Variable', 'Geist', system-ui, sans-serif;
+      --font-mono:     'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1200px; width: 100%; min-width: 0; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-sans);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 1.75rem);
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 960px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Loop · Almagest</p>
+    <h1>Demand loop</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 584" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="demand-loop-title demand-loop-desc">
+        <title id="demand-loop-title">Demand loop</title>
+        <desc id="demand-loop-desc">Requests to the brain are recorded as events and scored into a demand ranking; hot pages get stricter approval and a re-verify queue, unanswered questions become a gap list, and both lead to review and merge, which improves the pages and triggers a recompute.</desc>
+        <defs>
+        <marker id="demand-loop-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#6F7074"/></marker>
+        <marker id="demand-loop-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#3B5DEF"/></marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#F4F4F5"/>
+        <text x="124" y="300" fill="#3E4044" font-size="14" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-style="italic">What is read most gets checked most.</text>
+        <text x="124" y="320" fill="#3E4044" font-size="14" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-style="italic">What is asked and not answered</text>
+        <text x="124" y="340" fill="#3E4044" font-size="14" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-style="italic">becomes the to-do list.</text>
+        <path d="M 260,84 H 472 Q 480,84 480,92 V 184" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#demand-loop-arrow)"/>
+        <rect x="344" y="62" width="44" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="366" y="71" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">EVENTS</text>
+        <path d="M 590,216 H 752 Q 760,216 760,208 V 112" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#demand-loop-arrow)"/>
+        <rect x="651" y="194" width="40" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="671" y="203" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">SCORE</text>
+        <path d="M 840,112 V 248" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#demand-loop-arrow)"/>
+        <rect x="854" y="174" width="36" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="872" y="183" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">STALE</text>
+        <path d="M 480,280 V 408" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#demand-loop-arrow)"/>
+        <rect x="486" y="330" width="76" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="524" y="339" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">UNANSWERED</text>
+        <path d="M 790,320 V 392" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#demand-loop-arrow)"/>
+        <rect x="722" y="350" width="64" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="754" y="359" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">RE-VERIFY</text>
+        <path d="M 590,452 H 680" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#demand-loop-arrow)"/>
+        <rect x="601" y="462" width="68" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="635" y="471" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NEW SOURCE</text>
+        <path d="M 900,76 H 916 Q 924,76 924,84 V 444 Q 924,452 916,452 H 900" fill="none" stroke="#3B5DEF" stroke-width="1.2" marker-end="url(#demand-loop-arrow-accent)"/>
+        <rect x="864" y="350" width="52" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="890" y="359" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">STRICTER</text>
+        <path d="M 680,420 H 648 Q 640,420 640,412 V 272 Q 640,264 632,264 H 590" fill="none" stroke="#6F7074" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#demand-loop-arrow)"/>
+        <rect x="572" y="360" width="56" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="600" y="369" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">ON MERGE</text>
+        <path d="M 790,480 V 500 Q 790,508 782,508 H 158 Q 150,508 150,500 V 480" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#demand-loop-arrow)"/>
+        <rect x="448" y="490" width="44" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="470" y="499" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">MERGE</text>
+        <path d="M 100,408 V 128" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#demand-loop-arrow)"/>
+        <rect x="112" y="250" width="32" height="12" rx="2" fill="#F4F4F5"/>
+        <text x="128" y="259" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">READ</text>
+        <rect x="40" y="40" width="220" height="88" rx="6" fill="#F4F4F5"/>
+        <rect x="40" y="40" width="220" height="88" rx="6" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="56" y="64" fill="#1A1C21" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-weight="600">Requests to the brain</text>
+        <text x="56" y="82" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">MCP tools, site, web inbox, CLI</text>
+        <text x="56" y="98" fill="#3E4044" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">search · get_page · ask · feedback</text>
+        <text x="56" y="114" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">query text hashed on team, enterprise</text>
+        <rect x="680" y="40" width="220" height="72" rx="6" fill="#F4F4F5"/>
+        <rect x="680" y="40" width="220" height="72" rx="6" fill="#3B5DEF" stroke="#3B5DEF" stroke-width="1"/>
+        <text x="696" y="64" fill="#FFFFFF" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-weight="600">Hot pages</text>
+        <text x="696" y="82" fill="#FFFFFF" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">top 10% by score, and score ≥ 3</text>
+        <text x="696" y="98" fill="#FFFFFF" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">hot_percentile 90 · min_score 3</text>
+        <rect x="370" y="184" width="220" height="96" rx="6" fill="#F4F4F5"/>
+        <rect x="370" y="184" width="220" height="96" rx="6" fill="#1A1C21"/>
+        <text x="386" y="208" fill="#F4F4F5" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-weight="600">Events and demand score</text>
+        <text x="386" y="226" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">one event per request</text>
+        <text x="386" y="242" fill="#BCBCBE" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">Σ weight × 0.5^(age ÷ 14d)</text>
+        <text x="386" y="258" fill="#BCBCBE" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">get_page 1 · ask 0.6 · search 0.3</text>
+        <rect x="680" y="248" width="220" height="72" rx="6" fill="#F4F4F5"/>
+        <rect x="680" y="248" width="220" height="72" rx="6" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="696" y="272" fill="#1A1C21" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-weight="600">Re-verify queue</text>
+        <text x="696" y="290" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">hot pages due for a re-check</text>
+        <text x="696" y="306" fill="#3E4044" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">stale_after_days_hot: 30</text>
+        <rect x="370" y="408" width="220" height="72" rx="6" fill="#F4F4F5"/>
+        <rect x="370" y="408" width="220" height="72" rx="6" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="386" y="432" fill="#1A1C21" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-weight="600">Gap list</text>
+        <text x="386" y="450" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">unanswered questions, clustered</text>
+        <text x="386" y="466" fill="#3E4044" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">almagest gaps · similarity 0.5</text>
+        <rect x="680" y="392" width="220" height="88" rx="6" fill="#F4F4F5"/>
+        <rect x="680" y="392" width="220" height="88" rx="6" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="696" y="416" fill="#1A1C21" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-weight="600">Review and merge</text>
+        <text x="696" y="434" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">stricter approval on hot pages</text>
+        <text x="696" y="450" fill="#3E4044" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">approvals: solo 1 · team 2</text>
+        <text x="696" y="466" fill="#3E4044" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">enterprise 2 + owner team</text>
+        <rect x="40" y="408" width="220" height="72" rx="6" fill="#F4F4F5"/>
+        <rect x="40" y="408" width="220" height="72" rx="6" fill="#FFFFFF" stroke="#D4D4D6" stroke-width="1"/>
+        <text x="56" y="432" fill="#1A1C21" font-size="12" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start" font-weight="600">Wiki pages</text>
+        <text x="56" y="450" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">newly written or re-verified</text>
+        <text x="56" y="466" fill="#3E4044" font-size="9" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start">brain/wiki/</text>
+        <line x1="40" y1="532" x2="920" y2="532" stroke="rgba(26,28,33,0.10)" stroke-width="0.8"/>
+        <text x="40" y="560" fill="#55565B" font-size="8" font-family="'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.14em">LEGEND</text>
+        <path d="M 120,557 H 148" fill="none" stroke="#6F7074" stroke-width="1.2" marker-end="url(#demand-loop-arrow)"/>
+        <text x="160" y="560" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">next step</text>
+        <path d="M 248,557 H 276" fill="none" stroke="#3B5DEF" stroke-width="1.2" marker-end="url(#demand-loop-arrow-accent)"/>
+        <text x="288" y="560" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">hot page, stricter review</text>
+        <path d="M 464,557 H 492" fill="none" stroke="#6F7074" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#demand-loop-arrow)"/>
+        <text x="504" y="560" fill="#55565B" font-size="9" font-family="'Geist Variable', 'Geist', system-ui, sans-serif" text-anchor="start">hub recomputed after a merge</text>
+        </svg>
+    </div>
+  </div>
+</body>
+</html>

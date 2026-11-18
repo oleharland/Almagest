@@ -1,10 +1,15 @@
 # The Ingest Manifest
 
-`brain/manifest.yaml` is a machine-readable record of every source ever ingested into a brain. It exists for one reason: **incremental re-ingest**. Before the agent does any work on a source it looks the source up in the manifest and gets one of three answers — new, unchanged, or changed — and only the first and the third cost anything.
+`brain/manifest.yaml` is a machine-readable record of every source ever ingested into a brain. It exists for one reason: **incremental re-ingest**. Before the agent does any work on a source it looks the source up in the manifest and gets one of three answers (new, unchanged, or changed), and only the first and the third cost anything.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/reingest-decision-dark.png">
+  <img src="diagrams/reingest-decision.png" alt="Flowchart: a source is checked against the manifest by sha256 first and path second. A matching sha256 is unchanged and skipped. A matching path with a different sha256 is changed and re-ingested as a diff, with the sources sha256 updated on every citing page. No match is new and fully ingested.">
+</picture>
 
 The manifest is maintained by the agent. You will rarely edit it by hand, and the only good reason to do so is repairing drift.
 
-It records two things that make a citation checkable years later: the fingerprint of the source as ingested, and — for binaries — the path and digest of the committed text sidecar the pages actually cite.
+It records two things that make a citation checkable years later: the fingerprint of the source as ingested, and, for binaries, the path and digest of the committed text sidecar the pages actually cite.
 
 ## Why it exists
 
@@ -13,7 +18,7 @@ Without a manifest, duplicate detection has to fall back on the filename. That i
 > Ingest `q3-roadmap.md`. Edit it. Drop it back into `brain/raw/`.
 > Filename matching says "already processed" and skips it. Your edits never reach the wiki, and nothing tells you.
 
-The manifest replaces filename matching with a content fingerprint. A file that changed has a different sha256, so it is a **changed source** — the agent diffs it against the version it ingested last time and proposes targeted updates to the pages that source already produced.
+The manifest replaces filename matching with a content fingerprint. A file that changed has a different sha256, so it is a **changed source**. The agent diffs it against the version it ingested last time and proposes targeted updates to the pages that source already produced.
 
 The same problem exists remotely, in a milder form. Remote ingest already compared commit SHAs, but it read them out of a prose table in `index.md`. The manifest gives both source kinds one machine-readable home.
 
@@ -131,8 +136,8 @@ A fresh brain ships with `sources: []` and the same field reference in comments.
 ### Connector-only fields
 
 A `kind: connector` source is an item the Almagest service fetched from an MCP
-server ([v2/connectors.md](v2/connectors.md)). There is no original on disk —
-the provider holds it — so the rendered **snapshot** is both the thing
+server ([v2/connectors.md](v2/connectors.md)). There is no original on disk,
+because the provider holds it, so the rendered **snapshot** is both the thing
 fingerprinted and the committed sidecar pages cite. `sha256` and
 `extracted_sha256` are therefore the same digest, and `path` and `extracted`
 the same file.
@@ -166,7 +171,7 @@ A v1 `sources.remote` repo now syncs as a connector (`github` / `gitlab` recipe)
 
 A manifest entry is a receipt. On its own it proves an ingest happened; it does not let anyone check what the ingest claimed. The sidecar is the part that does.
 
-Every binary source — PDF, deck, spreadsheet, audio, video — is extracted to plain text at `brain/raw/extracted/<original-filename>.txt` **before** any entity is pulled out of it, and that file is committed. The original stays in `brain/raw/processed/` and stays gitignored.
+Every binary source (PDF, deck, spreadsheet, audio, video) is extracted to plain text at `brain/raw/extracted/<original-filename>.txt` **before** any entity is pulled out of it, and that file is committed. The original stays in `brain/raw/processed/` and stays gitignored.
 
 ```
 brain/raw/processed/system-overview.pdf         gitignored — the original
@@ -182,7 +187,7 @@ The sidecar carries markers so a locator resolves to a place in it. Each marker 
 === t 00:14:32 ===
 ```
 
-That buys three things at once:
+This gives three things at once:
 
 | | |
 |---|---|
@@ -190,7 +195,7 @@ That buys three things at once:
 | **Byte-level re-ingest** | A changed binary is diffed against its committed sidecar. The old "the comparison was semantic, not byte-level" caveat now applies only to sources with no extractable text at all |
 | **A checkable audit** | `tools/audit.mjs` can resolve `sources[].path` (`PROV-001`) and compare digests (`CITE-005`) because the file it needs is in the repo |
 
-Text sources get no sidecar: the original is already committed and is cited directly. Remote sources get none either — the `commit` pins the exact bytes. Connector sources are the opposite case: the snapshot is the *only* copy in the repo, written by the service under `brain/raw/extracted/<connector-id>/`, with `=== section: … ===`, `=== row n ===` and `=== t hh:mm:ss ===` markers as well as page markers.
+Text sources get no sidecar: the original is already committed and is cited directly. Remote sources get none either, because the `commit` pins the exact bytes. Connector sources are the opposite case: the snapshot is the *only* copy in the repo, written by the service under `brain/raw/extracted/<connector-id>/`, with `=== section: … ===`, `=== row n ===` and `=== t hh:mm:ss ===` markers as well as page markers.
 
 ### The digest appears twice, on purpose
 
@@ -201,14 +206,14 @@ The same sha256 is recorded in two places:
 | `brain/manifest.yaml` | `extracted_sha256` (binaries) / `sha256` (text) | The version of the source this brain has ingested |
 | Every wiki page citing it | `sources[].sha256` | The version of the source *that page's citations were checked against* |
 
-They are meant to be equal. When they are not, the page is citing a version the manifest has moved past — and `CITE-005` reports it:
+They are meant to be equal. When they are not, the page is citing a version the manifest has moved past, and `CITE-005` reports it:
 
 ```
 CITE-005  wiki/system-architecture.md cites system-overview at b45968e…;
           manifest is at b72fbfb… — 4 citations unverified
 ```
 
-This is the difference between a heuristic and a fact. `last_verified` says a date went by and invites you to guess whether anything moved. `CITE-005` says the bytes changed and names the four citations nobody has re-checked since. Staleness stops being a feeling about age and becomes a countable list of work.
+`last_verified` says a date went by and invites you to guess whether anything moved. `CITE-005` says the bytes changed and names the four citations nobody has re-checked since.
 
 Closing it out means correcting the locators against the sidecar diff and updating `sources[].sha256` on each page. A page left carrying the old digest keeps failing the audit, which is the point: the failure is the record that the check has not been done.
 
@@ -223,7 +228,7 @@ shasum -a 256 "brain/raw/system-overview.pdf" | cut -d' ' -f1   # macOS / BSD
 sha256sum  "brain/raw/system-overview.pdf" | cut -d' ' -f1      # Linux
 ```
 
-Binary sources are hashed twice, because two different files matter. The original's digest goes in `sha256` and is what change detection compares. The sidecar's digest goes in `extracted_sha256`, and that is the one wiki pages carry — a page cites the file its locators point into, which is the sidecar.
+Binary sources are hashed twice, because two different files matter. The original's digest goes in `sha256` and is what change detection compares. The sidecar's digest goes in `extracted_sha256`, and that is the one wiki pages carry, because a page cites the file its locators point into, which is the sidecar.
 
 Remote sources are not hashed. The fingerprint is the commit SHA the file was read at, which the provider supplies over MCP.
 
@@ -233,25 +238,25 @@ Filename, modification time, and file size are never used to decide whether a so
 
 ### Case 1 — New
 
-No manifest entry matches. Normal full ingest: write the sidecar if the source is binary, extract entities, propose pages, write them to the ingest branch, then add a manifest entry with `first_ingested` and `last_ingested` both set to today — in the same commit as the pages.
+No manifest entry matches. Normal full ingest: write the sidecar if the source is binary, extract entities, propose pages, write them to the ingest branch, then add a manifest entry with `first_ingested` and `last_ingested` both set to today, in the same commit as the pages.
 
 ### Case 2 — Unchanged
 
-An entry matches and the `sha256` (or `commit`) is identical. The agent skips the source entirely — it does not re-read it, does not re-extract the sidecar, does not touch the wiki, and does not rewrite the entry. A no-op line goes into `log.md` so the skip is visible.
+An entry matches and the `sha256` (or `commit`) is identical. The agent skips the source entirely. It does not re-read it, does not re-extract the sidecar, does not touch the wiki, and does not rewrite the entry. A no-op line goes into `log.md` so the skip is visible.
 
 This is the case that makes re-running ingest over a large library cheap.
 
 ### Case 3 — Changed
 
-An entry matches but the fingerprint differs. This is the interesting one, and it is **not** treated as a new source.
+An entry matches but the fingerprint differs. It is **not** treated as a new source.
 
-1. **The agent works out what changed — as a byte diff.** For text sources the previous version is still in `brain/raw/processed/`:
+1. **The agent works out what changed, as a byte diff.** For text sources the previous version is still in `brain/raw/processed/`:
    ```bash
    git diff --no-index brain/raw/processed/notes.md brain/raw/notes.md
    ```
    For PDFs, decks, video, and spreadsheets the old original is often gitignored and absent, but its **sidecar is committed**. The agent extracts the new version to a scratch path and diffs it against the sidecar, which is a real diff of the same kind. Because the page markers are in the diff, a hunk crossing a `=== page 12 ===` line is a citation that needs re-checking.
 
-   Only a source with no extractable text at all (`extracted: none` — an unOCR'd scan, silent footage) falls back to the old behaviour: re-read it, compare against the claims already on the wiki, and say in the summary that the comparison was semantic, not byte-level.
+   Only a source with no extractable text at all (`extracted: none`, as with an unOCR'd scan or silent footage) falls back to the old behaviour: re-read it, compare against the claims already on the wiki, and say in the summary that the comparison was semantic, not byte-level.
 
 2. **Scope comes from the manifest.** The entry's `pages` list names the wiki pages that source is accountable for. Those get loaded first. Scope widens only if the new version introduces a genuinely new entity.
 
@@ -263,13 +268,13 @@ An entry matches but the fingerprint differs. This is the interesting one, and i
    | **Revision** — the source now says something different from what the wiki records from it | A contradiction. Routed through the contradiction protocol in `agent/rules/wiki.md`: both claims quoted with sources, a resolution proposed, you decide |
    | **Removal** — a claim the wiki cites is no longer in the source | Never deleted silently. Flagged, with amend / mark disputed / remove proposed |
 
-4. **A newer version is not automatic authority.** "The source was edited since we ingested it" is a strong argument for replacing the old claim, and the agent will recommend that — but it is a recommendation, and the contradiction gate still runs.
+4. **A newer version is not automatic authority.** "The source was edited since we ingested it" is a strong argument for replacing the old claim, and the agent will recommend that, but it is a recommendation, and the contradiction gate still runs.
 
-5. **Citations get re-verified mechanically.** Page numbers, section names, row numbers, and timestamps move when a source is edited. `CITE-005` names exactly which pages are affected — it compares each page's `sources[].sha256` against the manifest and reports *"this page cites v1; the manifest is at v2 — 4 citations unverified"*. The agent corrects the locators against the sidecar diff, updates `sources[].sha256` on every touched page, and re-runs the audit. The re-ingest is not finished while `CITE-005` still fires for that source.
+5. **Citations get re-verified mechanically.** Page numbers, section names, row numbers, and timestamps move when a source is edited. `CITE-005` names exactly which pages are affected: it compares each page's `sources[].sha256` against the manifest and reports *"this page cites v1; the manifest is at v2: 4 citations unverified"*. The agent corrects the locators against the sidecar diff, updates `sources[].sha256` on every touched page, and re-runs the audit. The re-ingest is not finished while `CITE-005` still fires for that source.
 
-6. **On approval the entry is updated in place** — new fingerprint, new `bytes`, `last_ingested` set to today, `pages` extended with anything newly touched. `id` and `first_ingested` never change, and no second entry is created for the same source.
+6. **On approval the entry is updated in place**: new fingerprint, new `bytes`, `last_ingested` set to today, `pages` extended with anything newly touched. `id` and `first_ingested` never change, and no second entry is created for the same source.
 
-Nothing here bypasses review. Ingest writes to an `ingest/<source-slug>-<sha7>` branch, never to `main`, and `tools/audit.mjs` runs before the commit — an error blocks the whole commit. Reaching `main` takes a human merging the diff. Incremental re-ingest changes *what the agent proposes*; it never changes *who has to read it*.
+Nothing here bypasses review. Ingest writes to an `ingest/<source-slug>-<sha7>` branch, never to `main`, and `tools/audit.mjs` runs before the commit, and an error blocks the whole commit. Reaching `main` takes a human merging the diff. Incremental re-ingest changes *what the agent proposes*; it never changes *who has to read it*.
 
 ## Manifest vs. index.md
 
@@ -308,11 +313,11 @@ It reports what it found and proposes repairs. It never rewrites the manifest si
 
 ### Sources that vanish
 
-`brain/raw/processed/` is gitignored for binaries — PDFs, video, spreadsheets, images. On a fresh clone those originals are simply not there. That is deliberate: a repo is not a file server.
+`brain/raw/processed/` is gitignored for binaries (PDFs, video, spreadsheets, images). On a fresh clone those originals are simply not there. That is deliberate: a repo is not a file server.
 
-It used to mean something worse than it sounds. The manifest entry survived, so you kept the *receipt* — but the evidence was gone, and every `p.12` on every page citing that PDF became permanently uncheckable by anyone who had not been there. For a brain whose whole claim is verifiability, that was the deepest hole in it.
+Before sidecars, that meant more than it sounds like. The manifest entry survived, so you kept the *receipt*, but the evidence was gone, and every `p.12` on every page citing that PDF became permanently uncheckable by anyone who had not been there. For a brain whose whole claim is verifiability, that was the deepest hole in it.
 
-**The sidecar closes it.** `brain/raw/extracted/<name>.pdf.txt` is committed, carries the full text with page markers, and is the file `sources[].path` points at. A fresh clone can follow every citation, grep the passage, and diff the next version of the source against it — with no original present at all.
+**The sidecar closes it.** `brain/raw/extracted/<name>.pdf.txt` is committed, carries the full text with page markers, and is the file `sources[].path` points at. A fresh clone can follow every citation, grep the passage, and diff the next version of the source against it, with no original present at all.
 
 The agent still sets `status: missing` when the original goes, and still does **not** delete the pages it produced. Drop the same file back into `raw/` and its hash will match, so it resolves as unchanged and `status` returns to `ingested` with no wiki work and no re-extraction.
 
@@ -320,15 +325,15 @@ The exception is a source with no extractable text. There the sidecar is `none`,
 
 ### Renames
 
-A file whose sha256 matches an existing entry at a different path is a rename, not a new source. The agent updates `path`, appends the old one to `previous_paths`, and does not re-ingest anything — `last_ingested` stays where it was, because nothing was ingested.
+A file whose sha256 matches an existing entry at a different path is a rename, not a new source. The agent updates `path`, appends the old one to `previous_paths`, and does not re-ingest anything. `last_ingested` stays where it was, because nothing was ingested.
 
-The sidecar is renamed to match, `extracted` is updated, and so is `sources[].path` on every page in `pages` — otherwise `PROV-001` fires across all of them. No digest changes: the content did not.
+The sidecar is renamed to match, `extracted` is updated, and so is `sources[].path` on every page in `pages`; otherwise `PROV-001` fires across all of them. No digest changes: the content did not.
 
 If the old path still exists on disk too, it is a duplicate copy rather than a rename. The agent skips the new file, logs it, and asks whether you want the copy removed.
 
 ## Forcing a full re-ingest
 
-To reprocess a source from scratch — after fixing a bad extraction, or after changing your `page_types`:
+To reprocess a source from scratch (after fixing a bad extraction, or after changing your `page_types`):
 
 > "Re-ingest system-overview.pdf from scratch, ignore the manifest"
 
@@ -337,7 +342,7 @@ The agent ignores that entry for the run and treats the source as new. Two thing
 - The existing wiki pages are still there, so entity matching still routes to *update* rather than *create*. You will not get duplicate pages.
 - Contradictions still go through the full protocol.
 
-On approval the entry is refreshed rather than duplicated, and `first_ingested` is preserved — the record of when the source first entered the brain is not something a re-run should destroy.
+On approval the entry is refreshed rather than duplicated, and `first_ingested` is preserved. The record of when the source first entered the brain is not something a re-run should destroy.
 
 To re-ingest everything, delete `brain/manifest.yaml` and let the agent recreate it. This is a heavy operation on a large brain and gives you the full approval queue again. Prefer the targeted form.
 
@@ -350,6 +355,6 @@ manifest:
   path: brain/manifest.yaml
 ```
 
-The only reason to change it is a multi-brain setup, where each brain carries its own manifest next to its own `index.md` — see [Multi-Brain Expansion](multi-brain.md).
+The only reason to change it is a multi-brain setup, where each brain carries its own manifest next to its own `index.md` (see [Multi-Brain Expansion](multi-brain.md)).
 
 There is deliberately no enable/disable switch, no choice of hash algorithm, and no mtime-based mode. Filename and mtime matching are the bug the manifest exists to fix, so they are not offered as options, and sha256 needs no configuration.
