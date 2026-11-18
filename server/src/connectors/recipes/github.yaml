@@ -5,10 +5,13 @@
 # This is also what v1 `sources.remote` entries with `provider: github` run
 # through: `select` is filled from the remote entry (repo, paths, branch).
 #
-# verified: no — written against the server's published tool names
-# (list_commits, get_repository_tree, get_file_contents) and their documented
-# arguments; not run against the live server. The tree tool is newer than the
-# other two; if your server version lacks it, override `list:` in config.
+# verified: partial — list and fetch ran against the hosted server in a test
+# run on 2026-11-18 (one repository, 16 files synced and ingested). The hosted
+# server offers get_repository_tree only when the `git` toolset is requested:
+# .mcp.json sends `X-MCP-Toolsets: repos,git`, and without it a sync fails with
+# `unknown tool "get_repository_tree"`. A self-hosted server version that lacks
+# the tree tool needs `list:` overridden in config. Not checked: pagination of
+# large trees, and branches other than the default.
 # The mapping logic (resolve → tree → glob filter → fetch) is covered by the
 # connector tests against a fake server with the same tool names.
 #

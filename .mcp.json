@@ -4,7 +4,9 @@
       "type": "http",
       "url": "https://api.githubcopilot.com/mcp/",
       "headers": {
-        "Authorization": "Bearer ${GITHUB_TOKEN:-}"
+        "Authorization": "Bearer ${GITHUB_TOKEN:-}",
+        "X-MCP-Toolsets": "repos,git",
+        "X-MCP-Readonly": "true"
       }
     },
     "gitlab": {
