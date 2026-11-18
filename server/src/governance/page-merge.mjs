@@ -7,30 +7,51 @@
  * the two versions carry different sources and different sections. This
  * module combines them without an agent, and only when that is provably safe.
  *
- *   mergePages({ base, ours, theirs, extended })  →  { ok: true, text } | { ok: false, reason }
- *   pageProvenance(merged, ours, theirs)          →  null | reason
+ *   mergePages({ base, ours, theirs })            →  { ok: true, text } | { ok: false, reason }
+ *   pageProvenance(merged, ours, theirs, base?)   →  null | reason
  *
  * `ours` is the page on main, `theirs` the page at the reviewed head, `base`
  * the page at their merge base (null when both sides added it).
  *
- * The rules are in docs/v2/governance.md → How a merge happens. Everything
- * they do not cover is a clash, and a clash falls through to the conflict
- * revise path, exactly as before this module existed.
+ * The rules are in docs/v2/governance.md → How a merge happens. They are
+ * strictly conservative: where there is any doubt it is a clash, and a clash
+ * falls through to the conflict revise path, exactly as before this module
+ * existed. Nothing here depends on what the agent reported (`extends` is
+ * information for the reviewer and decides nothing).
  *
- * The invariant that makes this safe to put in front of `main`: every body
- * line and every frontmatter value of the merged page occurs in main's version
- * or in the reviewed head's version. Nothing is invented, reworded or
- * reordered within a line. `mergePages` checks it before it returns, and
- * governance/merge.mjs checks it again from main and the reviewed head, on the
+ *   - With a common version, a section is merged line by line against the
+ *     base's section with `git merge-file`, and accepted only when that is
+ *     clean. A list in the frontmatter is merged three ways, so a removal
+ *     approved on main stays removed. A scalar must be equal or changed on one
+ *     side only.
+ *   - With no common version, a section is kept when it is the same on both
+ *     sides, or when one side's text is the other's with whole lines appended;
+ *     lists are unions; any differing scalar is a clash.
+ *
+ * Invariant that makes this safe to put in front of `main`: every body line and
+ * every frontmatter value of the merged page occurs in main's version or in
+ * the reviewed head's version, the lines that come from one side keep that
+ * side's order, and a list item the common version had and either side removed
+ * is not back. `mergePages` checks it before it returns, and governance/merge.mjs
+ * checks it again from main, the reviewed head and their merge base, on the
  * commit it is about to move main to, whoever made that commit.
  *
- * Pure. Parsing is gray-matter plus tools/lib/wiki-core.mjs, the same pair the
- * audit and the review builder use.
+ * Parsing is gray-matter through safeFrontmatter (a `---js` block is refused,
+ * never run) plus tools/lib/wiki-core.mjs, the same pair the audit and the
+ * review builder use.
  */
+import { execFile } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import matter from 'gray-matter';
 import YAML from 'yaml';
 
-import { asString, sectionNames } from '../../../tools/lib/wiki-core.mjs';
+import { asString, safeFrontmatter, sectionNames } from '../../../tools/lib/wiki-core.mjs';
+import { childEnv } from '../core/git.mjs';
+
+const parseFrontmatter = safeFrontmatter(matter);
 
 class Clash extends Error {}
 const clash = (why) => { throw new Clash(why); };
@@ -59,8 +80,8 @@ const eq = (a, b) => stable(a) === stable(b);
 export function parsePage(text) {
   if (typeof text !== 'string') return null;
   try {
-    // `{}` bypasses gray-matter's cache, which hands back shared objects.
-    const f = matter(text, {});
+    // safeFrontmatter passes its own options, which bypasses gray-matter's cache (it hands back shared objects).
+    const f = parseFrontmatter(text);
     if (!/^---\r?\n/.test(text)) return null;
     return { data: plain(f.data || {}), matter: f.matter, body: f.content };
   } catch { return null; }
@@ -107,65 +128,88 @@ function splitSections(body) {
 
 // ── frontmatter ──────────────────────────────────────────────────────────────
 
-const SAME_KEYS = ['title', 'type', 'tier', 'origin'];
-const ONE_SIDE_KEYS = ['status', 'confidence', 'owner'];
 const LIST_KEYS = ['aliases', 'tags', 'related'];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}/;
 
-const asList = (v) => (v === undefined || v === null || v === '' ? [] : Array.isArray(v) ? v : [v]);
+const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
-/** Union of two lists, first list's order first, duplicates (by value) once. */
-function unionList(a, b) {
+/** A list value as an array: absent, null and '' are the empty list; anything else that is not a list is a clash. */
+function asList(key, v) {
+  if (v === undefined || v === null || v === '') return [];
+  if (!Array.isArray(v)) clash(`${key} is not a list`);
+  return v;
+}
+
+/**
+ * A list, merged. With a base: (ours ∪ theirs) − (base − ours) − (base − theirs),
+ * main's order first, so an item either side removed since the base stays
+ * removed. Without one: the union. Items are compared by value.
+ */
+function mergeList(key, b, o, t, hasBase) {
+  const [ol, tl] = [asList(key, o), asList(key, t)];
+  const bl = hasBase ? asList(key, b) : [];
+  const keys = (list) => new Set(list.map(stable));
+  const [inO, inT, inB] = [keys(ol), keys(tl), keys(bl)];
   const out = [];
   const seen = new Set();
-  for (const item of [...asList(a), ...asList(b)]) {
+  for (const item of [...ol, ...tl]) {
     const k = stable(item);
-    if (!seen.has(k)) { seen.add(k); out.push(item); }
+    if (seen.has(k)) continue;
+    seen.add(k);
+    if (inB.has(k) && !(inO.has(k) && inT.has(k))) continue;   // removed on a side since the base
+    out.push(item);
   }
   return out;
 }
 
-function unionSources(a, b) {
-  if ((a !== undefined && !Array.isArray(a)) || (b !== undefined && !Array.isArray(b))) clash('sources is not a list');
-  const out = [];
-  const byId = new Map();
-  for (const entry of [...asList(a), ...asList(b)]) {
+/** `sources` by `id`: the three-way list rule, and the same id with different content on the two sides is a clash. */
+function mergeSources(b, o, t, hasBase) {
+  for (const v of [o, t, hasBase ? b : undefined]) if (v !== undefined && v !== null && !Array.isArray(v)) clash('sources is not a list');
+  const keyOf = (entry) => {
     const id = entry && typeof entry === 'object' ? asString(entry.id).trim() : '';
-    if (!id) {
-      if (!out.some((e) => eq(e, entry))) out.push(entry);
-      continue;
+    return id ? `id:${id}` : `value:${stable(entry)}`;
+  };
+  const index = (list) => {
+    const m = new Map();
+    for (const entry of list || []) {
+      const k = keyOf(entry);
+      if (m.has(k) && !eq(m.get(k), entry)) clash(`source ${k.slice(3)} is listed twice with different content`);
+      m.set(k, entry);
     }
-    const prev = byId.get(id);
-    if (!prev) { byId.set(id, entry); out.push(entry); continue; }
-    const key = (e) => `${asString(e.path).trim()}|${asString(e.sha256).trim().toLowerCase()}`;
-    if (key(prev) !== key(entry)) clash(`source ${id} points at different files on the two sides`);
+    return m;
+  };
+  const [O, T] = [index(o), index(t)];
+  const B = hasBase ? index(b) : new Map();
+  const out = [];
+  for (const k of [...O.keys(), ...[...T.keys()].filter((x) => !O.has(x))]) {
+    const [oe, te, be] = [O.get(k), T.get(k), B.get(k)];
+    if (oe !== undefined && te !== undefined) {
+      if (!eq(oe, te)) clash(`source ${k.slice(3)} differs on the two sides`);
+      out.push(oe);
+    } else {
+      const only = oe !== undefined ? oe : te;
+      if (be !== undefined) {
+        if (!eq(only, be)) clash(`source ${k.slice(3)} was removed on one side and changed on the other`);
+        continue;   // removed on one side, unchanged on the other: stays removed
+      }
+      out.push(only);
+    }
   }
   return out;
 }
 
-/** Equal, or present on one side only (a one-sided deletion against an unchanged value stays deleted). */
-function oneSided(key, b, o, t, hasBase) {
-  if (eq(o, t)) return o;
-  if (o === undefined || t === undefined) {
-    const kept = o === undefined ? t : o;
-    if (hasBase && b !== undefined) {
-      if (eq(kept, b)) return undefined;
-      clash(`${key} was removed on one side and changed on the other`);
-    }
-    return kept;
-  }
-  clash(`${key} differs`);
-}
-
-function changedOnOneSide(key, b, o, t, hasBase, extended) {
+/**
+ * A value that is equal on both sides, or changed on one side only since the
+ * base. With no base, any difference is a clash.
+ */
+function scalar(key, b, o, t, hasBase) {
   if (eq(o, t)) return o;
   if (hasBase) {
     if (eq(o, b)) return t;
     if (eq(t, b)) return o;
     clash(`${key} was changed differently on the two sides`);
   }
-  if (extended) return o;
-  clash(`${key} differs and there is no common version to say which one changed`);
+  return clash(`${key} differs and there is no common version to say which one changed`);
 }
 
 function earlierLater(key, o, t, pickEarlier) {
@@ -177,22 +221,22 @@ function earlierLater(key, o, t, pickEarlier) {
 }
 
 function mergeRelations(b, o, t, hasBase) {
-  const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
-  if (o === undefined || t === undefined || !isObj(o) || !isObj(t)) return oneSided('relations', b, o, t, hasBase);
+  if (!isObj(o) || !isObj(t)) return scalar('relations', b, o, t, hasBase);
+  const bb = isObj(b) ? b : {};
   const out = {};
   for (const k of [...Object.keys(o), ...Object.keys(t).filter((x) => !(x in o))]) {
     if (Array.isArray(o[k]) || Array.isArray(t[k])) {
-      if ((o[k] !== undefined && !Array.isArray(o[k])) || (t[k] !== undefined && !Array.isArray(t[k]))) clash(`relations.${k} is not a list`);
-      out[k] = unionList(o[k], t[k]);
+      const list = mergeList(`relations.${k}`, bb[k], o[k], t[k], hasBase);
+      if (list.length || o[k] !== undefined) out[k] = list;
     } else {
-      const v = oneSided(`relations.${k}`, b?.[k], o[k], t[k], hasBase);
+      const v = scalar(`relations.${k}`, bb[k], o[k], t[k], hasBase);
       if (v !== undefined) out[k] = v;
     }
   }
   return out;
 }
 
-function mergeFrontmatter(B, O, T, extended) {
+function mergeFrontmatter(B, O, T) {
   const hasBase = B !== null;
   const out = {};
   const keys = [...Object.keys(O), ...Object.keys(T).filter((k) => !(k in O))];
@@ -201,18 +245,16 @@ function mergeFrontmatter(B, O, T, extended) {
     const o = O[k];
     const t = T[k];
     let v;
-    if (SAME_KEYS.includes(k)) {
-      if (!eq(o, t)) clash(`${k} differs`);
-      v = o;
-    } else if (ONE_SIDE_KEYS.includes(k)) v = changedOnOneSide(k, b, o, t, hasBase, extended);
-    else if (k === 'date_created') v = o === undefined ? t : t === undefined ? o : earlierLater(k, o, t, true);
+    if (k === 'date_created') v = o === undefined ? t : t === undefined ? o : earlierLater(k, o, t, true);
     else if (k === 'date_modified') v = o === undefined ? t : t === undefined ? o : earlierLater(k, o, t, false);
     // Earlier of the two; a page one side never verified is not verified as a whole.
     else if (k === 'last_verified') v = o === undefined || t === undefined ? undefined : earlierLater(k, o, t, true);
-    else if (k === 'sources') v = unionSources(o, t);
-    else if (LIST_KEYS.includes(k)) v = unionList(o, t);
-    else if (k === 'relations') v = mergeRelations(b, o, t, hasBase);
-    else v = oneSided(k, b, o, t, hasBase);
+    else if (k === 'sources') v = mergeSources(b, o, t, hasBase);
+    else if (LIST_KEYS.includes(k)) {
+      const list = mergeList(k, b, o, t, hasBase);
+      v = list.length || o !== undefined ? list : undefined;
+    } else if (k === 'relations') v = mergeRelations(b, o, t, hasBase);
+    else v = scalar(k, b, o, t, hasBase);   // title, type, tier, origin, status, confidence, owner and any other key
     if (v !== undefined) out[k] = v;
   }
   return out;
@@ -220,39 +262,46 @@ function mergeFrontmatter(B, O, T, extended) {
 
 // ── body ─────────────────────────────────────────────────────────────────────
 
-const lineSet = (lines) => new Set(lines.filter((l) => !isBlank(l)));
-const superset = (big, small) => { const s = lineSet(big); return [...lineSet(small)].every((l) => s.has(l)); };
+const sameLines = (a, b) => a.length === b.length && a.every((l, i) => l === b[i]);
+/** `short` is `long` with more whole lines after it, line for line. */
+const isPrefix = (short, long) => short.length < long.length && short.every((l, i) => l === long[i]);
 
-/** Main's lines, then the reviewed head's lines main does not already have, paragraph breaks kept. */
-function appendMissing(mine, theirs) {
-  const have = lineSet(mine);
-  const add = [];
-  let gap = false;
-  for (const l of theirs) {
-    if (isBlank(l)) { gap = add.length > 0; continue; }
-    if (have.has(l)) continue;
-    if (gap) add.push('');
-    gap = false;
-    add.push(l);
-  }
-  return add.length ? [...mine, '', ...add] : mine;
+/** Run `git merge-file -p` on three texts. The merged text when it is clean, null when there is any conflict or it failed. */
+function mergeFile(base, ours, theirs) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-section-'));
+  const [fo, fb, ft] = ['ours', 'base', 'theirs'].map((n) => path.join(dir, n));
+  fs.writeFileSync(fo, ours);
+  fs.writeFileSync(fb, base);
+  fs.writeFileSync(ft, theirs);
+  return new Promise((resolve) => {
+    execFile('git', ['merge-file', '-p', fo, fb, ft], { env: childEnv(), maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => {
+      fs.rmSync(dir, { recursive: true, force: true });
+      resolve(err ? null : String(stdout));
+    });
+  });
 }
 
-function mergeSection(b, o, t, extended) {
+const toText = (lines) => (lines.length ? `${lines.join('\n')}\n` : '');
+
+async function mergeSection(b, o, t) {
   const [oc, tc] = [core(o.lines), core(t.lines)];
-  if (eq(oc, tc)) return o.lines;
+  const label = o.name || 'the start of the page';
+  if (sameLines(oc, tc)) return o.lines;
   if (b) {
     const bc = core(b.lines);
-    if (eq(oc, bc)) return t.lines;
-    if (eq(tc, bc)) return o.lines;
+    if (sameLines(oc, bc)) return t.lines;
+    if (sameLines(tc, bc)) return o.lines;
+    const text = await mergeFile(toText(bc), toText(oc), toText(tc));
+    if (text === null) clash(`section “${label}” was changed on both sides in a way that does not merge line by line`);
+    return text.split('\n').slice(0, -1);
   }
-  if (superset(oc, tc)) return o.lines;
-  if (superset(tc, oc)) return t.lines;
-  if (extended) return [...appendMissing(oc, tc), ''];
-  return clash(`section “${o.name || 'the start of the page'}” was written differently on the two sides`);
+  // No common version: only a plain addition at the end is safe to take.
+  if (isPrefix(oc, tc)) return t.lines;
+  if (isPrefix(tc, oc)) return o.lines;
+  return clash(`section “${label}” was written differently on the two sides`);
 }
 
-function mergeBody(bBody, oBody, tBody, extended) {
+async function mergeBody(bBody, oBody, tBody) {
   const O = splitSections(oBody);
   const T = splitSections(tBody);
   const B = bBody === null ? null : splitSections(bBody);
@@ -264,13 +313,16 @@ function mergeBody(bBody, oBody, tBody, extended) {
     let lines;
     let heading;
     if (o && t) {
-      lines = mergeSection(b, o, t, extended);
+      if ((o.heading ?? '').trim() !== (t.heading ?? '').trim()) clash(`section “${o.name}” is spelled differently on the two sides`);
+      lines = await mergeSection(b, o, t);
       heading = o.heading;
     } else {
       const only = o || t;
-      // Gone on one side: if the other side left it as it was, it stays gone.
-      if (b && core(only.lines).join('\n') === core(b.lines).join('\n')) continue;
-      if (b) clash(`section “${only.name}” was removed on one side and changed on the other`);
+      if (b) {
+        // Gone on one side: if the other side left it as it was, it stays gone.
+        if (sameLines(core(only.lines), core(b.lines))) continue;
+        clash(`section “${only.name}” was removed on one side and changed on the other`);
+      }
       lines = only.lines;
       heading = only.heading;
     }
@@ -311,20 +363,65 @@ function leaves(data) {
 }
 
 /**
- * Does every body line and every frontmatter value of `merged` occur in `ours`
- * (main) or `theirs` (the reviewed head)? Returns null when it does, else why not.
- * Blank lines carry no content and are not checked.
+ * Can `result` be read as an interleaving of a subsequence of `a` and a
+ * subsequence of `b`? That is, can every line be attributed to one side so that
+ * the lines attributed to a side keep that side's order? The states are the
+ * (position in a, position in b) pairs that are still possible; only the
+ * earliest ones matter, so the frontier stays as small as the shorter side.
  */
-export function pageProvenance(merged, ours, theirs) {
+function interleaves(result, a, b) {
+  let states = [[0, 0]];
+  for (const line of result) {
+    const next = [];
+    for (const [i, j] of states) {
+      const ai = a.indexOf(line, i);
+      if (ai !== -1) next.push([ai + 1, j]);
+      const bj = b.indexOf(line, j);
+      if (bj !== -1) next.push([i, bj + 1]);
+    }
+    if (!next.length) return false;
+    next.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+    states = [];
+    let bestJ = Infinity;
+    for (const [i, j] of next) {
+      if (j < bestJ) { states.push([i, j]); bestJ = j; }
+    }
+  }
+  return true;
+}
+
+/**
+ * Is `merged` made only of what was reviewed? Returns null when it is, else why not.
+ *
+ *   - every body line occurs in `ours` (main) or `theirs` (the reviewed head),
+ *     and the lines that come from one side keep that side's order;
+ *   - every frontmatter value occurs in one of the two;
+ *   - with `base` (the common version), no list item that either side removed
+ *     since the base is back.
+ *
+ * Blank lines carry no content and are not checked. The review gate calls this
+ * from the three versions in git, so it does not depend on how a commit was made.
+ */
+export function pageProvenance(merged, ours, theirs, base = null) {
   const [m, o, t] = [parsePage(merged), parsePage(ours), parsePage(theirs)];
   if (!m) return 'the combined page has no readable frontmatter';
   if (!o || !t) return 'one of the two versions has no readable frontmatter';
-  const seen = new Set([...o.body.split('\n'), ...t.body.split('\n')]);
-  const extra = m.body.split('\n').find((l) => !isBlank(l) && !seen.has(l));
+  const lines = (body) => String(body).split('\n').filter((l) => !isBlank(l));
+  const [ml, ol, tl] = [lines(m.body), lines(o.body), lines(t.body)];
+  const seen = new Set([...ol, ...tl]);
+  const extra = ml.find((l) => !seen.has(l));
   if (extra !== undefined) return `a line is in neither version: ${JSON.stringify(extra.slice(0, 80))}`;
-  const allowed = new Set([...leaves(o.data), ...leaves(t.data)]);
-  const bad = [...leaves(m.data)].find((x) => !allowed.has(x));
+  if (!interleaves(ml, ol, tl)) return 'the lines of one version are not in that version\'s order';
+  const [lm, lo, lt] = [leaves(m.data), leaves(o.data), leaves(t.data)];
+  const bad = [...lm].find((x) => !lo.has(x) && !lt.has(x));
   if (bad !== undefined) return `a frontmatter value is in neither version: ${bad.slice(0, 80)}`;
+  if (base !== null && base !== undefined) {
+    const b = parsePage(base);
+    if (!b) return 'the common version has no readable frontmatter';
+    const lb = leaves(b.data);
+    const back = [...lm].find((x) => x.includes('[]=') && lb.has(x) && !(lo.has(x) && lt.has(x)));
+    if (back !== undefined) return `a list item that was removed on one side since the common version is back: ${back.slice(0, 80)}`;
+  }
   return null;
 }
 
@@ -335,18 +432,17 @@ export function pageProvenance(merged, ours, theirs) {
  * @param {string|null} p.base      the page at the merge base, null when there is none
  * @param {string} p.ours           the page on main
  * @param {string} p.theirs         the page at the reviewed head
- * @param {boolean} [p.extended]    the proposal marked this slug in `extends`
- * @returns {{ ok: true, text: string } | { ok: false, reason: string }}
+ * @returns {Promise<{ ok: true, text: string } | { ok: false, reason: string }>}
  */
-export function mergePages({ base = null, ours, theirs, extended = false }) {
+export async function mergePages({ base = null, ours, theirs }) {
   try {
     const [o, t] = [parsePage(ours), parsePage(theirs)];
     if (!o || !t) return { ok: false, reason: 'a version has no readable frontmatter' };
     const b = base === null || base === undefined ? null : parsePage(base);
     if (base !== null && base !== undefined && !b) return { ok: false, reason: 'the common version has no readable frontmatter' };
 
-    const data = mergeFrontmatter(b?.data ?? null, o.data, t.data, extended);
-    const body = mergeBody(b ? b.body : null, o.body, t.body, extended);
+    const data = mergeFrontmatter(b?.data ?? null, o.data, t.data);
+    const body = await mergeBody(b ? b.body : null, o.body, t.body);
 
     let text;
     if (eq(data, o.data) && bodyCore(body) === bodyCore(o.body)) text = ours;
@@ -356,7 +452,7 @@ export function mergePages({ base = null, ours, theirs, extended = false }) {
       const fm = reuse ? reuse.matter.replace(/^\n/, '').replace(/\n+$/, '') : frontmatterText(data);
       text = `---\n${fm}\n---\n${body}`;
     }
-    const why = pageProvenance(text, ours, theirs);
+    const why = pageProvenance(text, ours, theirs, base ?? null);
     if (why) return { ok: false, reason: why };
     return { ok: true, text };
   } catch (err) {

@@ -25,8 +25,8 @@ import path from 'node:path';
 import matter from 'gray-matter';
 import YAML from 'yaml';
 
-import { tierOfText } from '../../../tools/lib/canonical.mjs';
-import { asArray } from '../../../tools/lib/wiki-core.mjs';
+import { canonicalOrUnsure } from '../../../tools/lib/canonical.mjs';
+import { asArray, safeFrontmatter } from '../../../tools/lib/wiki-core.mjs';
 
 import { serviceActor } from '../core/auth.mjs';
 import { modelForTier } from '../core/config.mjs';
@@ -52,6 +52,8 @@ export class JobError extends Error {
 }
 
 const SVC = serviceActor('ingest');
+/** Front matter is YAML and nothing else: a `---js` block is refused, never run. */
+const parseFrontmatter = safeFrontmatter(matter);
 const CLOSED_PROPOSAL = new Set(['merged', 'rejected', 'superseded']);
 
 /**
@@ -243,7 +245,7 @@ export function createRunner(ctx, { driver, logsDir }) {
         try { text = await git.show(p.headSha, c.path); } catch { text = null; }
         if (typeof text !== 'string') continue;
         let data = {};
-        try { data = matter(text, {}).data || {}; } catch { /* a page the parser cannot read is still shown as text */ }
+        try { data = parseFrontmatter(text).data || {}; } catch { /* a page the parser cannot read is still shown as text */ }
         const file = path.join(root, p.id, `${c.slug}.md`);
         if (!isInside(root, file)) continue;
         fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -350,7 +352,7 @@ export function createRunner(ctx, { driver, logsDir }) {
     const promoted = touched.filter((p) => {
       const slug = pageSlug(p);
       const file = path.join(wt.path, p);
-      return slug && !locked.has(slug) && fs.existsSync(file) && tierOfText(fs.readFileSync(file, 'utf-8')) === 'canonical';
+      return slug && !locked.has(slug) && fs.existsSync(file) && canonicalOrUnsure(fs.readFileSync(file, 'utf-8'));
     });
     if (promoted.length) {
       throw new JobError(`agent set tier: canonical on ${promoted.join(', ')} — only a person makes a page canonical, in the review inbox (non-negotiable 4); not committed`);

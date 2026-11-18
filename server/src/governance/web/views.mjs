@@ -193,7 +193,7 @@ function hotWhy(e) {
 
 /** One sentence for a page written as an addition to a page that waits in another proposal. */
 function extendsNote(e) {
-  return html`<p class="faint">This page adds to one that is waiting in another proposal, ${e.proposalId ? html`<a href="/inbox/p/${encodeURIComponent(e.proposalId)}">${e.title || 'that proposal'}</a>` : 'that proposal'}, and when both are approved the service combines them section by section and drops nothing.</p>`;
+  return html`<p class="faint">This page adds to one that is waiting in another proposal, ${e.proposalId ? html`<a href="/inbox/p/${encodeURIComponent(e.proposalId)}">${e.title || 'that proposal'}</a>` : 'that proposal'}. When both are approved, the service combines the two versions section by section. If they disagree anywhere, the agent is asked to redo this page on top of what is already there.</p>`;
 }
 
 function pageCard(p, change, { canAct, csrf, required, why = null, tiers = null }) {
@@ -288,7 +288,7 @@ function decisionCard(p, d, { canAct, csrf }) {
 
 function needsBox(evaluation, p) {
   if (p.status === 'merged') {
-    return html`<div class="needs ready"><h2>Added to the knowledge base</h2><p>${p.merge?.at ? `On ${p.merge.at.slice(0, 10)}` : ''}${p.merge?.approvers?.length ? `, approved by ${p.approvals.filter((a) => p.merge.approvers.includes(a.actorId)).map((a) => a.display).filter((v, i, a) => a.indexOf(v) === i).join(', ')}` : ''}.</p>${p.merge?.combined?.length ? html`<p>${plural(p.merge.combined.length, 'page')} (${p.merge.combined.join(', ')}) ${p.merge.combined.length === 1 ? 'was' : 'were'} combined with what was already there. Nothing was dropped.</p>` : ''}</div>`;
+    return html`<div class="needs ready"><h2>Added to the knowledge base</h2><p>${p.merge?.at ? `On ${p.merge.at.slice(0, 10)}` : ''}${p.merge?.approvers?.length ? `, approved by ${p.approvals.filter((a) => p.merge.approvers.includes(a.actorId)).map((a) => a.display).filter((v, i, a) => a.indexOf(v) === i).join(', ')}` : ''}.</p>${p.merge?.combined?.length ? html`<p>${plural(p.merge.combined.length, 'page')} (${p.merge.combined.join(', ')}) ${p.merge.combined.length === 1 ? 'was' : 'were'} combined with what was already there, section by section.</p>` : ''}</div>`;
   }
   if (p.status === 'merged_unaccepted') {
     return html`<div class="needs"><h2>Merged on GitHub, not accepted here</h2><p>${p.merge?.by ? `Merged by ${p.merge.by}` : 'Merged'}${p.merge?.at ? ` on ${p.merge.at.slice(0, 10)}` : ''}, but the knowledge base was not updated: ${p.merge?.message || p.mergeError?.message || 'it could not be verified.'}</p><p>An administrator has to reconcile it by hand. This is recorded as a policy violation.</p></div>`;

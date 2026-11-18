@@ -221,8 +221,10 @@ it; an invalid or missing report fails the job.
 `extends` is checked by the runner: every `{ slug, proposalId }` must have been
 in the pending set it handed the job (below), else the report is invalid and the
 job fails. The runner stores the list, with each proposal's `title`, on the
-proposal as `extends`; governance uses it when two approved versions of a page
-are combined at merge (Governance → merge).
+proposal as `extends`, for the reviewer. It is information only: governance
+never uses it to decide how two approved versions of a page are combined
+(Governance → merge), and a run that leaves the reviewed version unchanged
+cannot change it.
 
 ### Proposal (governance owns; ingest creates)
 

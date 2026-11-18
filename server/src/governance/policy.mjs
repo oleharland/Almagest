@@ -170,13 +170,21 @@ export function computeRequirements({ changes = [], decisions = [], source = nul
     addReq(proposal, { roles: [canonicalRole] }, 'moves a page to or from canonical');
   }
   const pages = {};
+  const active = changes.filter((c) => c.pageStatus !== 'rejected');
+  // A page this proposal makes canonical (it is not canonical on main) needs an
+  // approver with the canonical role, whatever else the proposal is. `promotes`
+  // is a canonical tier nobody chose in the inbox (the merge refuses it anyway,
+  // but its approver is still the one who would have to decide); `tierSetBy`
+  // is a person's choice there.
+  for (const c of active) {
+    if (c.promotes || c.tierSetBy) addReq(proposal, { roles: [canonicalRole] }, `makes “${c.title || c.slug}” canonical`);
+  }
   const facts = {
     decisionKinds: decisions.map((d) => d.kind),
     label: label || '',
     connector: source?.connector || '',
     sourceKind: source?.kind || '',
   };
-  const active = changes.filter((c) => c.pageStatus !== 'rejected');
 
   for (const rule of rules || []) {
     const when = rule.when || {};

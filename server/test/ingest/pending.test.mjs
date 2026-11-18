@@ -54,7 +54,7 @@ function addProposal(t, { id, status = 'open', title, pages, at }) {
   const changes = [];
   for (const [slug, spec] of Object.entries(pages)) {
     fs.mkdirSync(path.join(dir, 'brain/wiki'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'brain/wiki', `${slug}.md`), pageText(spec));
+    fs.writeFileSync(path.join(dir, 'brain/wiki', `${slug}.md`), spec.raw ?? pageText(spec));
     changes.push({ slug, path: `brain/wiki/${slug}.md`, action: spec.action || 'create', title: spec.title, pageStatus: spec.pageStatus || 'pending' });
   }
   const env = { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@t' };
@@ -76,6 +76,20 @@ async function run(t, { kind = 'ingest', name = 'notes.md', extra = {} } = {}) {
 }
 
 describe('runner: pages pending in other open proposals', () => {
+  it('reads a pending page whose front matter is a js block without running it', async () => {
+    const FLAG = '__almagest_pending_ran__';
+    delete globalThis[FLAG];
+    const t = await setup();
+    const raw = `---js\n{ title: (globalThis.${FLAG} = true, "x") }\n---\n\n## Details\n\nText.\n`;
+    await addProposal(t, { id: 'prp_js', title: 'Waiting', at: '2026-11-01T10:00:00Z', pages: { xing: { title: 'Xing from the proposal', raw } } });
+    await t.app.start({ http: false });
+    const { done, record } = await run(t);
+    assert.equal(done.status, 'succeeded', done.error);
+    assert.equal(globalThis[FLAG], undefined, 'the block was not executed');
+    assert.match(record.prompt, /\[\[xing\]\]: a new page; title "Xing from the proposal"/, 'the page is still handed over, titled from the proposal');
+    await t.stop();
+  });
+
   it('hands out the pages of open proposals only, both versions of a shared slug, newest first', async () => {
     const t = await setup();
     await addProposal(t, { id: 'prp_old', title: 'Old material', at: '2026-11-01T10:00:00Z', pages: { morningbrew: { title: 'Morning Brew', aliases: ['MB'], body: 'older text' }, xing: { title: 'Xing' } } });

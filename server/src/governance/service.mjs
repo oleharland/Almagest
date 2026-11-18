@@ -24,6 +24,7 @@ import path from 'node:path';
 import matter from 'gray-matter';
 
 import { canonicalSet, TIERS, tierOfText, withTier } from '../../../tools/lib/canonical.mjs';
+import { safeFrontmatter } from '../../../tools/lib/wiki-core.mjs';
 import { assertCanApprove, assertCanChangeTier, AuthError, ForbiddenError, hasRole, parseTokens, serviceActor } from '../core/auth.mjs';
 import { gitIdentity } from '../core/git.mjs';
 import { HttpError } from '../core/http.mjs';
@@ -37,6 +38,9 @@ import { listChanges, outsideFiles } from './paths.mjs';
 import * as policy from './policy.mjs';
 import { assertMayAct, vouchedAs } from './trust.mjs';
 import { describe, lookupQuestionOf, tierTitle, titleFor } from './summary.mjs';
+
+/** Front matter is YAML and nothing else (tools/lib/wiki-core.mjs → safeFrontmatter). */
+const parseFrontmatter = safeFrontmatter(matter);
 
 /** canonical_conflict has exactly one non-dismiss effect (spec → Decision). Enforced by construction. */
 export const CANONICAL_OPTIONS = [
@@ -287,7 +291,10 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       decisions: decisions.map((d) => d.id),
       notes: runReport.notes || '',
       reportPages: runReport.pages || [],
-      extends: extendsFrom(runReport) ?? live?.extends ?? [],
+      // What a proposal extends is information for the reviewer, and it belongs to
+      // the version they approved: a run that leaves the head where it was cannot
+      // change it. A run that makes a new head replaces it.
+      extends: live && live.headSha === headSha ? (live.extends ?? []) : (extendsFrom(runReport) ?? live?.extends ?? []),
       updatedAt: now,
     };
     fields.required = requirementsFor({ kind, tier, source }, { changes, decisions });
@@ -653,7 +660,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       }
       const next = withTier(text, to);
       if (next === null) throw new HttpError(409, 'The tier line of this page cannot be edited here.');
-      const pageTitle = String(matter(text).data?.title || slug);
+      const pageTitle = String(parseFrontmatter(text).data?.title || slug);
 
       const tree = await merger.treeWith((await git.run(['rev-parse', `${mainSha}^{tree}`])).trim(), [[file, next]]);
       const sha = await merger.commitTree(tree, [mainSha], `Set ${slug} to ${to}`, gitIdentity(actor));

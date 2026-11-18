@@ -34,13 +34,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { canonicalSet, differOnlyInTier, tierOfText } from '../../../tools/lib/canonical.mjs';
+import { canonicalOrUnsure, canonicalSet, differOnlyInTier, tierOfText } from '../../../tools/lib/canonical.mjs';
 import { authorizeMainMove } from '../../../tools/lib/git-hooks.mjs';
 import { serviceActor } from '../core/auth.mjs';
 import { childEnv, gitIdentity } from '../core/git.mjs';
 import { mergeManifest, stripRemovedPlaceholders } from './bookkeeping.mjs';
 import { canonicalAt } from './canonical.mjs';
-import { mergePages, pageProvenance, parsePage } from './page-merge.mjs';
+import { mergePages, pageProvenance } from './page-merge.mjs';
 import { describeOutside, listChanges, outsideFiles } from './paths.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -196,26 +196,24 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
 
   /**
    * Two approved versions of one wiki page, combined (page-merge.mjs), or null
-   * when that is not provably safe: not a page, a canonical page, a version
-   * missing on either side (delete against change), or any clash.
-   * `extended` is the set of slugs the proposal marked in `extends`; `locked`
-   * the canonical set on main (canonical.mjs).
+   * when that is not provably safe: not a page, a canonical page (or one whose
+   * tier the two parsers read differently), a version missing on either side
+   * (delete against change), or any clash. What the agent reported (`extends`)
+   * plays no part. `locked` is the canonical set on main (canonical.mjs).
    */
-  async function combinePage(file, base, ours, theirs, extended = new Set(), locked = new Set()) {
+  async function combinePage(file, base, ours, theirs, locked = new Set()) {
     const m = pageFile.exec(file);
     if (!m || locked.has(m[1])) return null;
     const [b, o, t] = await Promise.all([git.show(base, file), git.show(ours, file), git.show(theirs, file)]);
     if (o === null || t === null) return null;
-    if ([b, o, t].some((text) => text !== null && parsePage(text)?.data?.tier === 'canonical')) return null;
-    const r = mergePages({ base: b, ours: o, theirs: t, extended: extended.has(m[1]) });
+    if ([b, o, t].some((text) => text !== null && canonicalOrUnsure(text))) return null;
+    const r = await mergePages({ base: b, ours: o, theirs: t });
     if (!r.ok) {
       log?.info('page merge fell through to a revise', { file, reason: r.reason });
       return null;
     }
     return { slug: m[1], text: r.text };
   }
-
-  const extendedSlugs = (proposal) => new Set((proposal?.extends || []).map((e) => e?.slug).filter(Boolean));
 
   async function treeWith(tree, files) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-index-'));
@@ -305,7 +303,7 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
    * Only modifications are tolerated, so the index cannot be dropped (which
    * would skip that check) and no file can be added beside it.
    */
-  async function unreviewedContent(commit, mainSha, head, { extended = new Set(), locked = new Set() } = {}) {
+  async function unreviewedContent(commit, mainSha, head, { locked = new Set() } = {}) {
     const derived = (f) => f.startsWith(`${indexDir}/`);
     const { tree, conflicts } = await mergeTree(mainSha, head);
     // A clash on a wiki page that page-merge.mjs can combine is part of "the
@@ -315,7 +313,7 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
     const combined = new Map();
     const clashes = [];
     for (const f of conflicts.filter((x) => !derived(x))) {
-      const page = await combinePage(f, base, mainSha, head, extended, locked);
+      const page = await combinePage(f, base, mainSha, head, locked);
       if (page) combined.set(f, page.text); else clashes.push(f);
     }
     if (clashes.length) return { clash: true, files: clashes.map((f) => ({ path: f, reason: 'clashes with the current knowledge base' })) };
@@ -336,27 +334,29 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
   /**
    * For every wiki page that clashed between main and the reviewed head, what
    * `commit` holds must satisfy the page-merge invariant, recomputed here from
-   * main's version and the head's version alone: every body line and every
-   * frontmatter value occurs in one of the two. This does not trust whoever
+   * main's version, the head's version and their merge base: every body line and
+   * every frontmatter value occurs in one of the two, each side's lines keep
+   * their order, and nothing a side removed since the base is back. This does not trust whoever
    * made the commit, and does not look at how they got there. A page that is
    * canonical is never combined. A clash on any file that is neither such a
    * page nor one of the bookkeeping files merge() resolves itself is refused.
    * Returns the files that fail, [] when there is nothing wrong.
    */
-  async function combinedPageProblems(commit, mainSha, head, locked = new Set()) {
+  async function combinedPageProblems(commit, mainSha, head, locked = new Set(), base = null) {
     const derived = (f) => f.startsWith(`${indexDir}/`);
     const { conflicts } = await mergeTree(mainSha, head);
+    const mergeBase = base || (conflicts.some((f) => !derived(f) && !appendOnly.has(f)) ? await git.mergeBase(mainSha, head) : null);
     const bad = [];
     for (const file of conflicts.filter((f) => !derived(f))) {
       if (appendOnly.has(file)) continue;
       const m = pageFile.exec(file);
-      const [o, t, c] = m ? await Promise.all([git.show(mainSha, file), git.show(head, file), git.show(commit, file)]) : [null, null, null];
-      const tier = [o, t, c].some((text) => text !== null && parsePage(text)?.data?.tier === 'canonical');
+      const [o, t, c, b] = m ? await Promise.all([git.show(mainSha, file), git.show(head, file), git.show(commit, file), mergeBase ? git.show(mergeBase, file) : null]) : [null, null, null, null];
+      const tier = [o, t, c, b].some((text) => text !== null && canonicalOrUnsure(text));
       if (!m || locked.has(m[1]) || tier || o === null || t === null || c === null) {
         bad.push({ path: file, reason: 'clashed with the current knowledge base and was not combined from the two versions' });
         continue;
       }
-      const why = pageProvenance(c, o, t);
+      const why = pageProvenance(c, o, t, b);
       if (why) bad.push({ path: file, reason: `holds content that is in neither version (${why})` });
     }
     return bad;
@@ -374,7 +374,7 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
     const refuse = (outside) => refusePaths(outside, proposalId);
     let outside = await outsideOfCandidate(commit, { mainSha, base, head });
     if (outside.length) return refuse(outside);
-    const unreviewed = await combinedPageProblems(commit, mainSha, head, locked);
+    const unreviewed = await combinedPageProblems(commit, mainSha, head, locked, base);
     if (unreviewed.length) {
       log?.error('merge refused: a combined page holds content that was not reviewed', { proposal: proposalId, files: unreviewed.map((f) => f.path) });
       return { ok: false, reason: 'content', files: unreviewed, message: `The combined result holds content that was in neither reviewed version (${unreviewed.slice(0, 5).map((f) => f.path).join(', ')}), so it was not added.` };
@@ -422,12 +422,12 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
         if (!m) continue;
         const slug = m[1];
         if (slug === own && !external) continue;
-        const wasLocked = locked.has(slug) || (await tierAt(base, file)) === 'canonical';
+        const wasLocked = locked.has(slug) || canonicalOrUnsure(await git.show(base, file));
         if (wasLocked) {
           out.push({ path: file, reason: 'a locked reference page, which a proposal never changes' });
           continue;
         }
-        if (file === f.path && f.status !== 'D' && (await tierAt(head, file)) === 'canonical') {
+        if (file === f.path && f.status !== 'D' && canonicalOrUnsure(await git.show(head, file))) {
           const edit = proposal?.tierEdits?.[slug];
           const blob = (await git.tryRun(['rev-parse', `${head}:${file}`]))?.trim();
           const chosen = !external && edit?.to === 'canonical' && edit.blob && edit.blob === blob;
@@ -568,7 +568,7 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
         let resolved = null;
         if (appendOnly.has(file)) resolved = await unionResolve(file, base, mainSha, head);
         else {
-          const page = proposal.kind === 'tier' ? null : await combinePage(file, base, mainSha, head, extendedSlugs(proposal), locked);
+          const page = proposal.kind === 'tier' ? null : await combinePage(file, base, mainSha, head, locked);
           if (page) { resolved = page.text; combined.push(page.slug); }
         }
         if (resolved === null) unresolved.push(file);
@@ -667,7 +667,7 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
     if (outside.length) return refusePaths(outside, proposal.id);
     // Right parents say nothing about what the commit holds: a hand-made
     // merge commit can carry any edit. It must be the reviewed merge, exactly.
-    const extra = await unreviewedContent(commit, mainSha, proposal.headSha, { extended: extendedSlugs(proposal), locked });
+    const extra = await unreviewedContent(commit, mainSha, proposal.headSha, { locked });
     if (extra) {
       const list = `${extra.files.slice(0, 5).map((f) => f.path).join(', ')}${extra.files.length > 5 ? ` and ${extra.files.length - 5} more` : ''}`;
       log?.error('external merge refused: content not in the reviewed version', { proposal: proposal.id, sha: commit, files: extra.files.map((f) => f.path) });

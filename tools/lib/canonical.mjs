@@ -12,10 +12,20 @@
  * on disk, the service reads `main` out of git (server/src/governance/
  * canonical.mjs). Both hand `canonicalSet` a list of [slug, tier] pairs.
  *
- * Plain Node plus `yaml`, like config.mjs: the hooks and the audit import this
- * without the app.
+ * A page's tier is read two ways: here, by cutting the front matter block out
+ * and parsing it with `yaml` (tierOfText), and by the audit and the site, which
+ * read it with gray-matter through safeFrontmatter. The two can disagree about
+ * a page (a `---yaml` opening line, a tab, a merge key, a missing closing
+ * line). `canonicalOrUnsure` is the guard's answer: a page is treated as
+ * canonical when either reading says so, when the two differ, or when either
+ * cannot read the tier at all.
+ *
+ * Plain Node plus `yaml` and `gray-matter`, like the audit that imports this.
  */
+import matter from 'gray-matter';
 import YAML from 'yaml';
+
+import { safeFrontmatter } from './wiki-core.mjs';
 
 export const TIERS = ['evidence', 'curated', 'canonical'];
 
@@ -45,6 +55,51 @@ export function tierOfText(text) {
   } catch {
     return '';
   }
+}
+
+const parseMatter = safeFrontmatter(matter);
+const tierText = (v) => (v == null ? '' : String(v).trim().toLowerCase());
+
+/**
+ * Both readings of a page's tier, lower-cased: `yaml` is tierOfText's (but
+ * null instead of '' when the block does not parse), `matter` is the audit's
+ * (gray-matter through safeFrontmatter; null when it refuses or fails to parse).
+ * '' means the page has no tier.
+ */
+export function tierReadings(text) {
+  const source = String(text ?? '');
+  let yamlReading;
+  const block = frontmatterBlock(source);
+  if (block === null) yamlReading = '';
+  else {
+    try {
+      const data = YAML.parse(block);
+      yamlReading = tierText(data && typeof data === 'object' ? data.tier : '');
+    } catch { yamlReading = null; }
+  }
+  let matterReading;
+  try {
+    const data = parseMatter(source).data;
+    matterReading = tierText(data && typeof data === 'object' ? data.tier : '');
+  } catch { matterReading = null; }
+  return { yaml: yamlReading, matter: matterReading };
+}
+
+/**
+ * Must this page be treated as one that is, or tries to become, canonical?
+ * Yes when either reading says canonical, when the two readings differ, and
+ * when either cannot read the tier with certainty. The runner's guard and the
+ * merge use this, so a page that one parser reads as canonical and the other
+ * does not is refused instead of slipping past.
+ */
+export function canonicalOrUnsure(text) {
+  const r = tierReadings(text);
+  return r.yaml === null || r.matter === null || r.yaml !== r.matter || r.yaml === 'canonical';
+}
+
+/** The tier the canonical set is built from: 'canonical' for any page `canonicalOrUnsure` refuses, else the tier. */
+export function lockingTier(text) {
+  return canonicalOrUnsure(text) ? 'canonical' : tierOfText(text);
 }
 
 /**

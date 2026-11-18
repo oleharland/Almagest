@@ -215,8 +215,10 @@ adds to it writes a page with the same slug that carries only what the source
 adds. Each such page is recorded in the run report's `extends` list. The runner
 refuses a pair whose proposal and slug were not in the set it handed out, and
 stores the list, with each proposal's title taken from its own record, on the
-proposal. When both proposals are approved, governance combines the two pages
-without an agent where that is provably safe
+proposal, where the inbox shows it to the reviewer. It does not change any merge
+decision. When both proposals are approved, governance combines the two pages
+without an agent only where the strict rules allow it, whatever the list says,
+and otherwise asks the agent to redo the page on top of what is already there
 ([`governance.md`](governance.md) → *How a merge happens*, step 3).
 
 The agent never stops to ask. Every case the risk-tier table says *blocks* is

@@ -11,7 +11,7 @@
  */
 import { execFile } from 'node:child_process';
 
-import { canonicalSet, tierOfText } from '../../../tools/lib/canonical.mjs';
+import { canonicalSet, lockingTier } from '../../../tools/lib/canonical.mjs';
 import { childEnv } from '../core/git.mjs';
 
 const CACHE_SIZE = 8;
@@ -44,7 +44,9 @@ function split(out, count) {
 
 /**
  * Every page in `<wikiDir>/` at `ref`, as Map<slug, tier> ('' when a page has
- * no readable tier). Pages in subdirectories are not wiki pages (paths.mjs).
+ * no tier). A page whose tier the two parsers read differently, or cannot read,
+ * is listed as 'canonical': it is locked (tools/lib/canonical.mjs, lockingTier).
+ * Pages in subdirectories are not wiki pages (paths.mjs).
  */
 export async function tiersAt(git, ref, wikiDir) {
   const sha = await git.revParse(ref);
@@ -59,7 +61,7 @@ export async function tiersAt(git, ref, wikiDir) {
   const tiers = new Map();
   if (files.length) {
     const blobs = split(await batch(git.repoRoot, files.map((f) => f.sha)), files.length);
-    files.forEach((f, i) => tiers.set(f.slug, blobs[i] ? tierOfText(blobs[i].toString('utf-8')) : ''));
+    files.forEach((f, i) => tiers.set(f.slug, blobs[i] ? lockingTier(blobs[i].toString('utf-8')) : ''));
   }
   cache.set(key, tiers);
   while (cache.size > CACHE_SIZE) cache.delete(cache.keys().next().value);

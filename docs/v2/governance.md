@@ -391,39 +391,44 @@ merge (one at a time, under a lock):
    a page is given up on (`page-merge.mjs`). This applies when `git
    merge-tree` reports a clash on `brain/wiki/<slug>.md` and both sides have
    the file: both added it, or both changed it from a common base. A delete
-   against a change stays a clash, and so does any canonical page, named in
-   `canonical_pages` or marked `tier: canonical` on any of the three versions.
-   The page is read with the same parser the audit uses, then merged key by key
-   in the frontmatter and section by section (by `##` heading) in the body:
+   against a change stays a clash, and so does any canonical page: one named in
+   `canonical_pages`, marked `tier: canonical` on any of the three versions, or
+   whose tier the audit's parser and the guard's parser read differently or
+   cannot read (see *Tiers in the inbox*). The page is read with the same
+   parser the audit uses (a `---js` block is refused, never run), then merged
+   key by key in the frontmatter and section by section (by `##` heading) in
+   the body. The rules are strict on purpose: where there is any doubt it is a
+   clash. What the agent reported (`extends`) plays no part in them.
 
    | Part | Rule |
    |---|---|
-   | `sources` | Union by `id`, main's order first. The same `id` with a different `path` or `sha256` is a clash |
-   | `aliases`, `tags`, `related`, each list under `relations` | Union, main's order first |
-   | `title`, `type`, `tier`, `origin` | Must be equal, else a clash |
-   | `status`, `confidence`, `owner` | Equal, or changed on one side only since the base. With no base and different values, main's value is kept if the proposal listed this page in `extends`, else a clash. Changed differently on both sides is a clash even with `extends` |
+   | `sources` | With a base: an entry either side removed since the base stays removed. The same `id` with different content on the two sides is a clash, and so is an entry removed on one side and changed on the other. Without a base: the union, with the same clash rule. Main's order first |
+   | `aliases`, `tags`, `related`, each list under `relations` | With a base: `(main ∪ head) − (base − main) − (base − head)`, so an item either side removed since the base stays removed. Without a base: the union. Main's order first |
+   | `title`, `type`, `tier`, `origin`, `status`, `confidence`, `owner`, any other key | Equal, or changed on one side only since the base (a key removed on one side and unchanged on the other stays removed). Changed differently on both sides is a clash. With no base, any difference is a clash, including a key only one side has |
    | `date_created`, `last_verified` | The earlier. A page one side never verified has no `last_verified` |
    | `date_modified` | The later |
-   | Other keys | Equal, or present on one side only. Removed on one side and changed on the other is a clash |
-   | A section on one side only | Kept. Removed on one side and unchanged on the other since the base: stays removed. Removed and changed: a clash |
-   | A section identical on both sides | Kept once |
-   | A section changed on one side only since the base | Takes the changed side |
-   | A section where one side's lines are a superset of the other's | Takes the superset |
-   | Any other section | With `extends` for this page: main's lines, then the proposal's lines that main does not have. Without it: a clash |
+   | A section, with a base that has it | A three-way merge of the section's lines against the base's section (`git merge-file`), accepted only when it is clean, with no conflict hunk. A section removed on one side and unchanged on the other stays removed. Removed on one side and changed on the other is a clash |
+   | A section, with no base, or that the base does not have, on both sides | Identical text is kept once. If one side's text is the other's text with whole lines added after it (the shorter is an exact prefix of the longer, line for line), the longer is taken. Anything else is a clash. There is no set-based "superset" rule |
+   | A section on one side only that the base does not have | Kept |
    | Order | Main's sections in main's order, then the proposal's new sections in theirs |
 
    The result must satisfy one invariant: **every body line and every
    frontmatter value of the combined page occurs in main's version or in the
-   reviewed head's version of that page.** Nothing is invented, reworded or
-   reordered inside a line. `page-merge.mjs` checks it before it returns, and
-   step 6 checks it again. Any clash, and any failure of the check, leaves the
-   file as a clash, and the proposal goes down the `revise` path described in
-   step 2, unchanged.
+   reviewed head's version of that page; the lines that come from one version
+   keep that version's order; and no list item that either side removed since
+   the base is back.** Nothing is invented or reworded inside a line.
+   `page-merge.mjs` checks it before it returns, and step 6 checks it again from
+   main's version, the head's version and their merge base. Any clash, and any
+   failure of the check, leaves the file as a clash, and the proposal goes down
+   the `revise` path described in step 2, unchanged. Duplicate lines are kept
+   once, and `last_verified` can be dropped, so the combined page is not the
+   plain sum of the two.
 
    `extends` is the list of pages the agent wrote as additions to a page that
-   was waiting in another proposal (see [`ingest.md`](ingest.md)). It widens
-   only the two rules above that name it, and only toward lines and values
-   that were already reviewed on one of the two sides.
+   was waiting in another proposal (see [`ingest.md`](ingest.md)). It is
+   information for the reviewer: it is stored on the proposal, shown in the
+   inbox, and fixed to the reviewed version, so a run that leaves the head
+   where it was cannot change it. It changes no merge decision.
 4. A row is added to `brain/log.md`: date, proposal, approvers and channels,
    the reviewed version, pages. When a page was combined, the row says so:
    *combined with what was already there: slug*. The proposal's `merge.combined`
@@ -636,7 +641,11 @@ lowered here. Open challenges against a demoted page stay in the ledger.
 
 **Who may.** Changing a page to or from canonical needs the role in
 `governance.canonical_role` (default `owner`; `admin` always qualifies), and a
-tier proposal that does so also needs an approver with that role. Changing
+tier proposal that does so also needs an approver with that role. So does any
+other proposal whose head makes a page canonical that is not canonical on
+`main`, whether a person chose it in the inbox or not: the requirement reads
+*makes "Title" canonical* and the approval waits for someone with the role.
+Changing
 between evidence and curated needs the role that can approve the proposal. The
 check is `assertCanChangeTier` in `core/auth.mjs`, run at the top of every tier
 action in `governance/service.mjs` beside the browser-session check. Only a
@@ -651,6 +660,17 @@ runner refuses a branch that does, on a new page or an existing one, and the
 merge refuses it again unless the service recorded a person's choice in the
 inbox for that exact page text. A commit merged outside the service (GitHub)
 may not make a page canonical or change a canonical page, whoever chose it.
+
+**Two parsers, one answer.** The guard reads a page's tier by cutting out the
+front matter block and parsing it with `yaml` (`tierOfText`). The audit and
+the site read it with gray-matter. They can disagree: a `---yaml` opening
+line, a tab, a merge key (`<<:`) or a missing closing `---` is read as
+canonical by one and as nothing by the other. `canonicalOrUnsure` in
+`tools/lib/canonical.mjs` closes that: a page counts as canonical, for the
+runner's guard, the merge, the proposal builder and the set of locked pages on
+`main`, when either parser reads canonical, when the two readings differ, or
+when either cannot read the tier. Such a page is refused like any other attempt
+to set canonical.
 
 **Suggestions.** "Pages worth fixing as canonical" (`/inbox/canonical`, linked
 in the navigation with a count) lists pages that many documents contribute to.
@@ -707,5 +727,7 @@ with mode and binary flag), `outside` (paths outside the writable set),
 `revision`, `revisedBecause`, `conflictRevise`, `mergeError`, `feedback`,
 `rejection`, `supersededBy`, `extends` (`[{ slug, proposalId, title }]`: pages
 written as additions to pages waiting in other proposals; stored by
-`createFromJob` from the run report) and `merge.combined` (the slugs combined
+`createFromJob` from the run report when the reviewed version is new, and kept
+as it is when a run leaves the version unchanged; information for the reviewer
+only) and `merge.combined` (the slugs combined
 at merge).

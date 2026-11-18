@@ -13,7 +13,7 @@ import path from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import { createMerger } from '../../src/governance/merge.mjs';
-import { mergePages } from '../../src/governance/page-merge.mjs';
+import { mergePages, parsePage } from '../../src/governance/page-merge.mjs';
 import { writableMatcher } from '../../src/governance/paths.mjs';
 import { proposalPage } from '../../src/governance/web/views.mjs';
 import { AUDIT } from '../helpers.mjs';
@@ -198,32 +198,46 @@ Morning Brew was founded in 2014. [source: beta-pdf, p.1]` });
     await app.stop();
   });
 
-  it('with extends, a section both sides wrote differently keeps main\'s lines first and then the proposal\'s', async () => {
+  it('extends does not make a clash combinable: a section both sides wrote differently still goes to the revise path', async () => {
     const b = mb({ src: 'b', body: `## Details
 
 Morning Brew was founded in 2014. [source: beta-pdf, p.1]` });
     const { r, app, gov, a, b: pb } = await twoProposals({ b });
+    assert.equal(pb.p.extends.length, 1, 'the proposal does say it extends the page');
     await gov.approve(a.p.id, ada);
+    const before = git(r, 'rev-parse', 'main').trim();
     const out = await gov.approve(pb.p.id, ada);
-    assert.equal(out.status, 'merged', out.mergeError?.message);
-    const page = show(r, 'main', 'brain/wiki/morningbrew.md');
-    assert.ok(page.indexOf('founded in 2015') < page.indexOf('founded in 2014'), "main's line first");
+    assert.equal(out.status, 'conflicted');
+    assert.equal(git(r, 'rev-parse', 'main').trim(), before);
+    assert.equal(revises(app).length, 1);
     await app.stop();
   });
 
-  it('a frontmatter field that differs with no way to tell which changed falls to the revise path without extends, and is combined with it', async () => {
+  it('a frontmatter field that differs with no way to tell which changed is a clash, with or without extends', async () => {
     const b = mb({ src: 'b', confidence: 'low', body: '## Audience\n\nYoung readers. [source: beta-pdf, p.1]' });
-    const plain = await twoProposals({ b, extends: false });
-    await plain.gov.approve(plain.a.p.id, ada);
-    assert.equal((await plain.gov.approve(plain.b.p.id, ada)).status, 'conflicted');
-    await plain.app.stop();
+    for (const withExtends of [false, true]) {
+      const t = await twoProposals({ b, extends: withExtends ? undefined : false });
+      await t.gov.approve(t.a.p.id, ada);
+      const before = git(t.r, 'rev-parse', 'main').trim();
+      assert.equal((await t.gov.approve(t.b.p.id, ada)).status, 'conflicted');
+      assert.equal(git(t.r, 'rev-parse', 'main').trim(), before);
+      assert.match(show(t.r, 'main', 'brain/wiki/morningbrew.md'), /confidence: medium/);
+      await t.app.stop();
+    }
+  });
 
-    const ext = await twoProposals({ b });
-    await ext.gov.approve(ext.a.p.id, ada);
-    const out = await ext.gov.approve(ext.b.p.id, ada);
-    assert.equal(out.status, 'merged', out.mergeError?.message);
-    assert.match(show(ext.r, 'main', 'brain/wiki/morningbrew.md'), /confidence: medium/, "main's value is kept");
-    await ext.app.stop();
+  it('an update that leaves the reviewed version as it is cannot change what the proposal extends', async () => {
+    const { app, gov, a, b } = await twoProposals();
+    assert.equal(b.p.extends.length, 1);
+    // A revise run that commits nothing reports something else: the reviewed version is the same, so the list is too.
+    const run = (extendsList) => G(app).createFromJob(job('ingest/b-2222222', { source: b.p.source }), {
+      branch: 'ingest/b-2222222', headSha: b.headSha, baseSha: b.baseSha, audit: CLEAN_AUDIT,
+      runReport: { source: { id: 'beta-pdf' }, outcome: 'written', pages: [], extends: extendsList },
+    });
+    assert.deepEqual((await run([])).extends, b.p.extends);
+    assert.deepEqual((await gov.getProposal(b.p.id)).extends, b.p.extends);
+    assert.deepEqual((await run([{ slug: 'morningbrew', proposalId: a.p.id, title: 'x' }, { slug: 'other', proposalId: a.p.id, title: 'y' }])).extends, b.p.extends);
+    await app.stop();
   });
 
   it('the same source id pointing at a different file is never combined', async () => {
@@ -278,12 +292,12 @@ Morning Brew was founded in 2014. [source: beta-pdf, p.1]` });
     }));
     const open = await gov.getProposal(b.p.id);
     const text = view(open, { ready: false, blockers: [], missing: [], explanation: '' });
-    assert.match(text, /This page adds to one that is waiting in another proposal, <a href="\/inbox\/p\/prp_[^"]+">New material from “Alpha deck”<\/a>, and when both are approved the service combines them section by section and drops nothing\./);
+    assert.match(text, /This page adds to one that is waiting in another proposal, <a href="\/inbox\/p\/prp_[^"]+">New material from “Alpha deck”<\/a>\. When both are approved, the service combines the two versions section by section\. If they disagree anywhere, the agent is asked to redo this page on top of what is already there\./);
     assert.doesNotMatch(String(proposalPage({ proposal: a.p, decisions: [], evaluation: { ready: false, blockers: [], missing: [], explanation: '' }, actor: ada, csrf: 'c', nonce: 'n', canAct: { ok: true, canReview: true, why: '' } })), /waiting in another proposal/);
     await gov.approve(a.p.id, ada);
     const done = await gov.approve(b.p.id, ada);
     const merged = String(proposalPage({ proposal: done, decisions: [], evaluation: { ready: false, blockers: [], missing: [], explanation: '' }, actor: ada, csrf: 'c', nonce: 'n', canAct: { ok: false, canReview: false, why: '' } }));
-    assert.match(merged, /1 page \(morningbrew\) was combined with what was already there\. Nothing was dropped\./);
+    assert.match(merged, /1 page \(morningbrew\) was combined with what was already there, section by section\./);
     await app.stop();
   });
 
@@ -293,6 +307,68 @@ Morning Brew was founded in 2014. [source: beta-pdf, p.1]` });
     const text = String(proposalPage({ proposal: evil, decisions: [], evaluation: { ready: false, blockers: [], missing: [], explanation: '' }, actor: ada, csrf: 'c', nonce: 'n', canAct: { ok: true, canReview: true, why: '' } }));
     assert.ok(!text.includes('<img src=x'));
     assert.ok(!text.includes('<script>'));
+    await app.stop();
+  });
+});
+
+describe('governance: a removal approved on main stays removed', () => {
+  const BASE = mb({ src: 'a', alias: 'Brew', body: `## Details
+
+Morning Brew was founded in 2015. [source: alpha-pdf, p.1]
+Its office is in New York. [source: alpha-pdf, p.1]
+It is sent on weekdays. [source: alpha-pdf, p.1]
+It is free to read. [source: alpha-pdf, p.1]
+It was sold in 2020. [source: alpha-pdf, p.1]` });
+  // Main's reviewer approved taking out the 2020 sale and the alias.
+  const REMOVES = BASE.replace('\nIt was sold in 2020. [source: alpha-pdf, p.1]', '').replace('aliases: ["Brew"]', 'aliases: []');
+  // The other proposal started from the same page, still has both, and adds a line and an alias.
+  const ADDS = BASE.replace('founded in 2015. [source: alpha-pdf, p.1]', 'founded in 2015. [source: alpha-pdf, p.1]\nIt has 50 staff. [source: alpha-pdf, p.1]').replace('aliases: ["Brew"]', 'aliases: ["Brew", "MB"]');
+
+  async function both(head) {
+    const r = repo({ files: { 'brain/manifest.yaml': MANIFEST, 'brain/index.md': INDEX, 'brain/raw/extracted/beta.pdf.txt': SIDECAR_B, 'brain/wiki/morningbrew.md': BASE } });
+    git(r, 'checkout', '-q', '--detach');
+    const app = await govApp(r);
+    const a = await open(app, 'ingest/a-1111111', { 'brain/wiki/morningbrew.md': REMOVES });
+    const b = await open(app, 'ingest/b-2222222', { 'brain/wiki/morningbrew.md': head });
+    return { r, app, gov: G(app), a, b };
+  }
+
+  it('the removed line and alias do not come back when the other proposal still has them', async () => {
+    const { r, app, gov, a, b } = await both(ADDS);
+    assert.equal((await gov.approve(a.p.id, ada)).status, 'merged');
+    const out = await gov.approve(b.p.id, ada);
+    assert.equal(out.status, 'merged', out.mergeError?.message);
+    assert.equal(revises(app).length, 0);
+    const page = show(r, 'main', 'brain/wiki/morningbrew.md');
+    assert.match(page, /It has 50 staff\./);
+    assert.doesNotMatch(page, /sold in 2020/);
+    assert.deepEqual(parsePage(page).data.aliases, ['MB']);
+    await app.stop();
+  });
+
+  it('the gate every new main passes refuses a commit that brings the removed line back', async () => {
+    const { r, app, gov, a, b } = await both(ADDS);
+    assert.equal((await gov.approve(a.p.id, ada)).status, 'merged');
+    const { config, git: g, log } = app.ctx;
+    const merger = createMerger({ git: g, config, log, allowed: writableMatcher({ brainDir: config.v1.brainDir, manifestPath: config.v1.manifestPath, challengesPath: config.v1.challengesPath, indexDir: config.v1.indexDir }) });
+    const mainSha = git(r, 'rev-parse', 'main').trim();
+    const base = git(r, 'merge-base', mainSha, b.headSha).trim();
+    // Every line is in one of the two versions, but the sale was removed on main and is back.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-back-'));
+    repos.push(dir);
+    git(r, 'worktree', 'add', '-q', '--detach', dir, 'main');
+    try { git(dir, 'merge', '-q', '--no-ff', '--no-commit', b.headSha); } catch { /* the clash is the point */ }
+    fs.writeFileSync(path.join(dir, 'brain/wiki/morningbrew.md'), ADDS);
+    execFileSync(process.execPath, [AUDIT, 'index', '--no-color', '--repo', dir]);
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'merged by hand');
+    const sha = git(dir, 'rev-parse', 'HEAD').trim();
+    git(r, 'worktree', 'remove', '--force', dir);
+    const out = await merger.acceptExternal(await gov.getProposal(b.p.id), sha);
+    assert.equal(out.ok, false);
+    assert.equal(out.reason, 'content');
+    assert.equal(git(r, 'rev-parse', 'main').trim(), mainSha);
+    assert.ok(base);
     await app.stop();
   });
 });
@@ -323,7 +399,7 @@ describe('governance: a merge commit made outside the service', () => {
       allowed: writableMatcher({ brainDir: config.v1.brainDir, manifestPath: config.v1.manifestPath, challengesPath: config.v1.challengesPath, indexDir: config.v1.indexDir }),
     });
     const p = await t.gov.getProposal(t.b.p.id);
-    const expected = mergePages({ base: null, ours: show(t.r, 'main', 'brain/wiki/morningbrew.md'), theirs: PAGE_B, extended: true });
+    const expected = await mergePages({ base: null, ours: show(t.r, 'main', 'brain/wiki/morningbrew.md'), theirs: PAGE_B });
     assert.equal(expected.ok, true, expected.reason);
     return { ...t, merger, p, expected: expected.text };
   }

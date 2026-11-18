@@ -38,6 +38,19 @@ describe('runner: an agent never sets or changes canonical', () => {
     await t.stop();
   });
 
+  for (const [name, edit] of [
+    ['a ---yaml opening line', (t) => t.replace(/^---\n/, '---yaml\n')],
+    ['a tab in the front matter', (t) => t.replace('\ntype:', '\n\ttype:')],
+    ['a front matter block with no closing line', (t) => `${t.split('\n---\n')[0]}\n`],
+  ]) {
+    it(`refuses a canonical tier behind ${name}, which the guard and the audit read differently`, async () => {
+      const { t, done } = await run({ 'brain/wiki/fresh.md': edit(asCanonical(FIXTURE_BETA)) });
+      assert.equal(done.status, 'failed');
+      assert.match(done.error, /agent set tier: canonical on brain\/wiki\/fresh\.md/);
+      await t.stop();
+    });
+  }
+
   it('refuses a change to a page that is canonical by its frontmatter on main', async () => {
     const { t, done } = await run({ 'brain/wiki/beta.md': asCanonical(FIXTURE_BETA).replace('2U rack', '4U rack') }, { files: { 'brain/wiki/beta.md': asCanonical(FIXTURE_BETA) } });
     assert.equal(done.status, 'failed');

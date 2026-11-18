@@ -7,6 +7,7 @@ import { after, describe, it } from 'node:test';
 
 import { tierOfText } from '../../../tools/lib/canonical.mjs';
 import { agentActor, humanActor } from '../../src/core/auth.mjs';
+import { computeRequirements } from '../../src/governance/policy.mjs';
 import { createMerger } from '../../src/governance/merge.mjs';
 import { writableMatcher } from '../../src/governance/paths.mjs';
 import { vouch } from '../../src/governance/trust.mjs';
@@ -75,6 +76,38 @@ describe('tier control on a page in an open proposal', () => {
     assert.equal(tierOn(r, 'main', 'delta'), 'canonical');
     // From here the page is locked.
     await assert.rejects(() => gov.setPageTier(p.id, 'delta', 'curated', ada, { headSha: done.headSha }), /./);
+  });
+
+  it('a page made canonical inside an ordinary proposal needs an approver with the canonical role', async () => {
+    const { r, app, gov } = await boot();
+    const { p, headSha } = await openProposal(app);
+    assert.deepEqual(p.required.roles, [], 'an ordinary proposal needs no role');
+    const out = await gov.setPageTier(p.id, 'delta', 'canonical', ada, { headSha, confirm: true });
+    assert.deepEqual(out.required.roles, ['owner']);
+    assert.ok(out.required.reasons.some((x) => /canonical/.test(x)), JSON.stringify(out.required.reasons));
+    // A reviewer without the role cannot complete it, however many times.
+    const mainBefore = git(r, 'rev-parse', 'main').trim();
+    const bobOut = await gov.approve(p.id, bob);
+    assert.equal(bobOut.status, 'open');
+    assert.equal(git(r, 'rev-parse', 'main').trim(), mainBefore);
+    const ev = (await gov.evaluate(p.id)).evaluation;
+    assert.equal(ev.ready, false);
+    assert.match(ev.explanation, /owner role/);
+    const done = await gov.approve(p.id, ada);
+    assert.equal(done.status, 'merged', done.mergeError?.message);
+    assert.equal(tierOn(r, 'main', 'delta'), 'canonical');
+  });
+
+  it('the canonical role is also needed for a canonical tier nobody chose, and for the role the config names', async () => {
+    const { app } = await boot();
+    const { p } = await openProposal(app, { 'brain/wiki/delta.md': DELTA.replace('tier: curated', 'tier: canonical') });
+    assert.deepEqual(p.required.roles, ['owner']);
+    const change = (extra) => ({ slug: 'x', title: 'X', pageStatus: 'pending', action: 'update', ...extra });
+    assert.deepEqual(computeRequirements({ changes: [change({ promotes: true })], canonicalRole: 'admin' }).roles, ['admin']);
+    assert.deepEqual(computeRequirements({ changes: [change({ tierSetBy: { by: 'usr_ada' } })], canonicalRole: 'owner' }).roles, ['owner']);
+    assert.deepEqual(computeRequirements({ changes: [change({ promotes: true, pageStatus: 'rejected' })] }).roles, [], 'a page taken out of the proposal asks for nothing');
+    assert.deepEqual(computeRequirements({ changes: [change({ canonical: true })] }).roles, [], 'a locked page is a different rule');
+    assert.deepEqual(computeRequirements({ changes: [change()] }).roles, []);
   });
 
   it('a canonical tier nobody chose in the inbox blocks the proposal and cannot merge', async () => {
