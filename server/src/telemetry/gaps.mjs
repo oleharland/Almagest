@@ -131,6 +131,38 @@ export function clusterGaps(events, { now, similarity = 0.5, limit = 20, minCoun
   return out.slice(0, limit);
 }
 
+/**
+ * Marks the gaps the wiki can answer now. `answer(query)` is the caller's
+ * search, returning `{ answered, results: [{ slug, title }] }` with the same
+ * rules `ask` uses, so "covered" means the same as "ask would answer it". Only
+ * a gap with a readable representative query (plain text, not hashed tokens)
+ * is asked, once. An answered gap gets `coveredBy` (its top one or two
+ * results); the others keep no such key. Nothing is removed. A failed answer
+ * leaves that gap unmarked. Gaps without `coveredBy` come first, in their
+ * order, and covered ones after.
+ *
+ * @returns {Promise<object[]>}
+ */
+export async function markCovered(gaps, answer) {
+  const marked = [];
+  for (const gap of gaps || []) {
+    const copy = { ...gap };
+    delete copy.coveredBy;
+    if (gap.representative && (gap.queries || []).length) {
+      try {
+        const r = await answer(gap.representative);
+        if (r?.answered === true && Array.isArray(r.results) && r.results.length) {
+          copy.coveredBy = r.results.slice(0, 2).map(({ slug, title }) => ({ slug, title }));
+        }
+      } catch {
+        // unmarked: the gap list must never fail because the search did
+      }
+    }
+    marked.push(copy);
+  }
+  return [...marked.filter((g) => !g.coveredBy), ...marked.filter((g) => g.coveredBy)];
+}
+
 function describe(cluster, members, { now, showQueries, answeredAt }) {
   const tools = {};
   const sessions = new Set();

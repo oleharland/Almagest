@@ -218,6 +218,7 @@ Checked in this order. A route that is stopped says which bound stopped it.
 2. At most one `synthesize` job is queued or running.
 3. No new run while a learnings proposal is open (any status the inbox still works on).
 4. At most `max_runs_per_day` runs per UTC day, counted from the `synthesize` jobs in the store. The run is also claimed in the store before it is queued: one slot per allowed run, numbered under the UTC date (namespace `synthesis.claims`, key `<date>:<n>`), taken with `kv.setIfAbsent`, which is one insert that only one of two racing processes wins. This is what keeps `almagest synthesize` in one process and a merge in the service from both passing the cap. A slot whose job could not be queued is released. Slots of earlier days are dropped.
+   A `synthesize` job that fails before the agent runs (no run report and no recorded cost, for example when the Claude Code build lacks a flag the sandbox needs) gives its slot back and stops counting toward the cap, at most once per UTC day, and the service logs why; a second such failure the same day keeps its slot, and a job that ran keeps its slot either way.
 5. At least `min_changed_pages` changed source pages since the last run (`--force` skips this one).
 
 A failed enqueue is logged and never breaks the merge that triggered it.

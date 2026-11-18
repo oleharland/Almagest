@@ -420,12 +420,25 @@ export function buildServer(ctx, cfg, brain, { human, sessionId, transport = 'me
     const r = await brain.search(question, { limit: cfg.ask.pages });
     let packed = packSections(b, r, budget);
     const answered = r.answered && packed.pages.length > 0;
-    const found = !answered && lookup && cfg.lookup.enabled
+    let found = !answered && lookup && cfg.lookup.enabled
       ? await lookup.find({ question, keywords, human, transport, budget })
       : null;
+    // The wiki answered: only the live pass may add text, for live connectors the question clearly asks about.
+    // When it adds nothing, the answer and its data stay exactly what they were (and so does telemetry).
+    if (answered && lookup && cfg.lookup.enabled && cfg.lookup.live_when_answered !== false) {
+      const liveFound = await lookup.find({ question, keywords, human, transport, budget, liveOnly: true });
+      if (liveFound.stats.steps.length) found = liveFound;
+    }
     const hasLadder = Boolean(found?.step);
     const hasLive = Boolean(found?.live?.items?.length);
-    const hasPassages = hasLadder || hasLive;
+    const besideWiki = answered && hasLive;
+    const hasPassages = !answered && (hasLadder || hasLive);
+    if (besideWiki) {
+      // Live text took part of the budget; the wiki sections get the rest. Unused live share goes back to them.
+      const repacked = packSections(b, r, budget - found.live.tokens);
+      if (repacked.pages.length) packed = repacked;
+      else found = { ...found, live: { items: [], tokens: 0, truncated: false } };   // no room for both: the wiki answer wins
+    }
     if (hasPassages) {
       // One budget for the whole context: canonical sections and passages took theirs inside lookup; the weak
       // matches get what LOOKUP_BUDGET_SPLIT leaves them, and a page shown as canonical is not shown again.
@@ -461,8 +474,12 @@ export function buildServer(ctx, cfg, brain, { human, sessionId, transport = 'me
         lines.push('');
       }
     }
-    if (hasLadder) lines.push(...renderPassages(found, { closing: !hasLive }));
-    if (hasLive) lines.push(...renderLive(found.live), ...closingLines(found));
+    const liveShown = Boolean(found?.live?.items?.length);
+    if (hasLadder && !answered) lines.push(...renderPassages(found, { closing: !liveShown }));
+    if (liveShown) {
+      if (answered) lines.push(lookupRules(b.snap.dir).text, '');
+      lines.push(...renderLive(found.live), ...closingLines(found));
+    }
     return {
       text: lines.join('\n'),
       data: {
@@ -478,7 +495,7 @@ export function buildServer(ctx, cfg, brain, { human, sessionId, transport = 'me
           sources: p.page.sources.map(({ id, title, path: sp }) => ({ id, title: title || b.sourceTitles.get(id) || '', path: sp })),
           sections: p.sections,
         })),
-        ...(hasPassages ? { lookup: lookupData(found) } : {}),
+        ...(hasPassages || (answered && liveShown) ? { lookup: lookupData(found) } : {}),
         ...(!hasPassages && found?.canonicalUnpacked?.length ? { canonicalCovers: found.canonicalUnpacked } : {}),
       },
       telemetry: {

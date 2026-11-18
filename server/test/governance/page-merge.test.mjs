@@ -12,7 +12,7 @@ const sourcesYaml = (list) => `sources:\n${list.map((s) => `  - id: ${s.id}\n   
 /** A page in the shape the fixtures use; every frontmatter field can be overridden. */
 function pg({ body = '## Summary\n\nA thing.\n', sources = [SRC_A], aliases = [], tags = [], related = [], relations = [], extra = '', ...f } = {}) {
   const v = {
-    title: '"Morning Brew"', type: 'topic', tier: 'evidence', origin: 'source', status: 'draft', confidence: 'medium', owner: '""',
+    title: '"Tide Table"', type: 'topic', tier: 'evidence', origin: 'source', status: 'draft', confidence: 'medium', owner: '""',
     date_created: '"2026-01-02"', date_modified: '"2026-01-05"', last_verified: '"2026-01-05"', ...f,
   };
   const scalars = Object.entries(v).filter(([, x]) => x !== null).map(([k, x]) => `${k}: ${x}`).join('\n');
@@ -46,10 +46,10 @@ describe('page merge: frontmatter lists', () => {
 
   it('unions aliases, tags, related and each relations list, main first', async () => {
     const m = await merged({
-      ours: pg({ aliases: ['MB', 'Brew'], tags: ['news'], related: ['beta'], relations: ['alpha'] }),
-      theirs: pg({ aliases: ['Brew', 'Morning Brew Daily'], tags: ['email', 'news'], related: ['gamma-claim'], relations: ['beta', 'alpha'] }),
+      ours: pg({ aliases: ['TT', 'Tide'], tags: ['news'], related: ['beta'], relations: ['alpha'] }),
+      theirs: pg({ aliases: ['Tide', 'Tide Table Daily'], tags: ['email', 'news'], related: ['gamma-claim'], relations: ['beta', 'alpha'] }),
     });
-    assert.deepEqual(m.data.aliases, ['MB', 'Brew', 'Morning Brew Daily']);
+    assert.deepEqual(m.data.aliases, ['TT', 'Tide', 'Tide Table Daily']);
     assert.deepEqual(m.data.tags, ['news', 'email']);
     assert.deepEqual(m.data.related, ['[[beta]]', '[[gamma-claim]]']);
     assert.deepEqual(m.data.relations.supports, ['alpha', 'beta']);
@@ -102,7 +102,7 @@ describe('page merge: frontmatter lists, with a common version', () => {
 describe('page merge: fixed and one-sided scalars', () => {
   for (const key of ['title', 'type', 'tier', 'origin']) {
     it(`${key} must be equal`, async () => {
-      const other = { title: '"Morning Brew Inc"', type: 'entity', tier: 'curated', origin: 'self' }[key];
+      const other = { title: '"Tide Table Inc"', type: 'entity', tier: 'curated', origin: 'self' }[key];
       await clashes({ ours: pg(), theirs: pg({ [key]: other }) }, new RegExp(key));
     });
   }
@@ -196,10 +196,10 @@ describe('page merge: unknown frontmatter keys', () => {
 });
 
 describe('page merge: body sections', () => {
-  const O = pg({ body: '## Summary\n\nMorning Brew is a daily newsletter.\n\n## Details\n\nFounded in 2015. [source: src-a, p.1]\n' });
+  const O = pg({ body: '## Summary\n\nTide Table is a daily newsletter.\n\n## Details\n\nFounded in 2015. [source: src-a, p.1]\n' });
 
   it('a section on one side only is kept, in main order then the proposal order', async () => {
-    const T = pg({ sources: [SRC_B], body: '## Summary\n\nMorning Brew is a daily newsletter.\n\n## Audience\n\nMostly young professionals. [source: src-b, p.2]\n\n## Funding\n\nAcquired in 2020. [source: src-b, p.3]\n' });
+    const T = pg({ sources: [SRC_B], body: '## Summary\n\nTide Table is a daily newsletter.\n\n## Audience\n\nMostly young professionals. [source: src-b, p.2]\n\n## Funding\n\nAcquired in 2020. [source: src-b, p.3]\n' });
     const m = await merged({ ours: O, theirs: T });
     assert.deepEqual([...m.body.matchAll(/^## (.*)$/gm)].map((x) => x[1]), ['Summary', 'Details', 'Audience', 'Funding']);
     assert.match(m.body, /Founded in 2015\./);
@@ -207,7 +207,7 @@ describe('page merge: body sections', () => {
   });
 
   it('a section identical on both sides is kept once', async () => {
-    const m = await merged({ ours: O, theirs: pg({ sources: [SRC_B], body: '## Summary\n\nMorning Brew is a daily newsletter.\n\n## Audience\n\nYoung readers. [source: src-b, p.2]\n' }) });
+    const m = await merged({ ours: O, theirs: pg({ sources: [SRC_B], body: '## Summary\n\nTide Table is a daily newsletter.\n\n## Audience\n\nYoung readers. [source: src-b, p.2]\n' }) });
     assert.equal(m.body.match(/is a daily newsletter\./g).length, 1);
   });
 
@@ -243,7 +243,7 @@ describe('page merge: body sections', () => {
   });
 
   it('extends changes nothing: a section both sides wrote differently is a clash with or without it', async () => {
-    const theirs = pg({ sources: [SRC_B], body: '## Summary\n\nMorning Brew is a daily newsletter.\n\n## Details\n\nFounded in 2014. [source: src-b, p.2]\n\nSent at 6am. [source: src-b, p.3]\n' });
+    const theirs = pg({ sources: [SRC_B], body: '## Summary\n\nTide Table is a daily newsletter.\n\n## Details\n\nFounded in 2014. [source: src-b, p.2]\n\nSent at 6am. [source: src-b, p.3]\n' });
     await clashes({ ours: O, theirs }, /Details/);
     await clashes({ ours: O, theirs, extended: true }, /Details/);
     const ours = pg({ body: '## Platforms\n\nDeprecated:\n- Solaris\nSupported:\n- macOS\n' });
@@ -331,7 +331,7 @@ describe('page merge: body sections', () => {
 
   it('a section deleted on one side and unchanged on the other stays deleted; deleted against changed is a clash', async () => {
     const base = O;
-    const withoutDetails = '## Summary\n\nMorning Brew is a daily newsletter.\n';
+    const withoutDetails = '## Summary\n\nTide Table is a daily newsletter.\n';
     const m = await merged({ base, ours: O, theirs: pg({ body: withoutDetails }) });
     assert.doesNotMatch(m.body, /Founded in 2015/);
     await clashes({ base, ours: O.replace('2015', '2014'), theirs: pg({ body: withoutDetails }) }, /removed on one side/);

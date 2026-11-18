@@ -62,9 +62,9 @@ relations:
 
 Gamma relies on the Alpha overview. [source: alpha-pdf, p.1]
 `;
-const BASE = gamma(['Brew', 'MB', 'Morning'], 'evidence');
-const HEAD_A = gamma(['&t evidence', 'MB', 'Morning'], '*t');
-const HEAD_B = gamma(['Brew', 'MB', '&t canonical'], 'evidence');
+const BASE = gamma(['Tide', 'TT', 'Harbour'], 'evidence');
+const HEAD_A = gamma(['&t evidence', 'TT', 'Harbour'], '*t');
+const HEAD_B = gamma(['Tide', 'TT', '&t canonical'], 'evidence');
 
 /** The clean fixture's config, with SCHEMA-006 a warning, so only the merge gate under test can stop the merge. */
 function laxConfig() {

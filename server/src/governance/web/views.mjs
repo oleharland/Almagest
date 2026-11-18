@@ -773,12 +773,19 @@ function lookupWords(l) {
 }
 
 export function gapsPage({ items, error, actor, csrf, nonce, now = Date.now(), navCounts = {} }) {
+  const open = items.filter((g) => !g.coveredBy?.length);
+  const covered = items.filter((g) => g.coveredBy?.length);
+  const row = (g, { answered = false } = {}) => html`<tr><td><strong>${g.representative || (g.tokens || []).join(' ') || 'An unanswered question'}</strong>${(g.queries || []).length ? html`<div class="al-text-tertiary">${g.queries.slice(0, 3).map((q) => (typeof q === 'string' ? `“${q}”` : `“${q.text}”${q.count > 1 ? ` ×${q.count}` : ''}`)).join(' · ')}</div>` : ''}${answered ? html`<div class="al-source">The wiki can probably answer this now: <a href="/inbox/pages/${encodeURIComponent(g.coveredBy[0].slug)}">${g.coveredBy[0].title}</a></div>` : html`${g.lookup?.served && !/\bServed \d+ times?\b/.test(typeof g.suggestion === 'string' ? g.suggestion : '') ? html`<div class="al-source">${lookupWords(g.lookup)}</div>` : ''}${g.suggestion ? html`<div class="al-source">Suggestion: ${typeof g.suggestion === 'string' ? g.suggestion : g.suggestion.text || g.suggestion.label || ''}</div>` : ''}`}</td><td>${plural(g.count || 0, 'time')}${g.distinctSessions ? html`<div class="al-text-tertiary">by ${plural(g.distinctSessions, 'person', 'people')}</div>` : ''}</td><td>${timeAgo(g.lastSeen, now)}</td></tr>`;
   const body = html`<h1>Questions the knowledge base couldn't answer</h1>
     <p class="al-lede">What people asked for and didn't find. Each one is a hint about which source to add next.</p>
     ${error ? html`<div class="al-empty">${error}</div>` : items.length === 0 ? html`<div class="al-empty">No unanswered questions recorded.</div>` : html`
+    ${open.length ? html`<div class="al-table-wrap"><table class="al-table"><thead><tr><th>Topic</th><th>Asked</th><th>Last asked</th></tr></thead><tbody>
+    ${open.map((g) => row(g))}
+    </tbody></table></div>` : ''}
+    ${covered.length ? html`<h3>Probably answered since</h3>
     <div class="al-table-wrap"><table class="al-table"><thead><tr><th>Topic</th><th>Asked</th><th>Last asked</th></tr></thead><tbody>
-    ${items.map((g) => html`<tr><td><strong>${g.representative || (g.tokens || []).join(' ') || 'An unanswered question'}</strong>${(g.queries || []).length ? html`<div class="al-text-tertiary">${g.queries.slice(0, 3).map((q) => (typeof q === 'string' ? `“${q}”` : `“${q.text}”${q.count > 1 ? ` ×${q.count}` : ''}`)).join(' · ')}</div>` : ''}${g.lookup?.served && !/\bServed \d+ times?\b/.test(typeof g.suggestion === 'string' ? g.suggestion : '') ? html`<div class="al-source">${lookupWords(g.lookup)}</div>` : ''}${g.suggestion ? html`<div class="al-source">Suggestion: ${typeof g.suggestion === 'string' ? g.suggestion : g.suggestion.text || g.suggestion.label || ''}</div>` : ''}</td><td>${plural(g.count || 0, 'time')}${g.distinctSessions ? html`<div class="al-text-tertiary">by ${plural(g.distinctSessions, 'person', 'people')}</div>` : ''}</td><td>${timeAgo(g.lastSeen, now)}</td></tr>`)}
-    </tbody></table></div>`}`;
+    ${covered.map((g) => row(g, { answered: true }))}
+    </tbody></table></div>` : ''}`}`;
   return layout({ title: 'Unanswered', actor, nonce, csrf, current: 'gaps', body, navCounts });
 }
 

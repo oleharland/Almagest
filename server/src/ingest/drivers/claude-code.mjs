@@ -36,7 +36,10 @@
  * marked optional in REQUIRED/OPTIONAL below degrade (logged) if absent; the
  * required ones refuse to run.
  */
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { agentEnv, lastJsonObject, runProcess } from './proc.mjs';
 
@@ -62,9 +65,50 @@ export function allowedTools(config, { auditWrapper } = {}) {
   ];
 }
 
-function helpText(cli) {
+/**
+ * `<cli> --help`, written to a file and read back, never through a pipe.
+ *
+ * Claude Code 2.1.327 can exit before a pipe has taken all of its help text.
+ * The text is about 22 KB and the cut lands at 8 KB or 16 KB depending on the
+ * moment. Five of the REQUIRED flags first appear between those two points, so
+ * the same install passed the check one hour and "lacked" them the next. A
+ * file takes every byte before the process exits.
+ *
+ * Returns '' when the CLI cannot be run at all.
+ */
+export function helpText(cli) {
   return new Promise((resolve) => {
-    execFile(cli, ['--help'], { timeout: 15_000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => resolve(err && !stdout ? '' : `${stdout}${stderr}`));
+    let dir;
+    let fd;
+    try {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-help-'));
+      fd = fs.openSync(path.join(dir, 'help.txt'), 'w', 0o600);
+    } catch {
+      if (dir) fs.rmSync(dir, { recursive: true, force: true });
+      resolve('');
+      return;
+    }
+    let settled = false;
+    const finish = (failed) => {
+      if (settled) return;
+      settled = true;
+      let text = '';
+      try {
+        fs.closeSync(fd);
+        text = fs.readFileSync(path.join(dir, 'help.txt'), 'utf-8');
+      } catch { /* an unreadable probe is an empty probe */ }
+      fs.rmSync(dir, { recursive: true, force: true });
+      resolve(failed && !text ? '' : text);
+    };
+    let child;
+    try {
+      child = spawn(cli, ['--help'], { stdio: ['ignore', fd, fd], timeout: 15_000 });
+    } catch {
+      finish(true);
+      return;
+    }
+    child.on('error', () => finish(true));
+    child.on('close', (code) => finish(code !== 0));
   });
 }
 
@@ -73,13 +117,16 @@ export function createClaudeCodeDriver(ctx, options = {}) {
   let help = null;
 
   async function flags() {
-    if (help === null) help = await helpText(cli);
-    if (!help) throw new Error(`\`${cli} --help\` failed — is Claude Code installed and on PATH?`);
-    const has = (f) => help.includes(f);
+    // A probe is kept only once it has passed. One bad read must not fail
+    // every later job for as long as the service runs.
+    const text = help ?? await helpText(cli);
+    if (!text) throw new Error(`\`${cli} --help\` failed — is Claude Code installed and on PATH?`);
+    const has = (f) => text.includes(f);
     const missing = REQUIRED.filter((f) => !has(f));
     if (missing.length) {
       throw new Error(`refusing to run unattended: this ${cli} build lacks ${missing.join(', ')}, which the ingest sandbox depends on — upgrade Claude Code`);
     }
+    help = text;
     return { has };
   }
 

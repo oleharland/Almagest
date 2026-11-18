@@ -413,7 +413,7 @@ matches.
 | Recipe | Server | Item | Verified |
 |---|---|---|---|
 | `mcp-resources` | **any** server exposing resources | one resource | yes — tests |
-| `github` | GitHub's official MCP server | one file at the branch head; `version` = blob sha, `commit` = commit sha. Ships a `search` block (`search_code`, scoped to `select.repo` and `select.paths`) | no |
+| `github` | GitHub's official MCP server | one file at the branch head; `version` = blob sha, `commit` = commit sha. Ships a `search` block (`search_code`, scoped to `select.repo` and `select.paths`) | partial: list and fetch ran against the hosted server (`connectors test --fetch` and a sync of 16 files, 2026-11-18). Needs the `git` toolset, which the shipped `.mcp.json` requests. The `search` block is not verified |
 | `github-commits` | GitHub's official MCP server (`list_commits`) | live: the latest commits of `select.repo` on `select.branch` (`select.limit`, default 20) as one document: short sha, date, first line of the message; no author names or emails | no |
 | `github-branches` | GitHub's official MCP server (`list_branches`) | live: the branches of `select.repo` as one document: name and head sha | no |
 | `gitlab` | community `@zereight/mcp-gitlab`-style tools | one file at the branch head | no |

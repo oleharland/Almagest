@@ -58,6 +58,9 @@ export const RETRY_NS = 'lookup-ingest-retry';
 const STEPS = ['sources', 'staged', 'connectors', 'live'];
 /** When a ladder step also answered, live passages get at most this share of the passage room; the ladder's get the rest. */
 export const LIVE_SHARE = 0.3;
+/** Words that mean "current state". With a descriptor match, one of them (or a word of the recipe's `about`) makes a live connector clearly meant when the wiki already answered. */
+export const STATE_WORDS = ['state', 'status', 'latest', 'recent', 'current', 'now', 'today', 'changed', 'changes', 'commits', 'branches'];
+const STATE_STEMS = new Set(tokenize(STATE_WORDS.join(' ')));
 /** A source file or snapshot bigger than this is not read. */
 export const MAX_SOURCE_BYTES = 5 * 1024 * 1024;
 /** The sources step reads at most this much text in all; the rest of the manifest is left out. */
@@ -455,11 +458,14 @@ export function createLookup(ctx, cfg, brain) {
    * label, the owner and name of its repository, and the words its recipe declares (`about`). The same tokenizer
    * as everywhere else, so stemming matches. An unrelated question never reaches a provider.
    */
-  function liveCandidate(c, terms) {
+  function liveCandidate(c, terms, { strict = false } = {}) {
     if (!c || c.live !== true || c.lookup !== true || !c.searchable) return false;
     const repo = String(c.repo || '').split(/[^\p{L}\p{N}]+/u).join(' ');
-    const descriptor = new Set(tokenize([c.id, c.label, repo, ...(Array.isArray(c.about) ? c.about : [])].filter(Boolean).join(' ')));
-    return terms.some((t) => descriptor.has(t));
+    const about = new Set(tokenize((Array.isArray(c.about) ? c.about : []).filter(Boolean).join(' ')));
+    const named = new Set(tokenize([c.id, c.label, repo].filter(Boolean).join(' ')));
+    if (!strict) return terms.some((t) => named.has(t) || about.has(t));
+    // The wiki already answered: the question must name the connector AND ask about state.
+    return terms.some((t) => named.has(t)) && terms.some((t) => about.has(t) || STATE_STEMS.has(t));
   }
 
   async function liveDocsFor({ candidates, raw, deadline, out, docs }) {
@@ -515,7 +521,7 @@ export function createLookup(ctx, cfg, brain) {
     };
   }
 
-  async function run({ question, keywords, human, transport, budget }, out) {
+  async function run({ question, keywords, human, transport, budget, liveOnly = false }, out) {
     const deadline = createDeadline(lc.timeout_ms);
     const raw = queryTerms(question, keywords);
     const terms = [...new Set(tokenize(raw.join(' ')))];
@@ -549,21 +555,21 @@ export function createLookup(ctx, cfg, brain) {
     };
 
     try {
-      if (steps.includes('sources')) {
+      if (!liveOnly && steps.includes('sources')) {
         out.stats.steps.push('sources');
         const r = searchPassages(sourceIndex(b), question, opts);
         if (r.answered) found = { step: 'sources', kind: 'source', results: r.results };
       }
 
-      const reachesConnectors = steps.includes('connectors') && lc.send_query && transport !== 'stdio';
-      if (!found && privileged && (steps.includes('staged') || reachesConnectors)) charge();
+      const reachesConnectors = !liveOnly && steps.includes('connectors') && lc.send_query && transport !== 'stdio';
+      if (!liveOnly && !found && privileged && (steps.includes('staged') || reachesConnectors)) charge();
 
-      if (!found && allowed && privileged && (steps.includes('staged') || reachesConnectors)) {
+      if (!liveOnly && !found && allowed && privileged && (steps.includes('staged') || reachesConnectors)) {
         await listConnectors();
         rejected = await rejectedShas();
       }
 
-      if (!found && allowed && privileged && steps.includes('staged')) {
+      if (!liveOnly && !found && allowed && privileged && steps.includes('staged')) {
         // A step skipped because the time is used up leaves the lookup incomplete, and says so.
         if (deadline.left() <= 0) out.incomplete = true;
         else {
@@ -585,7 +591,7 @@ export function createLookup(ctx, cfg, brain) {
       // The live pass: after the ladder, whichever step answered or none. Same gates as the connectors step.
       if (steps.includes('live') && privileged && lc.send_query && transport !== 'stdio') {
         await listConnectors();
-        const candidates = connectors.filter((c) => liveCandidate(c, terms));
+        const candidates = connectors.filter((c) => liveCandidate(c, terms, { strict: liveOnly }));
         if (candidates.length && deadline.left() <= 0) out.incomplete = true;
         else if (candidates.length && charge()) {
           out.stats.steps.push('live');
@@ -602,6 +608,17 @@ export function createLookup(ctx, cfg, brain) {
     }
 
     if (!found && !liveFound) return;
+
+    if (liveOnly) {
+      // The wiki answered and `ask` prints its sections itself, canonical pages included. Only live text goes out,
+      // within its share of the budget; `ask` gives the wiki sections the rest.
+      const livePacked = packPassages(liveFound.results, Math.floor(budget * LIVE_SHARE));
+      if (!livePacked.items.length) return;
+      out.live = { items: livePacked.items, tokens: livePacked.tokens, truncated: livePacked.truncated };
+      out.tokens = livePacked.tokens;
+      out.truncated = livePacked.truncated;
+      return;
+    }
 
     const canonical = await canonicalPass(question, raw, budget);
     // Unreviewed text is never shown without the canonical text that outranks it. If a canonical page matched and
@@ -675,6 +692,7 @@ export function createLookup(ctx, cfg, brain) {
    * @param {object} q.human         the human the connection acts for
    * @param {string} [q.transport]   'stdio' | 'http' | 'memory'
    * @param {number} q.budget        tokens, shared by canonical sections and passages
+   * @param {boolean} [q.liveOnly]   the wiki answered: run only the live pass, for live connectors the question clearly asks about
    * @returns {Promise<{
    *   step: 'sources'|'staged'|'connectors'|null, kind: 'source'|'unreviewed'|null,
    *   live: { items: Array<{ doc, passages }>, tokens: number, truncated: boolean },   passages read from live connectors; never staged or queued
@@ -686,7 +704,7 @@ export function createLookup(ctx, cfg, brain) {
    * }>}
    *   `step` is null when no ladder step answered; then `items` is empty. `live.items` may still hold text. When neither does, every other field is empty or a note about a limit.
    */
-  async function find({ question, keywords, human, transport = 'memory', budget }) {
+  async function find({ question, keywords, human, transport = 'memory', budget, liveOnly = false }) {
     const out = emptyResult();
     if (inLookup.getStore()) {                // a lookup never starts another lookup
       out.skipped.push({ step: 'all', reason: 'nested lookup' });
@@ -694,7 +712,7 @@ export function createLookup(ctx, cfg, brain) {
     }
     const t0 = performance.now();
     try {
-      await inLookup.run(true, () => run({ question, keywords, human, transport, budget }, out));
+      await inLookup.run(true, () => run({ question, keywords, human, transport, budget, liveOnly }, out));
     } catch (err) {
       log.warn('live lookup failed', { error: errName(err) });
     }

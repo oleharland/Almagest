@@ -434,7 +434,8 @@ mcp:
   #   steps: [sources, staged, connectors, live]
   #   timeout_ms: 8000               # for the whole lookup
   #   max_fetch: 3                   # documents fetched per question
-  #   send_query: true               # false: the connectors step is off
+  #   send_query: true               # false: the connectors and live steps are off
+  #   live_when_answered: true       # false: the live step runs only when the wiki does not answer
   #   negative_ttl_minutes: 60
   #   rate: { per_caller_per_minute: 6, per_connector_per_minute: 30 }
   #   ingest: auto                   # auto | off: queue fetched documents for review

@@ -181,7 +181,9 @@ Steps 1 and 2 cost no provider call and send nothing off the machine. They
 share all the machinery step 3 needs (passage ranking, packing, labels).
 
 The live pass is not part of the ladder. It runs after it, whichever step
-answered or none. [The live pass](#the-live-pass) describes it.
+answered or none. It also runs when step 0 answered, for live connectors the
+question clearly asks about, so a reviewed page that is close in topic does not
+hide the current state. [The live pass](#the-live-pass) describes it.
 
 Which steps run for whom:
 
@@ -196,6 +198,8 @@ Which steps run for whom:
   nothing has anonymized.
 - Step 3 and the live pass are off over stdio (`almagest mcp`) and with
   `send_query: false`. Step 2 still runs over stdio.
+- When step 0 answered, none of steps 1 to 3 run. Only the live pass can, and
+  only while `mcp.lookup.live_when_answered` is true (the default).
 - The live pass needs a caller at or above `mcp.lookup.min_role` and is off
   when anonymization is on.
 - `mcp.lookup.steps` lists the steps that may run. Remove one to turn it off.
@@ -229,8 +233,8 @@ What a live connector is:
 
 What the live pass does, in `server/src/mcp/lookup.mjs`:
 
-1. It runs whenever lookup runs, after the ladder, under the same gates as step
-   3: a caller at or above `min_role`, anonymization off, `send_query: true`, not
+1. It runs whenever lookup runs, after the ladder, and also when the wiki
+   answered (see below). It uses the same gates as step 3: a caller at or above `min_role`, anonymization off, `send_query: true`, not
    over stdio, the per-caller and per-connector rate limits and the overall
    deadline. The per-caller limit is charged once per lookup, shared with the
    ladder, and only when a live connector is about to be called.
@@ -241,6 +245,8 @@ What the live pass does, in `server/src/mcp/lookup.mjs`:
    are tokenised as everywhere else in lookup, so a plural or an `-ing` form
    matches. With no match, no provider call is made, and the question that has
    nothing to do with GitHub never reaches GitHub.
+   When the wiki answered, the check is stricter. See
+   [When the wiki answers](#when-the-wiki-answers).
 3. For each live connector that matches, lookup searches and fetches. The live
    pass has its own `max_fetch` count. The text is ranked with the passage
    ranking of the ladder, and only passages that clear the same thresholds
@@ -253,6 +259,52 @@ What the live pass does, in `server/src/mcp/lookup.mjs`:
 5. Live text is never staged, never queued for ingest and never served by the
    staged step. A connector whose recipe is live is skipped by the staged and
    connectors steps.
+
+### When the wiki answers
+
+A reviewed page can be close in topic and still say nothing about current state.
+A page about a product shares words with a question about the state of its
+repository, so the wiki scores as answering, and without this rule the live
+connector would never be asked.
+
+When step 0 answers, lookup is enabled and `live` is among the steps, `ask` runs
+the live pass and nothing else, for live connectors the question clearly asks
+about. A connector qualifies only when both hold:
+
+- At least one query term matches the connector's descriptor: its id, its
+  `label`, or the owner and name in `select.repo`.
+- At least one query term matches the recipe's `about` words or one of
+  `STATE_WORDS` in `server/src/mcp/lookup.mjs`: state, status, latest, recent,
+  current, now, today, changed, changes, commits, branches.
+
+Terms are tokenised and stemmed as everywhere else in lookup, so `changed` and
+`change` match each other. A question that names the repository with no word
+about state, or a state word with no connector named, calls no provider and gets
+the answer `ask` gave before.
+
+Every gate of the live pass applies unchanged: role, anonymization,
+`send_query`, stdio, both rate limits, the deadline and the `answered`
+thresholds on the fetched text. Nothing is staged or queued. The canonical pass
+does not run, because `ask` prints the answering wiki sections, canonical pages
+included, as it always did.
+
+The budget. The whole `ask` context fits `ask.token_budget`, or the caller's
+`max_tokens`. Live text may use up to `LIVE_SHARE` (0.3) of the total. The wiki
+sections get the total minus the live tokens actually used, so an unused live
+share goes back to them. If both cannot fit, the wiki sections stay and the live
+block is dropped.
+
+The output is the wiki sections exactly as before, then the lookup rules, then
+the live block with the same heading, quoting and provenance line. The lookup
+rules text is added only when live passages are present. In the structured data,
+`lookup.step` and `lookup.kind` are `null` and `lookup.live` holds the documents.
+Telemetry keeps `answered: true`, and `extra.lookup` shows `steps: ['live']` with
+the live connector ids and counts, and no text. When no connector qualifies or
+the live pass returns nothing, the text and the structured data are byte for byte
+what `ask` returns without lookup.
+
+`mcp.lookup.live_when_answered: false` turns this off and leaves the live step
+as it was: it then runs only when the wiki does not answer.
 
 The answer rules (`agent/rules/read.md`) rank live text below everything
 reviewed and with unreviewed passages. They give the attribution and require the
@@ -650,6 +702,7 @@ mcp:
     timeout_ms: 8000               # for the whole lookup
     max_fetch: 3                   # documents fetched per question
     send_query: true               # false: the connectors and live steps are off
+    live_when_answered: true       # false: the live step runs only when the wiki does not answer
     negative_ttl_minutes: 60
     rate:
       per_caller_per_minute: 6

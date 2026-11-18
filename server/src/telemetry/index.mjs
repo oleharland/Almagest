@@ -16,7 +16,7 @@
  */
 import { buildEvent, privacyOf } from './events.mjs';
 import { renderDemandTsv, writeIfChanged } from './export.mjs';
-import { clusterGaps } from './gaps.mjs';
+import { clusterGaps, markCovered } from './gaps.mjs';
 import { createRecorder } from './recorder.mjs';
 import { buildReverifyQueue } from './reverify.mjs';
 import { computeDemand, DAY_MS, demandOptions, explainSlug } from './score.mjs';
@@ -63,6 +63,25 @@ export function telemetrySettings(telemetry = {}) {
 export function createTelemetry(ctx, { now = () => Date.now() } = {}) {
   const { config, store, bus, snapshot } = ctx;
   const log = ctx.log?.child ? ctx.log.child({ module: 'telemetry' }) : ctx.log;
+
+  /**
+   * The MCP module's search, as markCovered asks it: the search `ask` runs,
+   * with the same thresholds. Null when the MCP module is not loaded. A failed
+   * search reads as "not answered" and is logged at debug, never raised.
+   */
+  function coverageAnswer() {
+    const search = ctx.mcp?.search;
+    if (typeof search !== 'function') return null;
+    return async (query) => {
+      try {
+        const r = await search(query, { limit: 2 });
+        return { answered: r?.answered === true, results: r?.results || [] };
+      } catch (err) {
+        log?.debug?.('gap coverage check failed; the gap is shown unmarked', { error: err.message });
+        return { answered: false, results: [] };
+      }
+    };
+  }
   const settings = telemetrySettings(config.telemetry);
   const { enabled } = settings;
   const exportPath = config.paths?.demand || '';
@@ -244,13 +263,17 @@ export function createTelemetry(ctx, { now = () => Date.now() } = {}) {
       const nowMs = now();
       const from = since ? new Date(since).toISOString() : isoAgo(nowMs, settings.gaps.windowDays);
       const events = await store.events.query({ since: from });
-      return clusterGaps(events, {
+      // Every cluster is marked before the limit cuts the list, so the open ones are not pushed out by covered ones.
+      const all = clusterGaps(events, {
         now: nowMs,
-        limit: Number(limit) || 20,
+        limit: Infinity,
         similarity: settings.gaps.similarity,
         minCount: settings.gaps.minCount,
         showQueries: settings.privacy.queries === 'plain',
       });
+      const answer = coverageAnswer();
+      const gaps = answer ? await markCovered(all, answer) : all;
+      return gaps.slice(0, Number(limit) || 20);
     },
 
     async reverifyQueue() {

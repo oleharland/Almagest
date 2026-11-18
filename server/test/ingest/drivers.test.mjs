@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
 
-import { allowedTools, createClaudeCodeDriver } from '../../src/ingest/drivers/claude-code.mjs';
+import { allowedTools, createClaudeCodeDriver, helpText } from '../../src/ingest/drivers/claude-code.mjs';
 import { createShellDriver } from '../../src/ingest/drivers/shell.mjs';
 import { buildPrompt, SYSTEM_PROMPT } from '../../src/ingest/prompt.mjs';
 import { rmrf } from '../helpers.mjs';
@@ -94,6 +94,44 @@ describe('claude-code driver', () => {
       /refusing to run unattended: .*--strict-mcp-config, --restricted/,
     );
     assert.equal(fs.existsSync(path.join(dir, 'args.txt')), false, 'the model never ran');
+  });
+
+  it('reads the whole help text, however long, and both of its streams', async () => {
+    // Claude Code's help is about 22 KB, and read through a pipe it arrived cut
+    // at 8 KB or 16 KB. The probe goes through a file so the length cannot matter.
+    const dir = tmpdir();
+    const cli = script(dir, 'claude', `
+if [ "$1" = "--help" ]; then
+  head -c 200000 /dev/zero | tr '\\0' 'x'
+  echo
+  echo "${HELP}"
+  echo "--on-stderr" >&2
+  exit 0
+fi`);
+    const text = await helpText(cli);
+    assert.ok(text.length > 200000, `got ${text.length} bytes`);
+    assert.ok(text.includes('--restricted') && text.includes('--no-session-persistence'), 'the end of the text is there');
+    assert.ok(text.includes('--on-stderr'), 'stderr is read too');
+    assert.equal(await helpText(path.join(dir, 'no-such-cli')), '', 'a CLI that cannot run is an empty probe');
+  });
+
+  it('does not keep a failed probe: the next job checks again', async () => {
+    const dir = tmpdir();
+    // The first --help answers without the flags (a cut-off read); later ones answer in full.
+    const cli = script(dir, 'claude', `
+if [ "$1" = "--help" ]; then
+  if [ ! -e "${dir}/probed" ]; then touch "${dir}/probed"; echo "--allowedTools --mcp-config"; exit 0; fi
+  echo "${HELP}"; exit 0
+fi
+printf '%s\\n' "$@" > "$(pwd)/args.txt"
+echo '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.01,"result":"done"}'`);
+    const drv = createClaudeCodeDriver(ctxFor(), { cli });
+    const run = () => drv.run({ cwd: dir, prompt: 'p', allowedTools: [], signal: new AbortController().signal });
+    await assert.rejects(run, /refusing to run unattended/);
+    assert.equal(fs.existsSync(path.join(dir, 'args.txt')), false, 'the model did not run on the bad probe');
+    const res = await run();
+    assert.equal(res.ok, true, 'the second job probed again and ran');
+    assert.ok(fs.readFileSync(path.join(dir, 'args.txt'), 'utf-8').includes('--restricted'));
   });
 
   it('kills the process group on abort', async () => {
