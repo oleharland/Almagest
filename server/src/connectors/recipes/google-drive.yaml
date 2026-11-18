@@ -11,6 +11,12 @@
 # select:
 #   query: "parentId = '1AbC…'"   Drive search query (see the tool's syntax); default "owner = 'me'"
 #
+# search: used by live lookup (`lookup: true` on the connector). NOT verified
+# against the real server: it reuses the list tool, but the `fullText contains`
+# condition is an assumption. Check it with
+# `almagest connectors search <id> <words>`. It searches `lookup_select.query`
+# when set, else `select.query`. Terms are sanitised before they reach {{query}}.
+#
 # Incremental: `modifiedTime > since` is appended, so later syncs list only
 # what changed. `version` is modifiedTime, so an unchanged file is not re-read.
 name: google-drive
@@ -28,6 +34,17 @@ list:
   title: "title | name"
   mime: "mimeType | mime_type"
   next_cursor: "nextPageToken | next_page_token"
+search:
+  tool: search_files
+  args:
+    query: "({{select.query | default:owner = 'me'}}) and fullText contains '{{query}}'"
+    pageSize: 10
+    excludeContentSnippets: true
+  items: "files[*] | results[*] | items[*] | $[*]"
+  ref: "id | fileId"
+  version: "modifiedTime | modified_time | updatedAt"
+  title: "title | name"
+  mime: "mimeType | mime_type"
 fetch:
   tool: read_file_content
   args:

@@ -3,6 +3,7 @@
  *
  *   resolveVars(client, recipe, vars)        → vars + { vars: { … } } from `resolve:` steps
  *   listItems(client, recipe, vars)          → { items, complete }
+ *   searchItems(client, recipe, vars, opts)  → { items }   (live lookup: first page of `search`)
  *   fetchItem(client, recipe, item, vars)    → { body, title }
  *
  * No state, no files, no store — sync.mjs owns all of that. Everything here
@@ -72,8 +73,8 @@ function passesWhere(raw, mapped, where, vars) {
  * `complete` is false when the listing was incremental (`{{since}}` was
  * passed) or capped — only a complete listing can say an item disappeared.
  */
-export async function listItems(client, recipe, vars, { maxPages = DEFAULT_MAX_PAGES, maxItems = DEFAULT_MAX_ITEMS, firstPageOnly = false, ...opts } = {}) {
-  const list = recipe.list;
+export async function listItems(client, recipe, vars, { maxPages = DEFAULT_MAX_PAGES, maxItems = DEFAULT_MAX_ITEMS, firstPageOnly = false, block, ...opts } = {}) {
+  const list = block || recipe.list;
   const items = [];
   const seen = new Set();
   let cursor;
@@ -113,6 +114,27 @@ export async function listItems(client, recipe, vars, { maxPages = DEFAULT_MAX_P
   }
   const incremental = templateVars(list.args).has('since') && Boolean(vars.since);
   return { items, complete: !capped && !incremental && !firstPageOnly };
+}
+
+export const DEFAULT_SEARCH_LIMIT = 10;
+
+/**
+ * Runs the recipe's `search` block the way `listItems` runs `list`: first page
+ * only, at most `limit` items, filtered by the search block's `where` (else the
+ * list block's, so lookup stays inside the configured scope). `vars.terms` is the list of search terms;
+ * `{{query}}` is those terms joined by a space. Terms are rendered as given —
+ * the caller sanitises them.
+ */
+export async function searchItems(client, recipe, vars, { limit = DEFAULT_SEARCH_LIMIT, ...opts } = {}) {
+  if (!recipe.search) throw new Error(`recipe "${recipe.name || '?'}" has no search block`);
+  const terms = [].concat(vars.terms ?? []).map(String);
+  const searchVars = { ...vars, terms, query: terms.join(' '), cursor: undefined };
+  const cap = Number(limit) > 0 ? Math.floor(Number(limit)) : DEFAULT_SEARCH_LIMIT;
+  // The connector's scope applies to lookup too: `list.where` filters the results
+  // unless the search block brings its own `where`.
+  const block = recipe.search.where ? recipe.search : { ...recipe.search, where: recipe.list?.where };
+  const { items } = await listItems(client, recipe, searchVars, { ...opts, block, maxItems: cap, firstPageOnly: true });
+  return { items };
 }
 
 /** Fetch one item and render it to marked-up text. */

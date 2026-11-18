@@ -40,7 +40,7 @@ MCP server ──list──▶ items (ref, version, title)
 | Recipe | `server/src/connectors/recipes/<name>.yaml` | How to list, fetch and render that kind of server |
 | Snapshot | `brain/raw/extracted/<connector-id>/<slug>.txt` | The committed text pages cite; its sha256 is the fingerprint |
 | Manifest entry | `brain/manifest.yaml`, `kind: connector` | The record of what was ingested at which digest |
-| Operational state | service store: `connector-cursor`, `connector-item`, `connector-oauth` | Sync cursor, per-item version cache, sealed OAuth tokens |
+| Operational state | service store: `connector-cursor`, `connector-item`, `connector-lookup`, `connector-lookup-title`, `connector-oauth` | Sync cursor, per-item version cache, documents fetched by live lookup, raw titles of lookup search hits until fetched, sealed OAuth tokens |
 
 ## Configuration
 
@@ -65,6 +65,9 @@ sources:
       # max_items: 1000            # per-sync listing cap; a capped listing never reports items missing
       # concurrency: 4             # parallel fetches
       # timeout_seconds: 30        # connect and per-request timeout
+      # lookup: true               # let live lookup search this connector when no page answers (default false)
+      # lookup_select:             # optional scope for lookup, instead of `select`
+      #   query: "'0AbC…' in parents"
       # oauth:                     # only for servers that need OAuth and want more than the defaults
       #   scope: "read"
       #   client_id: "…"           # a pre-registered client; omit to use dynamic client registration
@@ -96,6 +99,17 @@ sources:
         render: json-to-markdown
         render_options: { title: title, body: [summary, timeline], omit: [updated_at, viewed_at] }
 ```
+
+`lookup: true` lets [live lookup](live-lookup.md) search this connector when a
+chat's question has no reviewed answer, and read its staged snapshots. It does
+not change how the connector syncs. Lookup searches with the connector's
+`select` unless `lookup_select` is set, which replaces `select` for lookup
+alone, so a wider scope for lookup is a choice you make on purpose. A connector
+without `lookup: true` is never searched, whatever its recipe has. One whose
+recipe has no `search` block is not searched either, but its staged snapshots
+still count. The `search` results are filtered by `list.where`, so lookup stays
+inside the connector's scope, unless the `search` block has a `where` of its
+own.
 
 `mcp` accepts three shapes:
 
@@ -148,6 +162,29 @@ cursor entirely.
 gone. The sync then lists every `kind: connector` entry for that connector whose
 `ref` was not seen, in `missing`. The next ingest sets their manifest `status:
 missing`; pages and snapshots stay.
+
+**A document that lookup fetched outside the listing is not missing.** Live
+lookup can fetch a document the connector's `select` does not list. It records
+that ref in the `connector-lookup` store namespace, as `{ at, title, failures,
+checkedAt }`, unless the sync is already responsible for the document. The sync
+is responsible when its own listing wrote the item record and `main` has no
+entry yet, or when `main` has an entry and the store holds no item record. A
+record that only lookups wrote never counts, and neither does a sync record once
+`main` has the entry, because the document may have left `select` since. The
+`connector-item` record has an optional `via` field for this: `lookup` when only
+lookup has fetched the document, absent when a sync listing wrote it. The
+`connector-lookup-title` namespace keeps the raw title of a search hit until the
+document is fetched, so a lookup fetch after a restart gives the same
+fingerprint a sync does. On a complete
+listing the sync leaves such an entry out of `missing` and fetches it again by
+ref, up to `max_items` of them, oldest check first, with the title the search
+gave. A changed document comes back as a `changed` SourceRef like any other. A
+fetch that fails goes to `errors`. After three failed re-checks in a row the ref
+is reported in `missing` and the record is removed. A document that lookup
+fetched and that is then deleted upstream before the next complete sync is
+reported missing after three syncs, where a sync-only document is reported after
+one. A complete listing that includes the ref clears the record. This needs a recipe whose `fetch` calls a
+tool or method. Without the record, the same entry is reported missing.
 
 **Unchanged with respect to what?** To `main`. An item whose proposal is still
 open is returned again on the next sync, with the same sha256; the runner's job
@@ -248,6 +285,8 @@ environment variables.
 # verified: no — what was checked, against which server, when
 name: example
 description: One line.
+live: false                    # optional; true = current state: answered from, never ingested (below)
+about: [thing, things]         # optional; words a question may use to point at this connector (live lookup)
 
 resolve:                       # optional; runs once per sync, before listing
   - tool: list_commits
@@ -277,18 +316,59 @@ list:
     - { path: state, in: "{{select.states}}" }      # an empty list matches everything
     - { path: kind, not: archived }
 
+search:                        # optional; live lookup only. Same shape as `list`, no `static`
+  tool: search_things
+  args: { query: "{{query}}" }   # {{query}}: the terms joined by a space · {{terms}}: the list
+  items: "things[*]"
+  ref: id
+  version: updatedAt
+  title: name
+
 fetch:
   tool: get_thing              # or `method: resources/read`; omit both to render the list item itself
   args: { id: "{{item.ref}}" }
   text: "content | body | $"   # what to render (default: the whole result)
   title: title                 # optional — overrides the list title
   mime: mimeType               # optional
-  render: json-to-markdown     # markdown | json-to-markdown | transcript | rows | auto (default)
+  render: json-to-markdown     # markdown | json-to-markdown | transcript | rows | lines | auto (default)
   render_options:              # per mode, below
     title: identifier
     body: [description]
     omit: [updatedAt]
 ```
+
+**The `search` block.** Live lookup runs it for a question and reads its first
+page, at most `limit` items (10 by default, 50 at most). It is checked like
+`list`: `ref` is required, `static` is not allowed. A connector can set `search:`
+inline to merge over the recipe's. `{{select.*}}` inside it holds `lookup_select`
+when set, else `select`. `ctx.connectors.search` and `fetchOne` return one-line
+strings with caps (a title is cut at 200 characters). Terms come from a chat, so
+they are sanitised before they are rendered: only letters, digits, spaces,
+hyphens, underscores and dots survive, a word loses a leading `-` or `.`, and a
+word with no letter or digit is dropped. At most 8 terms, 64 characters each and
+200 in all go out. A recipe
+without `search` still validates, and its connector takes no part in the search
+step.
+
+**Live recipes.** `live: true` marks a recipe that describes the current state
+of a system (the branches of a repository, its recent commits). Such a document
+is out of date as soon as a person has reviewed it, so it is read for one
+answer and never kept:
+
+- `sync` and `syncDetailed` refuse a connector whose recipe is live, with an
+  error that says live sources are answered from and never ingested.
+  `list()` reports `live: true` for it.
+- A live recipe needs a `search` block. The block may ignore `{{query}}`, since
+  the state is the same whatever the question is. With no `fetch` call, the
+  document is rendered from the item the search returned, so the live recipes
+  list and fetch with one call.
+- The connector still needs `lookup: true`. Live lookup then fetches it only
+  when the question mentions it: a query term has to match the connector's id,
+  its `label`, the owner or name in `select.repo`, or a word in the recipe's
+  `about`. `about` is a list of at most 20 single words (letters, digits, `-` or
+  `_`, 24 characters each).
+- `fetchOne` returns the snapshot text with `live: true` and the fetch time. It
+  writes no staged file and no store record, and returns no SourceRef.
 
 **Paths.** `a.b`, `a[0]`, `a[-1]`, `a["key with spaces"]`, `a[*].b` (fans out),
 `$` (the whole value). `x | y | z` takes the first alternative that yields a
@@ -302,7 +382,8 @@ template keeps the value's type (a list stays a list). Variables: `since`,
 `default:<v>` · `before:<s>` · `after:<s>` · `join:<s>` · `first` · `lower` ·
 `upper` · `urlencode` · `json` · `string` · `number` · `date` (YYYY-MM-DD) ·
 `quote` (single-quoted) · `mime` (from a file extension) · `attr:<name>`
-(`name="…"` out of an XML-ish tag).
+(`name="…"` out of an XML-ish tag) · `short:<n>` (the first n characters, 7 by
+default) · `firstline` (the first line of a string).
 
 **MCP results.** A tool result is read as its `structuredContent` when present;
 otherwise its text blocks, parsed as JSON when they parse. An embedded text
@@ -317,6 +398,7 @@ resource wins over text blocks beside it ("successfully downloaded …").
 | `json-to-markdown` | an object or array | `title` (path), `body` (keys rendered as markdown sections), `omit` (keys) |
 | `transcript` | segments, or text with leading `[hh:mm:ss]` stamps | `segments` (path), `start`, `speaker`, `text` (paths), `unit: ms` |
 | `rows` | an array | `rows` (path), `columns` (keys, in order) |
+| `lines` | an array, or a wrapper that holds one | `rows` (path), `line` (a template over `{{raw.*}}`, required), `section` (the section name), `max` (default 100, at most 200). One section of one-line entries. Only the fields `line` names reach the text |
 | `auto` | anything | picks by mime type: JSON → `json-to-markdown`, CSV → `rows`, markdown/unknown → `markdown`, other text → verbatim (no heading markers — a YAML `# comment` is not a section) |
 
 ## Shipped recipes
@@ -331,7 +413,9 @@ matches.
 | Recipe | Server | Item | Verified |
 |---|---|---|---|
 | `mcp-resources` | **any** server exposing resources | one resource | yes — tests |
-| `github` | GitHub's official MCP server | one file at the branch head; `version` = blob sha, `commit` = commit sha | no |
+| `github` | GitHub's official MCP server | one file at the branch head; `version` = blob sha, `commit` = commit sha. Ships a `search` block (`search_code`, scoped to `select.repo` and `select.paths`) | no |
+| `github-commits` | GitHub's official MCP server (`list_commits`) | live: the latest commits of `select.repo` on `select.branch` (`select.limit`, default 20) as one document: short sha, date, first line of the message; no author names or emails | no |
+| `github-branches` | GitHub's official MCP server (`list_branches`) | live: the branches of `select.repo` as one document: name and head sha | no |
 | `gitlab` | community `@zereight/mcp-gitlab`-style tools | one file at the branch head | no |
 | `google-drive` | hosted Google Drive MCP (`search_files`, `read_file_content`) | one file as text | partial |
 | `granola` | hosted Granola MCP (`list_meetings`, `get_meetings`) | one meeting's notes | partial |
@@ -339,6 +423,23 @@ matches.
 | `notion` | Notion's hosted MCP (`notion-search`, `notion-fetch`) | one page | no |
 | `slack` | the reference Slack MCP server | one channel's history, a row per message | no |
 | `web-fetch` | the reference `fetch` server (`uvx mcp-server-fetch`, tool `fetch`) | one URL from `select.urls` (no lister), converted to markdown; no `version`, so every sync re-fetches and the snapshot's sha256 decides whether it changed | no |
+
+`google-drive` and `github` also ship a `search` block for live lookup. Both are
+unverified: neither has been run against the real server. The Drive block
+reuses `search_files` with a `fullText contains` condition, which is an
+assumption. The GitHub block calls `search_code` with `repo:<select.repo>
+(<terms>)` and filters hits by `select.paths`; the tool is in the `repos`
+toolset, the same one as `get_file_contents` and `list_commits`, so
+`X-MCP-Toolsets: repos,git` is enough. The two live GitHub recipes use
+`list_commits` and `list_branches`, also in `repos`. Their headers record that
+they were written against the README of `github/github-mcp-server`, which does
+not document result fields. Check each with `almagest connectors search <id>
+<words>` before you set `lookup: true`. No other shipped recipe has a `search`
+block. The `notion` recipe has none on purpose:
+`notion-search` would reach every page the service's Notion token can see, and
+neither its arguments nor its result fields are verified, so it cannot be held
+to `select`. To use lookup on Notion, add an inline `search:` block with a
+`where` that scopes it, after you have checked the tool against your workspace.
 
 Overriding part of a shipped recipe needs no fork: `list:`, `fetch:` and
 `resolve:` on the connector merge over the recipe. Two common ones:
@@ -421,6 +522,9 @@ treated as statically authenticated and gets no OAuth provider.
 ```
 almagest connectors list                        configured connectors, cursor, last sync
 almagest connectors sync <id> [--dry-run] [--full] [--json]
+almagest connectors search <id> <query…> [--limit N] [--json]
+                                                search a connector with `lookup: true`; print the candidates
+                                                (ref, version, title). Fetches and queues nothing
 almagest connectors test <id> [--fetch]         connect, list the first page, print mapped items
 almagest connectors init <mcp> [--name n] [--stdout]
 almagest connectors login <id|mcp>

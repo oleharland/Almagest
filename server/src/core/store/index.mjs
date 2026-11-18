@@ -13,7 +13,10 @@
  *   decisions  create(d) update(id, patch) get(id) listByProposal(id) list(filter)
  *   events     append(evt) query({ since, until, tool, slug, limit }) prune(beforeTs)
  *   audit      append(entry) list(filter)            — no update, no delete, ever
- *   kv         get(ns, key) set(ns, key, value) delete(ns, key) list(ns)
+ *   kv         get(ns, key) set(ns, key, value) setIfAbsent(ns, key, value) → boolean
+ *              delete(ns, key) list(ns)
+ *              setIfAbsent inserts only when the key is free and says whether it did;
+ *              it is atomic across processes, so it is how two of them claim one thing
  *   close()
  *
  * `filter` is field equality on top-level fields, plus `limit` and

@@ -11,6 +11,7 @@ import path from 'node:path';
 
 import matter from 'gray-matter';
 
+import { canonicalOrUnsure, canonicalSet } from '../../../tools/lib/canonical.mjs';
 import { asArray, asString, normalizeSources, safeFrontmatter } from '../../../tools/lib/wiki-core.mjs';
 import { diffClaims, extractClaims } from './claims.mjs';
 import { locate } from './excerpt.mjs';
@@ -50,10 +51,6 @@ function fieldChanges(before, after) {
   return out;
 }
 
-export function canonicalSet(canonicalPages = []) {
-  return new Set(canonicalPages.map((s) => String(s).trim().replace(/^\[\[|\]\]$/g, '').replace(/^.*\//, '').replace(/\.md$/, '')));
-}
-
 /**
  * @param {object} input
  * @param {object} input.git            core git helpers
@@ -61,10 +58,12 @@ export function canonicalSet(canonicalPages = []) {
  * @param {string} input.headSha
  * @param {string} [input.wikiDir]      'brain/wiki'
  * @param {string[]} [input.canonicalPages]  config.v1.canonicalPages
+ * @param {Set<string>} [input.locked]       the canonical set on main (canonical.mjs → canonicalAt); when
+ *                                           absent only the config list and the page's own tiers are used
  * @returns {Promise<{ changes: Array, otherFiles: Array }>}
  */
-export async function buildChanges({ git, baseSha, headSha, wikiDir = 'brain/wiki', canonicalPages = [] }) {
-  const canonical = canonicalSet(canonicalPages);
+export async function buildChanges({ git, baseSha, headSha, wikiDir = 'brain/wiki', canonicalPages = [], locked = null }) {
+  const canonical = locked || canonicalSet({ configPages: canonicalPages });
   const all = await git.diffNames(baseSha, headSha);
   const prefix = wikiDir.replace(/\/+$/, '') + '/';
   const wiki = all.filter((d) => d.path.startsWith(prefix) || d.from?.startsWith(prefix));
@@ -83,8 +82,10 @@ export async function buildChanges({ git, baseSha, headSha, wikiDir = 'brain/wik
     const action = ACTIONS[d.status] || 'update';
     const slug = path.basename(d.path, '.md');
     const fromSlug = d.from ? path.basename(d.from, '.md') : '';
-    const before = action === 'create' ? null : parsePage(await readAt(baseSha, d.from || d.path));
-    const after = action === 'delete' ? null : parsePage(await readAt(headSha, d.path));
+    const beforeText = action === 'create' ? null : await readAt(baseSha, d.from || d.path);
+    const afterText = action === 'delete' ? null : await readAt(headSha, d.path);
+    const before = parsePage(beforeText);
+    const after = parsePage(afterText);
 
     const claims = diffClaims(before ? extractClaims(before.body) : [], after ? extractClaims(after.body) : []);
     for (const claim of claims) {
@@ -95,6 +96,13 @@ export async function buildChanges({ git, baseSha, headSha, wikiDir = 'brain/wik
     const meta = after?.data || before?.data || {};
     const tierBefore = asString(before?.data?.tier);
     const tierAfter = asString(after?.data?.tier);
+    // Locked: canonical on main (either way) or on the page the branch started from.
+    // A page whose tier the two parsers read differently (canonicalOrUnsure) counts as canonical.
+    const lockedNow = canonical.has(slug) || Boolean(fromSlug && canonical.has(fromSlug)) || tierBefore === 'canonical'
+      || (typeof beforeText === 'string' && canonicalOrUnsure(beforeText));
+    // A page the branch makes canonical. Never fine on its own: only the
+    // service, having recorded a person's choice in the inbox, clears this.
+    const promotes = !lockedNow && (tierAfter === 'canonical' || (typeof afterText === 'string' && canonicalOrUnsure(afterText)));
     changes.push({
       slug,
       path: d.path,
@@ -104,7 +112,8 @@ export async function buildChanges({ git, baseSha, headSha, wikiDir = 'brain/wik
       tier: tierAfter || tierBefore || 'curated',
       owner: asString(meta.owner),
       confidence: asString(meta.confidence),
-      canonical: canonical.has(slug) || (fromSlug && canonical.has(fromSlug)) || tierBefore === 'canonical' || tierAfter === 'canonical',
+      canonical: lockedNow || promotes,
+      ...(promotes ? { promotes: true } : {}),
       hot: false,
       demand: 0,
       claims,

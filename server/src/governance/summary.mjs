@@ -7,8 +7,30 @@
  */
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/**
+ * The question behind a proposal that live lookup queued. The lookup keeps it
+ * in the job's own `lookupQuestion` field, only when queries are stored plain;
+ * otherwise there is none. It is never part of the job's instructions.
+ */
+export function lookupQuestionOf(job) {
+  if (job?.trigger !== 'lookup') return '';
+  return String(job.lookupQuestion || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+}
+
+/** One plain sentence for a proposal that exists because someone asked a question the brain could not answer; '' for any other. */
+export function lookupSentence(proposal) {
+  if (proposal?.trigger !== 'lookup') return '';
+  return 'Fetched by live lookup: someone asked a question the brain could not answer.';
+}
+
+/** Free text as one line: line breaks and control characters become single spaces, the length is capped. A title ends up in commit messages and notifications. */
+const oneLine = (v, max = 300) => {
+  const t = String(v ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\s]+/g, ' ').trim();
+  return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
+};
+
 export function sourceName(source) {
-  return source?.title || source?.path?.split('/').pop() || source?.ref || source?.id || 'an unnamed source';
+  return oneLine(source?.title) || oneLine(source?.path?.split('/').pop()) || oneLine(source?.ref) || oneLine(source?.id) || 'an unnamed source';
 }
 
 export function counts(changes = []) {
@@ -38,6 +60,22 @@ export function titleFor(source) {
   return `New material from “${sourceName(source)}”`;
 }
 
+/** The title of a tier proposal: "Ole wants to make “Glossary” canonical." */
+export function tierTitle(who, pageTitle, to) {
+  return `${oneLine(who, 100)} wants to make “${oneLine(pageTitle, 200)}” ${oneLine(to, 20)}.`;
+}
+
+/** The title of a learnings proposal: "5 things the brain concluded from what it holds". */
+export function learningsTitle(n) {
+  if (!n) return 'The brain has a question about what it holds';
+  return `${n} ${n === 1 ? 'thing' : 'things'} the brain concluded from what it holds`;
+}
+
+/** The one sentence the proposal page gives about learnings. */
+export const LEARNINGS_EXPLANATION = 'These are conclusions the brain drew from pages that were already reviewed. Each one lists the pages it rests on, and you can accept or turn down each one on its own.';
+
+const TIER_NAME = { canonical: 'canonical', curated: 'curated', evidence: 'evidence' };
+
 /** One line: what changed, about what. */
 export function changeLine(changes = []) {
   const c = counts(changes);
@@ -62,14 +100,24 @@ export function changeLine(changes = []) {
 export function describe(proposal, decisions = []) {
   const open = decisions.filter((d) => d.status === 'open').length;
   const hot = (proposal.changes || []).filter((c) => c.hot && c.pageStatus !== 'rejected').length;
-  const line = changeLine(proposal.changes);
+  const tier = proposal.kind === 'tier' ? proposal.tier : null;
+  const learnings = proposal.kind === 'learnings';
+  const concluded = learnings ? counts(proposal.changes).pagesNew : 0;
+  const line = learnings
+    ? (concluded ? `${plural(concluded, 'conclusion')} drawn from pages already reviewed` : 'No conclusions yet')
+    : tier
+    ? `Changes one setting of one page, its tier, from ${TIER_NAME[tier.from] || tier.from} to ${TIER_NAME[tier.to] || tier.to}`
+    : changeLine(proposal.changes);
   const bits = [line];
   if (open) bits.push(`${plural(open, 'question')} ${open === 1 ? 'needs' : 'need'} you`);
   if (hot) bits.push(`${plural(hot, 'frequently-read page')}`);
   return {
     title: proposal.title || titleFor(proposal.source),
     line,
-    sentence: `${line} from “${sourceName(proposal.source)}”${open ? ` · ${plural(open, 'question')} ${open === 1 ? 'needs' : 'need'} you` : ''}`,
+    lookup: lookupSentence(proposal),
+    tier,
+    learnings,
+    sentence: learnings ? `${proposal.title || learningsTitle(concluded)}${open ? ` · ${plural(open, 'question')} ${open === 1 ? 'needs' : 'need'} you` : ''}` : tier ? `${proposal.title}${open ? ` · ${plural(open, 'question')} ${open === 1 ? 'needs' : 'need'} you` : ''}` : `${line} from “${sourceName(proposal.source)}”${proposal.trigger === 'lookup' ? ' · fetched by live lookup' : ''}${open ? ` · ${plural(open, 'question')} ${open === 1 ? 'needs' : 'need'} you` : ''}`,
     openDecisions: open,
     hot,
     counts: counts(proposal.changes),

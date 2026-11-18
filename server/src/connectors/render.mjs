@@ -14,9 +14,9 @@
  * marker gets a leading backslash, so third-party content cannot forge a
  * locator and make a citation land somewhere the source never said it.
  */
-import { select, selectAll } from './mapping.mjs';
+import { renderTemplate, select, selectAll } from './mapping.mjs';
 
-export const RENDER_MODES = ['markdown', 'json-to-markdown', 'transcript', 'rows', 'auto'];
+export const RENDER_MODES = ['markdown', 'json-to-markdown', 'transcript', 'rows', 'lines', 'auto'];
 
 const MARKER_LIKE = /^\s*(===\s.*\s===|--- (almagest snapshot|end of header)\b.*)\s*$/;
 
@@ -27,6 +27,25 @@ export function neutralize(text) {
     .split('\n')
     .map((line) => (MARKER_LIKE.test(line) ? `\\${line}` : line))
     .join('\n');
+}
+
+/**
+ * A provider-supplied string that is handed back to a caller (a chat) rather
+ * than written into a snapshot: one line, no control characters, collapsed
+ * whitespace, capped, and with a leading `#`, `>` or `=` run (and anything
+ * marker-like) escaped, so it cannot open a heading, a quote or a section of
+ * the answer it ends up in. Not used for snapshot bytes.
+ */
+export function flattenField(value, max = 500) {
+  let s = String(value ?? '')
+    .replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .slice(0, max)
+    .trim();
+  s = neutralize(s);
+  if (/^[#>=]/.test(s)) s = `\\${s}`;
+  return s;
 }
 
 export const marker = {
@@ -256,10 +275,36 @@ function renderRows(value, opts = {}) {
     .join('\n\n');
 }
 
+// ── lines ────────────────────────────────────────────────────────────────────
+
+/** The most entries a `lines` render writes, whatever the recipe asks for. */
+export const MAX_LINES = 200;
+
+/**
+ * One section of one-line entries, for a document that is a short list of
+ * current facts (live recipes): `options.rows` picks the entries, `options.line`
+ * is a template over each (`{{raw.<field>}}`), `options.section` names the
+ * section. Only the fields the template names reach the text, so a field a
+ * recipe leaves out (an author's name or email) is never written.
+ */
+function renderLines(value, opts = {}) {
+  if (typeof opts.line !== 'string' || !opts.line) throw new Error('render: lines needs render_options.line');
+  const rows = opts.rows ? selectAll(value, opts.rows) : Array.isArray(value) ? value : [];
+  const max = Math.min(Math.max(1, Math.floor(Number(opts.max)) || 100), MAX_LINES);
+  const out = [];
+  if (opts.section) out.push(marker.section(opts.section));
+  for (const [i, row] of rows.slice(0, max).entries()) {
+    const line = String(renderTemplate(opts.line, { raw: row, index: i + 1 }) ?? '').replace(/\s+/g, ' ').trim();
+    if (line) out.push(neutralize(`- ${line}`));
+  }
+  if (out.length === (opts.section ? 1 : 0)) out.push('No entries.');
+  return out.join('\n');
+}
+
 // ── entry point ──────────────────────────────────────────────────────────────
 
 /**
- * @param {string} mode   markdown | json-to-markdown | transcript | rows | auto
+ * @param {string} mode   markdown | json-to-markdown | transcript | rows | lines | auto
  * @param {*} value       what `fetch.text` selected from the tool result
  * @param {object} [opts] the recipe's `fetch.render_options`
  * @param {object} [hint] { mimeType } — lets `auto` pick
@@ -270,6 +315,7 @@ export function render(mode, value, opts = {}, hint = {}) {
     case 'json-to-markdown': return renderJson(value, opts);
     case 'transcript': return renderTranscript(value, opts);
     case 'rows': return renderRows(value, opts);
+    case 'lines': return renderLines(value, opts);
     case 'auto': {
       const mime = String(hint.mimeType || (value && value.mimeType) || '');
       if (/json/.test(mime) && typeof textOf(value) === 'string') {

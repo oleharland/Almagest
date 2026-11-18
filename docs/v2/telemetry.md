@@ -38,6 +38,14 @@ the web inbox, the site and the CLI:
 | `actorId` | distinct-reader counts; hashed by default |
 | `query`, `queryHash`, `queryTokens` | gap clustering; subject to the privacy settings below |
 | `latencyMs` | operational |
+| `lookup` | `ask` only, when [live lookup](live-lookup.md) ran: what it did, as counts and ids |
+
+`lookup` holds `step` (the step that answered: `sources`, `staged`,
+`connectors`, or `null`), `steps` (the steps tried), `connectorsAsked`,
+`connectors` (the ids of the connectors asked), `fetched`, `cacheHits`,
+`latencyMs`, `incomplete`, `skipped` (the names of the steps that were skipped)
+and `queued` (the ids of the ingest jobs it queued). It holds no passage text and no document titles. The event is present whenever
+lookup ran, including when it found nothing.
 
 Recording is fire-and-forget: `ctx.telemetry.record(partial)` builds the event,
 applies privacy, pushes it onto a bounded in-memory buffer and returns. A
@@ -232,6 +240,11 @@ and no verdict), or a `report_gap` event. Misses inside the window
    to that moment is dropped. A miss after the answer reopens the cluster
    (`reopenedAfter`).
 
+A question that live lookup answered from outside the wiki is still a miss. Its
+event keeps `answered: false`, so the gap stays open until a reviewed page
+answers it. The gap list shows when lookup served a gap and whether an ingest
+job is queued.
+
 Each gap: `{ cluster, representative, tokens, queries, count, distinctSessions,
 tools, firstSeen, lastSeen, suggestion }`, ordered by count, then distinct
 sessions, then recency. The suggestion is plain text:
@@ -310,7 +323,7 @@ ctx.telemetry  .record(partial) → void
 ```
 
 `record(partial)` accepts `{ channel, tool, actor | actorId, client, sessionId,
-query, results, pagesRead, answered, latencyMs, helpful }`; `ts` may be passed
+query, results, pagesRead, answered, latencyMs, helpful, lookup }`; `ts` may be passed
 for a backfill, otherwise it is now. `results` may be `[{ slug, rank, score }]`
 or bare slugs (rank = position).
 

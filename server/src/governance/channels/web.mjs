@@ -6,6 +6,10 @@
  *   POST /inbox/p/:id/approve            (+ /reject /request-changes /retry /page/:slug/accept /page/:slug/reject)
  *   POST /inbox/d/:id/resolve            answer a question
  *   GET  /inbox/reverify  /inbox/gaps  /inbox/activity
+ *   GET  /inbox/canonical                pages worth fixing as canonical;  POST /inbox/canonical/:slug/dismiss
+ *   GET  /inbox/pages  /inbox/pages/:slug   every page on main and its tier
+ *   POST /inbox/pages/:slug/tier         a page on main: a small tier proposal, authored by the person
+ *   POST /inbox/p/:id/page/:slug/tier    a page in an open proposal: a new commit on its branch
  *   GET|POST /inbox/confirm/:code        a chat's approval request, confirmed by a signed-in person
  *
  *   GET  /api/proposals  /api/proposals/:id                         any authenticated actor
@@ -15,12 +19,15 @@
  *
  * Every review action — form or JSON — needs a signed-in browser session
  * and its CSRF token (forms: `csrf` field; JSON: `x-almagest-csrf` header).
+ * Tier changes exist only here, as forms: no JSON route, no chat, Slack, email or GitHub path.
  * Bearer tokens may read proposals; they never act on them. Every approve,
  * accept and answer carries the `headSha` the person was shown.
  */
 import os from 'node:os';
 
+import { hasRole } from '../../core/auth.mjs';
 import { HttpError } from '../../core/http.mjs';
+import { canonicalSet, tierOfText } from '../../../../tools/lib/canonical.mjs';
 import { safeNext } from '../html.mjs';
 import { describe } from '../summary.mjs';
 import { redirect } from '../sessions.mjs';
@@ -51,7 +58,7 @@ export function publicView(value, roots) {
 const DONE = ['merged', 'merged_unaccepted', 'rejected', 'superseded'];
 
 export function create(ctx, cfg, { governance, sessions, confirmations }) {
-  const { store, log } = ctx;
+  const { store, log, config } = ctx;
   const roots = [ctx.repoRoot, ctx.config.paths?.state, ctx.config.paths?.worktrees, os.tmpdir(), '/private/var/', '/var/folders/']
     .filter(Boolean).map((r) => String(r));
   const pub = (v) => publicView(v, roots);
@@ -95,6 +102,11 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
 
   const canActOn = (p, actor) => governance.mayApprove(p, actor);
 
+  /** Numbers shown beside nav links. Never fails a page. */
+  const navCounts = async () => ({ canonical: await governance.hints.count() });
+  const canonicalRole = governance.canonicalRole;
+  const mayCanonical = (actor) => hasRole(actor, canonicalRole);
+
   /** A chat's approval request carried into the review page (?confirm=<code>). */
   async function chatRequest(code, proposalId) {
     if (!code) return null;
@@ -134,9 +146,11 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
     const why = await hotReasons(ev.proposal);
     const canAct = await canActOn(ev.proposal, actor);
     const chat = await chatRequest(confirm, ev.proposal.id);
+    const nav = await navCounts();
     return respond(req, res, (nonce) => views.proposalPage({
       proposal: ev.proposal, decisions: ev.decisions, evaluation: ev.evaluation,
-      actor, csrf, nonce, canAct, flash, why, chat,
+      actor, csrf, nonce, canAct, flash, why, chat, navCounts: nav,
+      tiers: { canCanonical: mayCanonical(actor), canonicalRole },
     }), { status });
   }
 
@@ -145,7 +159,7 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
    * fixed message key (never reflected text), failure → the page re-rendered
    * with the error.
    */
-  async function post(req, res, { actor, body, url }, backTo, fn, message) {
+  async function post(req, res, { actor, body, url }, backTo, fn, message, { next = null } = {}) {
     if (!requireHuman(req, res, actor, url)) return undefined;
     if (!isBrowser(actor)) return notBrowser(req, res);
     if (!sessions.checkCsrf(req, body?.csrf, actor)) {
@@ -154,7 +168,8 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
     try {
       const out = await fn();
       const key = typeof message === 'function' ? message(out) : message;
-      redirect(res, `${backTo}${backTo.includes('?') ? '&' : '?'}m=${encodeURIComponent(key)}`);
+      const dest = next ? next(out) : backTo;
+      redirect(res, `${dest}${dest.includes('?') ? '&' : '?'}m=${encodeURIComponent(key)}`);
       return undefined;
     } catch (err) {
       // The session's roles are too old to act on (service.mjs): sign in again, then come back here.
@@ -182,7 +197,8 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
       };
       const items = await queueItems(filters);
       const csrf = sessions.csrfToken(req, res, actor);
-      return respond(req, res, (nonce) => views.queuePage({ items, filters, actor, csrf, nonce, flash: flashFrom(query) }));
+      const nav = await navCounts();
+      return respond(req, res, (nonce) => views.queuePage({ items, filters, actor, csrf, nonce, flash: flashFrom(query), navCounts: nav }));
     });
 
     http.route('GET', '/inbox/p/:id', async (req, res, { actor, params, query, url }) => {
@@ -230,6 +246,70 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
       return post(req, res, a, to, () => governance.resolveDecision(a.params.id, a.actor, { optionId: a.body?.optionId, note: a.body?.note, channel: 'web', headSha: a.body?.headSha }), 'resolved');
     });
 
+    // ── tiers ────────────────────────────────────────────────────────────────
+
+    const yes = (v) => v === 'yes' || v === true || v === 'true';
+
+    http.route('POST', '/inbox/p/:id/page/:slug/tier', (req, res, a) =>
+      post(req, res, a, back(a.params.id), () => governance.setPageTier(a.params.id, a.params.slug, String(a.body?.to || ''), a.actor, {
+        channel: 'web', headSha: a.body?.headSha, confirm: yes(a.body?.confirm),
+      }), 'tier_changed'));
+
+    http.route('GET', '/inbox/canonical', async (req, res, { actor, query, url }) => {
+      if (!requireHuman(req, res, actor, url)) return undefined;
+      let items = [];
+      let error = '';
+      const enabled = governance.hints.settings().enabled;
+      try { items = enabled ? await governance.hints.list({ fresh: true }) : []; }
+      catch (err) { error = "The suggestions aren't available right now."; log.warn('canonical suggestions unavailable', { error: err.message }); }
+      const csrf = sessions.csrfToken(req, res, actor);
+      const nav = { canonical: items.length };
+      const can = governance.canReview(actor);
+      return respond(req, res, (nonce) => views.canonicalPage({
+        items, enabled, error, actor, csrf, nonce, canReview: can, canCanonical: mayCanonical(actor), canonicalRole, flash: flashFrom(query), navCounts: nav,
+      }));
+    });
+
+    http.route('POST', '/inbox/canonical/:slug/dismiss', (req, res, a) =>
+      post(req, res, a, '/inbox/canonical', () => governance.dismissHint(a.params.slug, a.actor, { channel: 'web' }), 'hint_dismissed'));
+
+    http.route('GET', '/inbox/pages', async (req, res, { actor, query, url }) => {
+      if (!requireHuman(req, res, actor, url)) return undefined;
+      const q = String(query.q || '').slice(0, 200).toLowerCase();
+      const snap = await ctx.snapshot.load();
+      const all = snap.pages.filter((pg) => !q || `${pg.title} ${pg.slug}`.toLowerCase().includes(q));
+      const csrf = sessions.csrfToken(req, res, actor);
+      const nav = await navCounts();
+      return respond(req, res, (nonce) => views.pagesPage({ pages: all.slice(0, 200), q: String(query.q || '').slice(0, 200), truncated: all.length > 200, actor, csrf, nonce, navCounts: nav }));
+    });
+
+    http.route('GET', '/inbox/pages/:slug', async (req, res, { actor, params, query, url }) => {
+      if (!requireHuman(req, res, actor, url)) return undefined;
+      const csrf = sessions.csrfToken(req, res, actor);
+      const nav = await navCounts();
+      const snap = await ctx.snapshot.load();
+      const found = snap.pages.find((pg) => pg.slug === params.slug);
+      if (!found) {
+        return respond(req, res, (nonce) => views.messagePage({ title: 'Not found', text: 'There is no page with that name.', actor, csrf, nonce, link: { href: '/inbox/pages', label: 'All pages' } }), { status: 404 });
+      }
+      // The tier on main right now, read from git, not from the cached snapshot.
+      const text = await ctx.git.show(config.service.git.main, `${config.v1.brainDir}/wiki/${found.slug}.md`);
+      const tier = (text && tierOfText(text)) || found.tier;
+      const waiting = (await store.proposals.list({ status: ACTIVE })).find((p) => p.kind === 'tier' && p.tier?.slug === found.slug) || null;
+      const hint = (await governance.hints.list().catch(() => [])).find((h) => h.slug === found.slug) || null;
+      const configLocked = canonicalSet({ configPages: config.v1.canonicalPages }).has(found.slug);
+      const can = governance.canReview(actor);
+      return respond(req, res, (nonce) => views.pageEntryPage({
+        page: { slug: found.slug, title: found.title, tier }, configLocked, waiting, hint, canReview: can,
+        canCanonical: mayCanonical(actor), canonicalRole, actor, csrf, nonce, flash: flashFrom(query), navCounts: nav,
+      }));
+    });
+
+    http.route('POST', '/inbox/pages/:slug/tier', (req, res, a) =>
+      post(req, res, a, `/inbox/pages/${encodeURIComponent(a.params.slug)}`, () => governance.proposeTier(a.params.slug, String(a.body?.to || ''), a.actor, {
+        channel: 'web', confirm: yes(a.body?.confirm),
+      }), (p) => (p?.status === 'merged' ? 'tier_done' : 'tier_proposed'), { next: (p) => (p?.id ? back(p.id) : `/inbox/pages/${encodeURIComponent(a.params.slug)}`) }));
+
     http.route('GET', '/inbox/reverify', async (req, res, { actor, url }) => {
       if (!requireHuman(req, res, actor, url)) return undefined;
       let items = [];
@@ -237,7 +317,8 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
       try { items = (await ctx.telemetry?.reverifyQueue?.()) || []; }
       catch (err) { error = 'The re-check list isn\'t available — usage tracking is not running.'; log.debug('reverifyQueue unavailable', { error: err.message }); }
       const csrf = sessions.csrfToken(req, res, actor);
-      return respond(req, res, (nonce) => views.reverifyPage({ items, error, actor, csrf, nonce }));
+      const nav = await navCounts();
+      return respond(req, res, (nonce) => views.reverifyPage({ items, error, actor, csrf, nonce, navCounts: nav }));
     });
 
     http.route('GET', '/inbox/gaps', async (req, res, { actor, url }) => {
@@ -247,7 +328,8 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
       try { items = (await ctx.telemetry?.gaps?.({ limit: 50 })) || []; }
       catch (err) { error = 'Unanswered questions aren\'t available — usage tracking is not running.'; log.debug('gaps unavailable', { error: err.message }); }
       const csrf = sessions.csrfToken(req, res, actor);
-      return respond(req, res, (nonce) => views.gapsPage({ items, error, actor, csrf, nonce }));
+      const nav = await navCounts();
+      return respond(req, res, (nonce) => views.gapsPage({ items, error, actor, csrf, nonce, navCounts: nav }));
     });
 
     http.route('GET', '/inbox/activity', async (req, res, { actor, url }) => {
@@ -260,7 +342,8 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
         titles.set(e.target, p?.title || '');
       }
       const csrf = sessions.csrfToken(req, res, actor);
-      return respond(req, res, (nonce) => views.activityPage({ entries, titles, actor, csrf, nonce }));
+      const nav = await navCounts();
+      return respond(req, res, (nonce) => views.activityPage({ entries, titles, actor, csrf, nonce, navCounts: nav }));
     });
 
     // A chat asked for an approval. The link only leads to the full review —

@@ -23,6 +23,8 @@ import {
   sectionLines,
   sectionNames,
 } from './wiki-core.mjs';
+import YAML from 'yaml';
+import { canonicalSetOfPages, frontmatterBlock } from './canonical.mjs';
 
 /** Categories drive the report layout and the emoji key in agent/rules/wiki.md. */
 export const CATEGORIES = [
@@ -32,7 +34,8 @@ export const CATEGORIES = [
   { key: 'citations', emoji: '📎', label: 'Citations', prefixes: ['CITE-'] },
   { key: 'provenance', emoji: '🧾', label: 'Provenance', prefixes: ['PROV-'] },
   { key: 'canonical', emoji: '🛡️', label: 'Canonical', ids: ['CANON-'] },
-  { key: 'stale', emoji: '🕸️', label: 'Stale', ids: ['STALE-'] },
+  { key: 'stale', emoji: '🕸️', label: 'Stale', ids: ['STALE-', 'BASIS-'] },
+  { key: 'duplicates', emoji: '👯', label: 'Duplicates', ids: ['DUP-'] },
 ];
 
 export function categoryOf(id) {
@@ -65,6 +68,8 @@ const DEFAULT_SEVERITY = {
   'PROV-005': 'warning',
   'CANON-001': 'warning',
   'STALE-001': 'warning',
+  'DUP-001': 'warning',
+  'BASIS-001': 'warning',
 };
 
 /**
@@ -112,6 +117,247 @@ class Findings {
 }
 
 // ── SCHEMA ───────────────────────────────────────────────────────────────────
+
+// ── front matter indirection (SCHEMA-006) and an open body (SCHEMA-007) ───────
+
+const BLOCK_SCALAR = /(?:^|[\s:-])[|>][1-9+-]{0,2}\s*$/;
+
+/**
+ * Anchors (`&name`), aliases (`*name`) and merge keys (`<<:`) in a page's front
+ * matter, as short descriptions. A page header has no need for them, and they
+ * let a value depend on another line (`tier: *t` reads whatever `&t` marked).
+ *
+ * Decided from the parsed YAML document: an anchor on any node, an alias node,
+ * a plain `<<` key. A `*` or `&` that starts a continuation line of a plain
+ * scalar, or sits in a quoted string, a comment or a block scalar, is text and
+ * is never a finding, because it is not a node. Only a header that does not
+ * parse falls back to a scan of the raw text (the page fails another check
+ * anyway, and the scan keeps a broken header from hiding an alias).
+ * Returns [] for a page with no front matter.
+ */
+export function frontmatterIndirection(text) {
+  const block = frontmatterBlock(text);
+  if (block === null) return [];
+  const found = [];
+  const note = (what, line) => {
+    const msg = line ? `${what} on line ${line} of the front matter` : `${what} in the front matter`;
+    if (!found.includes(msg)) found.push(msg);
+  };
+
+  let doc = null;
+  try {
+    const lineCounter = new YAML.LineCounter();
+    doc = YAML.parseDocument(block, { merge: false, lineCounter });
+    const lineOf = (node) => (node?.range ? lineCounter.linePos(node.range[0]).line : 0);
+    YAML.visit(doc, {
+      Alias(_key, node) { note(`an alias (*${node.source})`, lineOf(node)); },
+      Node(_key, node) { if (node.anchor) note(`an anchor (&${node.anchor})`, lineOf(node)); },
+      Pair(_key, pair) { if (YAML.isScalar(pair.key) && pair.key.value === '<<' && pair.key.type === 'PLAIN') note('a merge key (<<)', lineOf(pair.key)); },
+    });
+  } catch { doc = null; }
+  if (doc && doc.errors.length === 0) return found;
+
+  // The header does not parse as YAML: read the raw text so nothing hides in it.
+  rawIndirection(block, note);
+  return found;
+}
+
+/** The line-by-line reading, for a header that does not parse. Quoted strings, comments and block scalars are skipped. */
+function rawIndirection(block, note) {
+  let quote = null;          // '"' | "'" | null, carried across lines
+  let blockIndent = null;    // indent of the line that opened a block scalar
+  block.split('\n').forEach((raw, n) => {
+    const line = raw.replace(/\r$/, '');
+    const indent = line.length - line.trimStart().length;
+    if (blockIndent !== null) {
+      if (line.trim() === '' || indent > blockIndent) return;
+      blockIndent = null;
+    }
+    let sig = '';            // the last non-space character seen on this line outside quotes
+    let gap = true;          // whitespace since `sig` (true at the start of a line)
+    let token = '';          // the whitespace-delimited token being read
+    let prevToken = '';
+    let content = '';
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (quote) {
+        if (quote === '"' && c === '\\') { i++; continue; }
+        if (c === quote) {
+          if (quote === "'" && line[i + 1] === "'") { i++; continue; }
+          quote = null;
+        }
+        continue;
+      }
+      if (c === '#' && (i === 0 || /\s/.test(line[i - 1]))) break;
+      if (/\s/.test(c)) { if (token) prevToken = token; token = ''; gap = true; continue; }
+      const start = sig === '' || (gap && (sig === '-' || sig === ':' || sig === '?')) || sig === '[' || sig === '{' || sig === ','
+        || (gap && prevToken.startsWith('!') && token === '');
+      if (start && (c === '&' || c === '*') && /[^\s,[\]{}]/.test(line[i + 1] || '')) {
+        note(c === '&' ? `an anchor (${line.slice(i).match(/^&[^\s,[\]{}]*/)[0]})` : `an alias (${line.slice(i).match(/^\*[^\s,[\]{}]*/)[0]})`, n + 1);
+      }
+      if (start && c === '<' && /^<<\s*:(\s|$)/.test(line.slice(i))) note('a merge key (<<)', n + 1);
+      if ((c === '"' || c === "'") && (start || sig === '')) quote = c;
+      else if ((c === '"' || c === "'") && token === '') quote = c;
+      token += c;
+      sig = c;
+      gap = false;
+      content += c;
+    }
+    if (!quote && BLOCK_SCALAR.test(content)) blockIndent = indent;
+  });
+}
+
+const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+
+/**
+ * CommonMark HTML blocks that stay open until their end condition, however
+ * many blank lines come first (types 1 to 5). Each start needs at most three
+ * spaces of indent; the end condition is tested on the start line too.
+ */
+const HTML_BLOCKS = [
+  { kind: 'html', start: /^ {0,3}<(?:script|pre|style|textarea)(?:[ \t>]|$)/i, end: /<\/(?:script|pre|style|textarea)>/i },
+  { kind: 'comment', start: /^ {0,3}<!--/, end: /-->/ },
+  { kind: 'html', start: /^ {0,3}<\?/, end: /\?>/ },
+  { kind: 'html', start: /^ {0,3}<![A-Za-z]/, end: />/ },
+  { kind: 'html', start: /^ {0,3}<!\[CDATA\[/, end: /\]\]>/ },
+];
+const THEMATIC = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+const ATX = /^ {0,3}#{1,6}(?:[ \t]|$)/;
+const BULLET = /^( {0,3})([-+*])( +|\t|$)/;
+const ORDERED = /^( {0,3})(\d{1,9})([.)])( +|\t|$)/;
+
+const leading = (line) => line.length - line.trimStart().length;
+const expandLeadingTabs = (line) => {
+  const m = /^[ \t]*/.exec(line)[0];
+  if (!m.includes('\t')) return line;
+  let col = 0;
+  for (const c of m) col = c === '\t' ? col + 4 - (col % 4) : col + 1;
+  return ' '.repeat(col) + line.slice(m.length);
+};
+
+/** The list marker that starts `rest`: `{ offset, empty, ordered, start }`, or null (a thematic break is not a marker). */
+function listMarker(rest) {
+  if (THEMATIC.test(rest)) return null;
+  const m = BULLET.exec(rest) || ORDERED.exec(rest);
+  if (!m) return null;
+  const bullet = m.length === 4;
+  const indent = m[1].length;
+  const width = bullet ? 1 : m[2].length + 1;
+  const after = rest.slice(indent + width);
+  const empty = after.trim() === '';
+  const gap = /^[ \t]*/.exec(after)[0].length;
+  const spaces = empty || gap >= 5 ? 1 : Math.max(1, gap);
+  return { offset: indent + width + spaces, empty, ordered: !bullet, start: bullet ? 1 : Number(m[2]) };
+}
+
+/** Does `rest` start a block of its own (so it is not a lazy continuation of a paragraph)? */
+function startsBlock(rest) {
+  if (/^ {0,3}>/.test(rest) || ATX.test(rest) || THEMATIC.test(rest)) return true;
+  const open = FENCE_OPEN.exec(rest);
+  if (open && !(open[1][0] === '`' && open[2].includes('`'))) return true;
+  if (HTML_BLOCKS.some((h) => h.start.test(rest))) return true;
+  return listMarker(rest) !== null;
+}
+
+/**
+ * Does a page body end inside a block that stays open to the end of the page?
+ * Returns 'fence', 'comment' (an HTML comment block), 'html' (any other
+ * CommonMark HTML block of types 1 to 5), or null. A Markdown renderer treats
+ * everything added after such a block as part of it, so a later section would
+ * vanish or turn into markup.
+ *
+ * The scan follows CommonMark's block structure, line by line:
+ *
+ *   - a fenced block opens with three or more backticks or tildes, indented
+ *     up to three spaces (a backtick fence's info string holds no backtick);
+ *     it closes with the same character, at least as long, up to three
+ *     spaces of indent and nothing after it but spaces;
+ *   - an HTML block of type 1 (`<script`, `<pre`, `<style`, `<textarea`, until
+ *     the matching closing tag), 2 (`<!--` until `-->`), 3 (`<?` until `?>`),
+ *     4 (`<!` and a letter, until `>`) or 5 (`<![CDATA[` until `]]>`) starts
+ *     when a line begins with that text after at most three spaces of indent,
+ *     outside any code block, and may interrupt a paragraph. Types 6 and 7
+ *     end at the next blank line and cannot swallow what comes after;
+ *   - a block inside a list item or a blockquote ends with its container: an
+ *     unclosed fence in a list item closes when the item does, and a fence in
+ *     a quote closes at the first line without the `>`;
+ *   - indented code (four spaces) is never scanned, and neither is inline
+ *     text: a `<!--` in the middle of a line, or inside a code span, starts no
+ *     block.
+ */
+export function bodyEndsOpen(body) {
+  const lines = String(body ?? '').replace(/\r/g, '').split('\n').map(expandLeadingTabs);
+  const stack = [];        // open containers: { type: 'quote' } | { type: 'list', offset }
+  let leaf = null;         // an open fence or HTML block: { kind, depth, ch?, len?, end? }
+  let paragraph = false;   // is the last line of the innermost block paragraph text?
+  for (const line of lines) {
+    let rest = line;
+    let matched = 0;
+    for (const c of stack) {
+      if (c.type === 'quote') {
+        const m = /^ {0,3}> ?/.exec(rest);
+        if (!m) break;
+        rest = rest.slice(m[0].length);
+      } else if (rest.trim() !== '') {
+        if (leading(rest) < c.offset) break;
+        rest = rest.slice(c.offset);
+      }
+      matched += 1;
+    }
+    if (leaf) {
+      if (matched < leaf.depth) {
+        leaf = null;                       // its container ended: so did the block
+      } else {
+        if (leaf.kind === 'fence') {
+          const close = FENCE_CLOSE.exec(rest);
+          if (close && close[1][0] === leaf.ch && close[1].length >= leaf.len) leaf = null;
+        } else if (leaf.end.test(rest)) {
+          leaf = null;
+        }
+        continue;
+      }
+    }
+    if (matched < stack.length) {
+      const lazy = paragraph && rest.trim() !== '' && !startsBlock(rest);
+      if (lazy) continue;                  // a paragraph runs on without its prefix
+      stack.length = matched;
+      paragraph = false;
+    }
+    // New containers, then the leaf block of what is left.
+    for (;;) {
+      if (leading(rest) >= 4 && !paragraph) break;
+      const quote = /^ {0,3}> ?/.exec(rest);
+      if (quote) { stack.push({ type: 'quote' }); rest = rest.slice(quote[0].length); paragraph = false; continue; }
+      const marker = listMarker(rest);
+      if (marker && !(paragraph && (marker.empty || (marker.ordered && marker.start !== 1)))) {
+        stack.push({ type: 'list', offset: marker.offset });
+        rest = rest.slice(marker.offset);
+        paragraph = false;
+        continue;
+      }
+      break;
+    }
+    if (rest.trim() === '') { paragraph = false; continue; }
+    if (leading(rest) >= 4) { if (!paragraph) continue; paragraph = true; continue; }   // indented code, or a paragraph continuation
+    const open = FENCE_OPEN.exec(rest);
+    if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
+      leaf = { kind: 'fence', depth: stack.length, ch: open[1][0], len: open[1].length };
+      paragraph = false;
+      continue;
+    }
+    const block = HTML_BLOCKS.find((h) => h.start.test(rest));
+    if (block) {
+      paragraph = false;
+      if (!block.end.test(rest)) leaf = { kind: block.kind, depth: stack.length, end: block.end };
+      continue;
+    }
+    paragraph = !(ATX.test(rest) || THEMATIC.test(rest));
+  }
+  // What is added later starts at column 0, which ends every list item and quote:
+  // only a block that is not inside a container is still open then.
+  return leaf && leaf.depth === 0 ? leaf.kind : null;
+}
 
 function buildTypeVocabulary(pages, config) {
   const vocab = new Set(config.typeVocabulary);
@@ -230,6 +476,31 @@ function checkSchema(pages, config, out) {
       }
     }
 
+    // SCHEMA-006 — no anchors, aliases or merge keys in the front matter.
+    if (page.file) {
+      let source = null;
+      try { source = fs.readFileSync(page.file, 'utf-8'); } catch { /* unreadable: nothing to scan */ }
+      const found = source === null ? [] : frontmatterIndirection(source);
+      if (found.length) {
+        out.add('SCHEMA-006', `the front matter uses YAML anchors, aliases or merge keys (${found.slice(0, 3).join('; ')}${found.length > 3 ? `; and ${found.length - 3} more` : ''}) — a header has no need for them, and they let a value depend on another line`, {
+          ...where,
+          hint: 'write each value out in full',
+        });
+      }
+    }
+
+    // SCHEMA-007 — the body must not end inside an HTML comment, another HTML block or a code fence.
+    {
+      const open = bodyEndsOpen(page.body);
+      if (open) {
+        const what = { comment: 'an HTML comment that is never closed (`<!--` with no `-->`)', html: 'an HTML block that is never closed (`<script`, `<pre`, `<style`, `<textarea`, `<?`, `<!` or `<![CDATA[`)', fence: 'a fenced code block that is never closed' }[open];
+        out.add('SCHEMA-007', `the page ends inside ${what} — it would swallow whatever is added below it later`, {
+          ...where,
+          hint: open === 'comment' ? 'close the comment with `-->`' : open === 'html' ? 'close the block (`</script>`, `</pre>`, `</style>`, `</textarea>`, `?>`, `>` or `]]>`) or remove the markup' : 'close the fence with a line of the same character, at least as long',
+        });
+      }
+    }
+
     // SCHEMA-004 — ownership.
     if (config.requireOwner) {
       if (!page.owner) {
@@ -254,6 +525,8 @@ function checkLinks(pages, known, config, out) {
   // An orphan is a page nothing points at, not a page nothing links from prose.
   const inbound = new Map();
   const note = (target) => inbound.set(target, (inbound.get(target) ?? 0) + 1);
+  // The one definition: the config list plus every page whose tier says canonical.
+  const canonical = canonicalSetOfPages(pages, config.canonicalPages);
 
   for (const page of pages) {
     for (const target of page.links) note(target);
@@ -287,7 +560,7 @@ function checkLinks(pages, known, config, out) {
       }
     }
 
-    if ((inbound.get(page.id) ?? 0) === 0 && !config.canonicalPages.includes(page.slug)) {
+    if ((inbound.get(page.id) ?? 0) === 0 && !canonical.has(page.slug)) {
       out.add('LINK-002', '0 backlinks', {
         ...where,
         hint: 'link it from a related page or archive it',
@@ -645,6 +918,88 @@ function checkStale(pages, config, today, out) {
   }
 }
 
+// ── DUP / BASIS ──────────────────────────────────────────────────────────────
+
+const normalizeName = (text) => String(text ?? '').trim().toLowerCase();
+
+/**
+ * DUP-001 — two pages share a title or an alias, compared case-insensitively
+ * and trimmed. Usually the same subject written twice. Each pair is reported
+ * once, on the page that sorts first, and names both. Template pages are exempt.
+ */
+function checkDuplicates(pages, out) {
+  const live = pages.filter((p) => !isTemplatePage(p)).sort((a, b) => a.id.localeCompare(b.id));
+  const names = new Map();   // normalized name → [{ page, kind }]
+  for (const page of live) {
+    const mine = new Map();
+    const add = (text, kind) => {
+      const key = normalizeName(text);
+      if (key && !mine.has(key)) mine.set(key, { page, kind, text: String(text).trim() });
+    };
+    add(page.title, 'title');
+    for (const alias of page.aliases) add(alias, 'alias');
+    for (const [key, entry] of mine) {
+      if (!names.has(key)) names.set(key, []);
+      names.get(key).push(entry);
+    }
+  }
+  const reported = new Set();
+  for (const [, entries] of [...names].sort(([a], [b]) => a.localeCompare(b))) {
+    for (let i = 0; i < entries.length; i++) {
+      for (let j = i + 1; j < entries.length; j++) {
+        const a = entries[i];
+        const b = entries[j];
+        const pair = `${a.page.id}\0${b.page.id}`;
+        if (reported.has(pair)) continue;
+        reported.add(pair);
+        const message = a.kind === b.kind
+          ? `\`${a.page.slug}\` and \`${b.page.slug}\` share the ${a.kind} "${a.text}"`
+          : `\`${a.page.slug}\` and \`${b.page.slug}\` share a name: "${a.text}" is the ${a.kind} of \`${a.page.slug}\` and the ${b.kind} of \`${b.page.slug}\``;
+        out.add('DUP-001', message, {
+          page: a.page.id,
+          file: a.page.relFile,
+          hint: 'merge the two pages, or give one a distinct title and aliases',
+        });
+      }
+    }
+  }
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}/;
+
+/**
+ * BASIS-001 — a claim page whose Basis names a page modified after the
+ * claim's `last_verified` (or the claim has no `last_verified`). The ground
+ * moved, so the conclusion may no longer follow. The message names the page
+ * that changed.
+ */
+function checkBasis(pages, known, out) {
+  const byId = new Map(pages.map((p) => [p.id, p]));
+  for (const page of pages) {
+    if (page.type !== 'claim' || isTemplatePage(page)) continue;
+    const verified = ISO_DAY.test(page.lastVerified) ? page.lastVerified.slice(0, 10) : '';
+    const seen = new Set();
+    for (const line of sectionLines(page.body, 'Basis')) {
+      const m = line.trim().match(/^(?:[-*+]|\d+[.)])\s+\[\[([^\]|#]+)/);
+      if (!m) continue;
+      const id = resolveTarget(m[1], page.prefix, known);
+      const basis = id ? byId.get(id) : null;
+      if (!basis || basis === page || seen.has(basis.id)) continue;
+      seen.add(basis.id);
+      if (!ISO_DAY.test(basis.dateModified)) continue;
+      const changed = basis.dateModified.slice(0, 10);
+      if (verified && changed <= verified) continue;
+      out.add('BASIS-001', verified
+        ? `\`${basis.slug}\` was modified ${changed}, after this claim was last verified ${verified}`
+        : `\`${basis.slug}\` was modified ${changed} and this claim has no \`last_verified\``, {
+        page: page.id,
+        file: page.relFile,
+        hint: 'check the claim still follows from its Basis, then update `last_verified`',
+      });
+    }
+  }
+}
+
 // ── entry point ──────────────────────────────────────────────────────────────
 
 /** Pages exempt from the provenance checks — named in the report, never silent. */
@@ -660,6 +1015,8 @@ export function runChecks({ pages, known, config, manifest, index, challenges, r
   checkProvenance(pages, config, manifest, index, repoRoot, out);
   checkCanonical(challenges, config, repoRoot, out);
   checkStale(pages, config, today, out);
+  checkDuplicates(pages, out);
+  checkBasis(pages, known, out);
 
   const order = new Map(CATEGORIES.map((c, i) => [c.key, i]));
   out.list.sort((a, b) => {

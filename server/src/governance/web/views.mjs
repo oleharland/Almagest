@@ -11,7 +11,8 @@
  */
 import { html, raw, safeUrl } from '../html.mjs';
 import { locatorWords } from '../excerpt.mjs';
-import { ACTION_WORDS, auditWords, DECISION_WORDS, describe, OP_WORDS, sourceName, STATUS_HEADLINE, TIER_WORDS } from '../summary.mjs';
+import { hintWords } from '../hints.mjs';
+import { ACTION_WORDS, auditWords, DECISION_WORDS, describe, LEARNINGS_EXPLANATION, OP_WORDS, sourceName, STATUS_HEADLINE, TIER_WORDS } from '../summary.mjs';
 import { layout, timeAgo } from './layout.mjs';
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -27,7 +28,15 @@ export function dedupeFindings(findings) {
   return [...out.values()];
 }
 
+const TIER_LIST = ['evidence', 'curated', 'canonical'];
+const TIER_NAME = { evidence: 'Evidence', curated: 'Curated', canonical: 'Canonical' };
+const TIER_CHOICE = { evidence: 'Make evidence', curated: 'Make curated', canonical: 'Make canonical' };
+
 export const MESSAGES = {
+  tier_changed: 'The tier was changed. This is now a new version of the proposal, so earlier approvals no longer count.',
+  tier_proposed: 'The tier change is proposed. It is waiting for approval.',
+  tier_done: 'Done. The tier was changed on the knowledge base.',
+  hint_dismissed: 'Dismissed. It comes back only if many more documents contribute to the page.',
   approved: 'Thanks — your approval is recorded.',
   merged: 'Done — this is now part of the knowledge base.',
   page_accepted: 'Page accepted.',
@@ -53,6 +62,42 @@ function headField(p) {
   return html`<input type="hidden" name="headSha" value="${p.headSha}">`;
 }
 
+// ── tiers ────────────────────────────────────────────────────────────────────
+
+/** What canonical means for a page, in plain words. Shown before anyone confirms it. */
+function canonicalMeaning(title) {
+  return html`<p><strong>Make “${title}” canonical?</strong></p>
+    <p>Before you confirm, here is what that means for this page.</p>
+    <ul>
+      <li>The agent can no longer change this page.</li>
+      <li>New material that contradicts it is logged as a challenge and is not merged.</li>
+      <li>Only a person can edit it.</li>
+    </ul>`;
+}
+
+/**
+ * The choices for a page's tier, as small forms. Canonical needs one confirm
+ * step with its meaning in front of it; a change to or from canonical needs
+ * the role the policy names, and says so when the person lacks it.
+ */
+function tierChoices({ action, current, title, csrf, hidden = '', canCanonical, canonicalRole }) {
+  const choices = TIER_LIST.filter((t) => t !== current);
+  const touchesCanonical = (t) => t === 'canonical' || current === 'canonical';
+  return html`${choices.map((t) => {
+    if (touchesCanonical(t) && !canCanonical) {
+      return html`<p class="faint">${t === 'canonical' ? `Only someone with the ${canonicalRole} role can make a page canonical.` : `Only someone with the ${canonicalRole} role can change a canonical page.`}</p>`;
+    }
+    if (t === 'canonical') {
+      return html`<details class="confirm"><summary>${TIER_CHOICE[t]}</summary>
+        <div class="card">${canonicalMeaning(title)}
+          <form method="post" action="${action}">${csrfField(csrf)}${hidden}<input type="hidden" name="to" value="${t}"><input type="hidden" name="confirm" value="yes">
+            <button class="btn btn--primary" type="submit">Yes, make it canonical</button></form>
+        </div></details>`;
+    }
+    return html`<form method="post" action="${action}">${csrfField(csrf)}${hidden}<input type="hidden" name="to" value="${t}"><button class="btn btn--small" type="submit">${TIER_CHOICE[t]}</button></form>`;
+  })}`;
+}
+
 // ── queue ────────────────────────────────────────────────────────────────────
 
 function statusChip(p) {
@@ -60,7 +105,7 @@ function statusChip(p) {
   return html`<span class="chip ${cls}">${STATUS_HEADLINE[p.status] || p.status}</span>`;
 }
 
-export function queuePage({ items, filters, actor, csrf, nonce, now = Date.now(), flash = null }) {
+export function queuePage({ items, filters, actor, csrf, nonce, now = Date.now(), flash = null, navCounts = {} }) {
   const tab = (key, label) => html`<a href="/inbox?show=${key}" aria-current="${filters.show === key ? 'true' : 'false'}">${label}</a>`;
   const active = items.filter((i) => ['open', 'approved', 'conflicted', 'changes_requested'].includes(i.proposal.status));
   const waiting = active.filter((i) => i.proposal.status === 'open' || i.proposal.status === 'approved').length;
@@ -99,7 +144,7 @@ export function queuePage({ items, filters, actor, csrf, nonce, now = Date.now()
             <span class="faint">${timeAgo(p.createdAt, now)}</span>
           </div>
         </a></li>`)}</ul>`}`;
-  return layout({ title: 'Review inbox', actor, nonce, csrf, current: 'inbox', body });
+  return layout({ title: 'Review inbox', actor, nonce, csrf, current: 'inbox', body, navCounts });
 }
 
 // ── one proposal ─────────────────────────────────────────────────────────────
@@ -146,7 +191,43 @@ function hotWhy(e) {
   return bits.length ? html`<p class="faint">Why it counts as frequently read: ${bits.join(', ')}. Changes to it need a closer look.</p>` : '';
 }
 
-function pageCard(p, change, { canAct, csrf, required, why = null }) {
+/** One sentence for a page written as an addition to a page that waits in another proposal. */
+function extendsNote(e) {
+  return html`<p class="faint">This page adds to one that is waiting in another proposal, ${e.proposalId ? html`<a href="/inbox/p/${encodeURIComponent(e.proposalId)}">${e.title || 'that proposal'}</a>` : 'that proposal'}. When both are approved, the service combines the two versions section by section. If they disagree anywhere, the agent is asked to redo this page on top of what is already there.</p>`;
+}
+
+/** A learning: the conclusion in the agent's words, and the pages it rests on as links. */
+const CONFIDENCE_WORDS = { high: 'High', medium: 'Medium', low: 'Low', unknown: 'Unknown' };
+const RELATION_WORDS = { supports: 'Supports', contradicts: 'Contradicts', supersedes: 'Replaces', depends_on: 'Depends on' };
+
+/** The fields of a learning's front matter that carry meaning, open above the body: some reach chats as they are. */
+function learningMeta(meta) {
+  if (!meta) return '';
+  const row = (label, items) => (items.length ? html`<dt>${label}</dt><dd>${items.join(', ')}</dd>` : '');
+  const relations = Object.entries(meta.relations || {}).filter(([, v]) => v.length);
+  return html`<dl class="facts learning-meta">
+    <dt>Title</dt><dd>${meta.title}</dd>
+    ${row('Aliases', meta.aliases || [])}
+    ${row('Tags', meta.tags || [])}
+    <dt>Confidence</dt><dd>${CONFIDENCE_WORDS[meta.confidence] || meta.confidence || 'Not set'}</dd>
+    ${row('Related pages', meta.related || [])}
+    ${relations.map(([k, v]) => row(RELATION_WORDS[k] || k, v))}
+  </dl>`;
+}
+
+function learningBody(change) {
+  const basis = change.basis || [];
+  return html`${learningMeta(change.meta)}<p class="faint">What it rests on</p>
+    ${basis.length
+      ? html`<ul class="basis">${basis.map((b) => html`<li><a href="/inbox/pages/${encodeURIComponent(b.slug)}">${b.title || b.slug}</a></li>`)}</ul>`
+      : html`<p class="missing">This page names no pages it rests on. Do not accept it as it is.</p>`}
+    ${typeof change.body === 'string'
+      ? html`<p class="faint">The whole learning, as the brain wrote it</p><pre class="full">${change.body}</pre>
+        ${change.front ? html`<details><summary>Page details</summary><pre class="full">${change.front}</pre></details>` : ''}`
+      : change.preview ? html`<p class="faint">The conclusion (the start only)</p><pre class="preview">${change.preview}</pre>` : ''}`;
+}
+
+function pageCard(p, change, { canAct, csrf, required, why = null, tiers = null }) {
   const req = required?.pages?.[change.slug];
   const rejected = change.pageStatus === 'rejected';
   const action = change.action === 'rename' && change.from ? `Renamed from “${change.from}”` : ACTION_WORDS[change.action] || change.action;
@@ -158,7 +239,9 @@ function pageCard(p, change, { canAct, csrf, required, why = null }) {
         <div class="chips">
           <span class="chip">${action}</span>
           <span class="chip">${TIER_WORDS[change.tier] || change.tier}</span>
-          ${change.canonical ? html`<span class="chip chip--bad">Locked — can't be changed here</span>` : ''}
+          ${change.canonical && !change.promotes ? html`<span class="chip chip--bad">Locked — can't be changed here</span>` : ''}
+          ${change.promotes ? html`<span class="chip chip--bad">Made canonical without a person choosing it</span>` : ''}
+          ${change.tierSetBy ? html`<span class="chip chip--ok">Made canonical by ${change.tierSetBy.display || change.tierSetBy.by}</span>` : ''}
           ${change.hot ? html`<span class="chip chip--hot">Frequently read</span>` : ''}
           ${change.owner ? html`<span class="chip">Owned by ${change.owner}</span>` : ''}
           ${req?.explicit && !rejected ? html`<span class="chip chip--warn">Needs its own approval</span>` : ''}
@@ -172,10 +255,20 @@ function pageCard(p, change, { canAct, csrf, required, why = null }) {
       </div>` : ''}
     </div>
     <div class="body">
+      ${tiers && !rejected && change.action !== 'delete' && p.kind !== 'tier' && !(change.canonical && !change.promotes)
+        ? html`<div class="tier"><span class="faint">Tier</span> <strong>${TIER_NAME[change.tier] || change.tier}</strong>
+          <details><summary>Change the tier</summary>
+            ${tierChoices({
+              action: `/inbox/p/${encodeURIComponent(p.id)}/page/${encodeURIComponent(change.slug)}/tier`, current: change.tier, title: change.title,
+              csrf, hidden: headField(p), canCanonical: tiers.canCanonical, canonicalRole: tiers.canonicalRole,
+            })}
+          </details></div>` : ''}
+      ${(p.extends || []).filter((e) => e.slug === change.slug).map(extendsNote)}
       ${change.hot ? hotWhy(why) : ''}
-      ${change.needsManualLook ? html`<p class="missing">This new page has no facts the inbox could pair with a source, so nothing below has been checked for you. Read the whole page before you approve.</p>
+      ${p.kind === 'learnings' ? learningBody(change) : ''}
+      ${p.kind === 'learnings' ? '' : change.needsManualLook ? html`<p class="missing">This new page has no facts the inbox could pair with a source, so nothing below has been checked for you. Read the whole page before you approve.</p>
         <pre class="preview">${change.preview || ''}</pre>` : ''}
-      ${change.needsManualLook ? '' : change.claims.length === 0 && !(change.fields || []).length
+      ${p.kind === 'learnings' || change.needsManualLook ? '' : change.claims.length === 0 && !(change.fields || []).length
         ? html`<p class="muted">${change.action === 'delete' ? 'The whole page would be removed.' : 'No facts changed — only formatting or wording without a source.'}</p>`
         : change.claims.map(claimCard)}
       ${(change.fields || []).length ? html`<details><summary>${plural(change.fields.length, 'detail')} changed</summary>
@@ -227,7 +320,7 @@ function decisionCard(p, d, { canAct, csrf }) {
 
 function needsBox(evaluation, p) {
   if (p.status === 'merged') {
-    return html`<div class="needs ready"><h2>Added to the knowledge base</h2><p>${p.merge?.at ? `On ${p.merge.at.slice(0, 10)}` : ''}${p.merge?.approvers?.length ? `, approved by ${p.approvals.filter((a) => p.merge.approvers.includes(a.actorId)).map((a) => a.display).filter((v, i, a) => a.indexOf(v) === i).join(', ')}` : ''}.</p></div>`;
+    return html`<div class="needs ready"><h2>Added to the knowledge base</h2><p>${p.merge?.at ? `On ${p.merge.at.slice(0, 10)}` : ''}${p.merge?.approvers?.length ? `, approved by ${p.approvals.filter((a) => p.merge.approvers.includes(a.actorId)).map((a) => a.display).filter((v, i, a) => a.indexOf(v) === i).join(', ')}` : ''}.</p>${p.merge?.combined?.length ? html`<p>${plural(p.merge.combined.length, 'page')} (${p.merge.combined.join(', ')}) ${p.merge.combined.length === 1 ? 'was' : 'were'} combined with what was already there, section by section.</p>` : ''}</div>`;
   }
   if (p.status === 'merged_unaccepted') {
     return html`<div class="needs"><h2>Merged on GitHub, not accepted here</h2><p>${p.merge?.by ? `Merged by ${p.merge.by}` : 'Merged'}${p.merge?.at ? ` on ${p.merge.at.slice(0, 10)}` : ''}, but the knowledge base was not updated: ${p.merge?.message || p.mergeError?.message || 'it could not be verified.'}</p><p>An administrator has to reconcile it by hand. This is recorded as a policy violation.</p></div>`;
@@ -268,7 +361,7 @@ function otherFilesSection(files) {
     </section>`)}`;
 }
 
-export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, nonce, canAct, flash = null, now = Date.now(), why = {}, chat = null }) {
+export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, nonce, canAct, flash = null, now = Date.now(), why = {}, chat = null, navCounts = {}, tiers = null }) {
   const info = describe(p, decisions);
   const open = decisions.filter((d) => d.status === 'open');
   const done = decisions.filter((d) => d.status !== 'open');
@@ -287,10 +380,12 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
     ${flashBox(flash)}
     <h1>${info.title}</h1>
     <p class="lede">${info.line}. Sent ${timeAgo(p.createdAt, now)}${p.revision > 1 ? ` · revised ${plural(p.revision - 1, 'time')}` : ''}.</p>
+    ${p.kind === 'learnings' ? html`<p class="status">${LEARNINGS_EXPLANATION}</p>` : ''}
     <p class="status"><strong>${STATUS_HEADLINE[p.status] || p.status}.</strong> ${audit.text}
       ${findings.length ? html`<details><summary>${audit.ok ? 'See the notes' : 'What the checks found'}</summary><ul>${findings.slice(0, 50).map((f) => html`<li>${f.slug ? html`<strong>${f.slug}</strong>: ` : ''}${f.message}${f.count > 1 ? ` (×${f.count})` : ''}</li>`)}</ul></details>` : ''}
     </p>
-    ${p.mergeError ? html`<div class="flash flash--err" role="alert">${p.mergeError.message}</div>` : ''}
+    ${info.lookup ? html`<p class="status">${info.lookup}${p.lookupQuestion ? html` The question was “${p.lookupQuestion}”.` : ''}</p>` : ''}
+    ${p.mergeError ? html`<div class="flash flash--err" role="alert">${p.mergeError.message}${p.mergeError.slug ? html` <a href="/inbox/pages/${encodeURIComponent(p.mergeError.slug)}">Open the page</a>` : ''}</div>` : ''}
     ${chat ? html`<div class="flash flash--ok" role="status">A chat assistant asked${chat.onBehalfOf ? ` on behalf of ${chat.onBehalfOf.display}` : ''} for this to be ${chat.action === 'reject' ? 'turned down' : 'approved'}. It can't do that itself — read it below and decide.${chat.headSha && chat.headSha !== p.headSha ? ' The proposal changed after the chat asked; this is the current version.' : ''}</div>` : ''}
     ${lapsed.length && live && p.status !== 'conflicted' ? html`<div class="flash flash--ok" role="status">${p.revisedBecause === 'conflict'
       ? 'The knowledge base changed while this waited, so it was redone on top of the current version.'
@@ -302,7 +397,7 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
 
     <h2>What would change</h2>
     ${(p.changes || []).length === 0 ? html`<p class="muted">No pages change — only the knowledge base's own records.</p>` : ''}
-    ${(p.changes || []).map((c) => pageCard(p, c, { canAct: live ? canAct : { ok: false }, csrf, required: p.required, why: why[c.slug] }))}
+    ${(p.changes || []).map((c) => pageCard(p, c, { canAct: live ? canAct : { ok: false }, csrf, required: p.required, why: why[c.slug], tiers: live && canAct.canReview ? tiers : null }))}
     ${otherFilesSection(p.otherFiles || [])}
 
     ${done.length ? html`<h2>Answered questions</h2>${done.map((d) => decisionCard(p, d, { canAct, csrf }))}` : ''}
@@ -339,29 +434,36 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
     ${canAct.ok && !mine ? html`<form method="post" action="/inbox/p/${id}/approve">${csrfField(csrf)}${headField(p)}${chat?.action === 'approve' ? html`<input type="hidden" name="confirm" value="${chat.code}">` : ''}<input type="hidden" name="scope" value="all"><button class="btn btn--primary" type="submit"${approveBlocked ? raw(' disabled') : ''}>Approve all</button></form>` : ''}
   </div></div>` : null;
 
-  return layout({ title: info.title, actor, nonce, csrf, current: 'inbox', body, footer });
+  return layout({ title: info.title, actor, nonce, csrf, current: 'inbox', body, footer, navCounts });
 }
 
 // ── side pages ───────────────────────────────────────────────────────────────
 
-export function reverifyPage({ items, error, actor, csrf, nonce }) {
+export function reverifyPage({ items, error, actor, csrf, nonce, navCounts = {} }) {
   const body = html`<h1>Pages to re-check</h1>
     <p class="lede">Pages people read often, whose facts haven't been checked against their sources for a while.</p>
     ${error ? html`<div class="empty">${error}</div>` : items.length === 0 ? html`<div class="empty">Nothing is due for a re-check.</div>` : html`
     <table class="list"><thead><tr><th>Page</th><th>Last checked</th><th>Overdue</th></tr></thead><tbody>
     ${items.map((i) => html`<tr><td><strong>${i.title || i.slug}</strong><div class="faint">${i.slug}</div>${i.reason ? html`<div class="cite">${i.reason}</div>` : ''}</td><td>${i.lastVerified || 'never'}</td><td>${i.overdueDays != null ? plural(i.overdueDays, 'day') : ''}</td></tr>`)}
     </tbody></table>`}`;
-  return layout({ title: 'Re-check', actor, nonce, csrf, current: 'reverify', body });
+  return layout({ title: 'Re-check', actor, nonce, csrf, current: 'reverify', body, navCounts });
 }
 
-export function gapsPage({ items, error, actor, csrf, nonce, now = Date.now() }) {
+/** What live lookup did for a gap, for a reviewer. */
+function lookupWords(l) {
+  const from = l.lastStep === 'connectors' && l.connectors?.length ? `from ${l.connectors.join(', ')}`
+    : l.lastStep === 'staged' ? 'from documents waiting for review' : l.lastStep === 'sources' ? 'from sources already added' : 'from outside the knowledge base';
+  return `Answered ${plural(l.served, 'time')} by looking it up live ${from}. ${l.jobs?.length ? 'The document has been sent for review.' : 'Nothing has been sent for review.'}`;
+}
+
+export function gapsPage({ items, error, actor, csrf, nonce, now = Date.now(), navCounts = {} }) {
   const body = html`<h1>Questions the knowledge base couldn't answer</h1>
     <p class="lede">What people asked for and didn't find. Each one is a hint about which source to add next.</p>
     ${error ? html`<div class="empty">${error}</div>` : items.length === 0 ? html`<div class="empty">No unanswered questions recorded.</div>` : html`
     <table class="list"><thead><tr><th>Topic</th><th>Asked</th><th>Last asked</th></tr></thead><tbody>
-    ${items.map((g) => html`<tr><td><strong>${g.representative || (g.tokens || []).join(' ') || 'An unanswered question'}</strong>${(g.queries || []).length ? html`<div class="faint">${g.queries.slice(0, 3).map((q) => (typeof q === 'string' ? `“${q}”` : `“${q.text}”${q.count > 1 ? ` ×${q.count}` : ''}`)).join(' · ')}</div>` : ''}${g.suggestion ? html`<div class="cite">Suggestion: ${typeof g.suggestion === 'string' ? g.suggestion : g.suggestion.text || g.suggestion.label || ''}</div>` : ''}</td><td>${plural(g.count || 0, 'time')}${g.distinctSessions ? html`<div class="faint">by ${plural(g.distinctSessions, 'person', 'people')}</div>` : ''}</td><td>${timeAgo(g.lastSeen, now)}</td></tr>`)}
+    ${items.map((g) => html`<tr><td><strong>${g.representative || (g.tokens || []).join(' ') || 'An unanswered question'}</strong>${(g.queries || []).length ? html`<div class="faint">${g.queries.slice(0, 3).map((q) => (typeof q === 'string' ? `“${q}”` : `“${q.text}”${q.count > 1 ? ` ×${q.count}` : ''}`)).join(' · ')}</div>` : ''}${g.lookup?.served && !/\bServed \d+ times?\b/.test(typeof g.suggestion === 'string' ? g.suggestion : '') ? html`<div class="cite">${lookupWords(g.lookup)}</div>` : ''}${g.suggestion ? html`<div class="cite">Suggestion: ${typeof g.suggestion === 'string' ? g.suggestion : g.suggestion.text || g.suggestion.label || ''}</div>` : ''}</td><td>${plural(g.count || 0, 'time')}${g.distinctSessions ? html`<div class="faint">by ${plural(g.distinctSessions, 'person', 'people')}</div>` : ''}</td><td>${timeAgo(g.lastSeen, now)}</td></tr>`)}
     </tbody></table>`}`;
-  return layout({ title: 'Unanswered', actor, nonce, csrf, current: 'gaps', body });
+  return layout({ title: 'Unanswered', actor, nonce, csrf, current: 'gaps', body, navCounts });
 }
 
 const ACTIVITY_WORDS = {
@@ -378,18 +480,81 @@ const ACTIVITY_WORDS = {
   'decision.resolve': 'answered a question',
   'confirmation.create': 'asked from a chat for confirmation',
   'policy.violation': 'POLICY NOT MET',
+  'page.tier': 'changed the tier of a page in',
+  'page.tier_refused': 'tried to change the tier of a page, but the checks failed, in',
+  'page.tier_propose': 'proposed a tier change',
+  'hint.dismiss': 'dismissed a canonical suggestion',
 };
 
-export function activityPage({ entries, titles, actor, csrf, nonce, now = Date.now() }) {
+export function activityPage({ entries, titles, actor, csrf, nonce, now = Date.now(), navCounts = {} }) {
   const body = html`<h1>Activity</h1>
     <p class="lede">Every review action, newest first. This record can't be edited.</p>
     ${entries.length === 0 ? html`<div class="empty">Nothing has happened yet.</div>` : html`
     <table class="list"><tbody>${entries.map((e) => html`<tr>
       <td><strong>${e.detail?.actor || e.actorId}</strong> ${ACTIVITY_WORDS[e.action] || e.action}${e.detail?.scope && e.detail.scope !== 'all' ? html` (page ${e.detail.scope})` : ''}
         ${titles.get(e.target) ? html` — <a href="/inbox/p/${encodeURIComponent(e.target)}">${titles.get(e.target)}</a>` : ''}
+        ${e.action === 'proposal.merge' && e.detail?.combined?.length ? html`<div class="cite">Combined with what was already there: ${e.detail.combined.join(', ')}.</div>` : ''}
         ${e.action === 'policy.violation' ? html`<div class="cite missing">${e.detail?.reason || ''}</div>` : ''}</td>
       <td class="faint">${e.channel}</td><td class="faint">${timeAgo(e.ts, now)}</td></tr>`)}</tbody></table>`}`;
-  return layout({ title: 'Activity', actor, nonce, csrf, current: 'activity', body });
+  return layout({ title: 'Activity', actor, nonce, csrf, current: 'activity', body, navCounts });
+}
+
+// ── pages worth fixing as canonical, and a page's tier on main ───────────────
+
+const countsLine = (h) => hintWords(h).map((w, i) => (i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w)).join(', ');
+
+export function canonicalPage({ items, enabled = true, error = '', actor, csrf, nonce, canReview = false, canCanonical = false, canonicalRole = 'owner', flash = null, navCounts = {} }) {
+  const body = html`${flashBox(flash)}<h1>Pages worth fixing as canonical</h1>
+    <p class="lede">Pages that many documents contribute to or that many other pages link to. A canonical page is a locked definition: the agent cannot change it, and anything that contradicts it is logged for you to review.</p>
+    ${!enabled ? html`<div class="empty">Suggestions are turned off.</div>`
+      : error ? html`<div class="empty">${error}</div>`
+        : items.length === 0 ? html`<div class="empty">No page stands out right now.</div>`
+          : html`<ul class="queue">${items.map((h) => html`<li class="card">
+            <div class="title"><a href="/inbox/pages/${encodeURIComponent(h.slug)}">${h.title}</a></div>
+            <ul class="counts">${hintWords(h).map((w) => html`<li>${w.charAt(0).toUpperCase() + w.slice(1)}</li>`)}</ul>
+            ${canReview ? html`<div class="row">
+              ${canCanonical
+                ? canonicalOnly({ slug: h.slug, title: h.title, csrf })
+                : html`<span class="faint">Only someone with the ${canonicalRole} role can make a page canonical.</span>`}
+              ${canCanonical ? html`<form method="post" action="/inbox/canonical/${encodeURIComponent(h.slug)}/dismiss">${csrfField(csrf)}<button class="btn btn--small" type="submit">Dismiss</button></form>` : ''}
+            </div>` : ''}
+          </li>`)}</ul>`}
+    <p class="faint"><a href="/inbox/pages">See every page and its tier</a></p>`;
+  return layout({ title: 'Canonical suggestions', actor, nonce, csrf, current: 'canonical', body, navCounts });
+}
+
+/** Only the canonical choice, with its meaning and confirm step. */
+function canonicalOnly({ slug, title, csrf }) {
+  return html`<details class="confirm"><summary>Make canonical</summary>
+    <div class="card">${canonicalMeaning(title)}
+      <form method="post" action="/inbox/pages/${encodeURIComponent(slug)}/tier">${csrfField(csrf)}<input type="hidden" name="to" value="canonical"><input type="hidden" name="confirm" value="yes">
+        <button class="btn btn--primary" type="submit">Yes, make it canonical</button></form>
+    </div></details>`;
+}
+
+export function pagesPage({ pages, q = '', actor, csrf, nonce, navCounts = {}, truncated = false }) {
+  const body = html`<h1>Pages</h1>
+    <p class="lede">Every page on the knowledge base and its tier. Open one to change its tier.</p>
+    <form class="search" method="get" action="/inbox/pages" role="search"><input type="search" name="q" value="${q}" placeholder="Search by name" aria-label="Search"></form>
+    ${pages.length === 0 ? html`<div class="empty">No page matches.</div>` : html`<table class="list"><thead><tr><th>Page</th><th>Tier</th></tr></thead><tbody>
+      ${pages.map((pg) => html`<tr><td><a href="/inbox/pages/${encodeURIComponent(pg.slug)}">${pg.title}</a><div class="faint">${pg.slug}</div></td><td>${TIER_NAME[pg.tier] || pg.tier}</td></tr>`)}
+    </tbody></table>${truncated ? html`<p class="faint">Showing the first ${pages.length}. Search to narrow the list.</p>` : ''}`}`;
+  return layout({ title: 'Pages', actor, nonce, csrf, current: 'canonical', body, navCounts });
+}
+
+export function pageEntryPage({ page, configLocked = false, waiting = null, hint = null, canReview, canCanonical, canonicalRole, actor, csrf, nonce, flash = null, navCounts = {} }) {
+  const tier = page.tier;
+  const body = html`${flashBox(flash)}<a class="faint" href="/inbox/pages">← All pages</a>
+    <h1>${page.title}</h1>
+    <p class="lede">Tier: <strong>${TIER_NAME[tier] || tier}</strong>${tier === 'canonical' ? '. The agent cannot change this page, and anything that contradicts it is logged as a challenge.' : '.'}</p>
+    ${hint ? html`<p class="muted">${countsLine(hint)}.</p>` : ''}
+    ${waiting ? html`<div class="flash flash--ok" role="status">A tier change for this page is already waiting: <a href="/inbox/p/${encodeURIComponent(waiting.id)}">${waiting.title}</a></div>` : ''}
+    ${configLocked ? html`<p class="muted">This page is locked in brain.config.yaml. Only a person editing that file by hand can unlock it.</p>` : ''}
+    ${!canReview ? html`<p class="muted">You can read this page's tier. Changing it needs a reviewer.</p>`
+      : waiting || configLocked ? ''
+        : html`<h2>Change the tier</h2><p class="muted">The change is a small proposal that goes through the usual checks and approval, and it is logged.</p>
+          <div class="row">${tierChoices({ action: `/inbox/pages/${encodeURIComponent(page.slug)}/tier`, current: tier, title: page.title, csrf, canCanonical, canonicalRole })}</div>`}`;
+  return layout({ title: page.title, actor, nonce, csrf, current: 'canonical', body, navCounts });
 }
 
 export function messagePage({ title, text, actor = null, csrf = '', nonce, link = null }) {

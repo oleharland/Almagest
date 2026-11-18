@@ -19,7 +19,7 @@ import { JOB_KINDS, JOB_TRIGGERS, newId, nowIso } from '../core/schemas.mjs';
 import { JobError } from './runner.mjs';
 
 const ACTIVE = ['queued', 'running'];
-const AUTOMATIC = new Set(['watch', 'schedule', 'hook', 'mcp']);
+const AUTOMATIC = new Set(['watch', 'schedule', 'hook', 'mcp', 'lookup']);
 const CLOSED_PROPOSAL = new Set(['merged', 'rejected', 'superseded']);
 const SHUTDOWN = Symbol('shutdown');
 const CANCEL = Symbol('cancel');
@@ -138,6 +138,8 @@ export function createQueue(ctx, { runner, prepareSource, logsDir }) {
         ...(input.proposalId ? { proposalId: input.proposalId } : {}),
         ...(input.decisionId ? { decisionId: String(input.decisionId) } : {}),   // governance: which decision this revise resolves
         ...(input.instructions ? { instructions: String(input.instructions) } : {}),
+        // The question a chat asked, kept for the proposal page. Data only: the prompt never presents it as instructions.
+        ...(trigger === 'lookup' && input.lookupQuestion ? { lookupQuestion: String(input.lookupQuestion).slice(0, 500) } : {}),
         ...(input.slug ? { slug: String(input.slug) } : {}),
         ...(input.slugs ? { slugs: input.slugs.map(String) } : {}),
         status: 'queued',
@@ -157,7 +159,7 @@ export function createQueue(ctx, { runner, prepareSource, logsDir }) {
         const dup = await findDuplicate(job);
         if (dup) {
           log.debug('enqueue deduplicated', { job: dup.id, source: source?.id });
-          return dup;
+          return { ...dup, deduplicated: true };    // callers that count new jobs can tell
         }
       }
 

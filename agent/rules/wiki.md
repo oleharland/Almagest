@@ -219,6 +219,8 @@ In order:
 
 Evidence is captured via `sources:` and inline citations. A standalone `## Evidence` section is not required.
 
+**Write Markdown, not HTML.** A page body is Markdown. The site shows any raw HTML in it as visible text: `<script>`, event handler attributes, `<details>` and `<div hidden>` do not run or hide anything, they print. A link or image whose address starts with `javascript:`, `vbscript:` or `data:` is dropped. Keep the markup out of the page. A body that ends inside an open HTML block or a code fence is `SCHEMA-007`.
+
 ## Writing style
 
 This is a machine-readable knowledge base, not a document for humans to read linearly. Every sentence must earn its place.
@@ -237,8 +239,11 @@ Every wiki page carries a `tier` field. The tier determines how strictly the pag
 
 ### Canonical — locked definitions
 
-**What:** Agreed taxonomies, strategic decisions, fixed reference lists. Listed in `brain.config.yaml` → `canonical_pages`.
+**What:** Agreed taxonomies, strategic decisions, fixed reference lists.
 
+**How a page becomes canonical.** A page is canonical when its slug is in `brain.config.yaml` → `canonical_pages`, or when its frontmatter on `main` says `tier: canonical`. Both count the same everywhere: the audit, the ingest runner, the merge and the review inbox read one definition. A person sets the tier in the review inbox, on a page in an open proposal or on a page already on `main`, and the inbox suggests pages that many documents point at. The service never edits `brain.config.yaml`.
+
+- **You never set `tier: canonical`**, on a new page or an existing one. The runner refuses a run whose branch does that, and the merge refuses it again. Write a new page as `evidence` or `curated`; a person decides later whether it is canonical.
 - The agent **cannot propose changes** to canonical pages. Only a human edits them, directly. This is unchanged and non-negotiable #4.
 - Canonical pages are the **guardrails** for everything below.
 
@@ -297,6 +302,8 @@ Frozen. Rules, config, and reports reference them by ID.
 | `SCHEMA-003` | Missing `type_fields` entry required for this `type` | error |
 | `SCHEMA-004` | `owner` missing or not in `owner_teams` while `require_owner: true` | error |
 | `SCHEMA-005` | `type` carries a `type_fields` vocabulary value (e.g. `type: organisation`) | error |
+| `SCHEMA-006` | The front matter uses a YAML anchor (`&name`), alias (`*name`) or merge key (`<<:`) | error |
+| `SCHEMA-007` | The page body ends inside an HTML comment (`<!--` with no `-->`), another HTML block that stays open to the end of the page (`<script`, `<pre`, `<style`, `<textarea`, `<?`, `<!X`, `<![CDATA[`), or a fenced code block | error |
 | `LINK-001` | `[[wikilink]]` to a page that does not exist | error |
 | `LINK-002` | Orphan — zero backlinks | warning |
 | `LINK-003` | `relations` target does not exist | error |
@@ -313,6 +320,8 @@ Frozen. Rules, config, and reports reference them by ID.
 | `PROV-005` | A page exists in `brain/wiki/` with no `index.md` row | warning |
 | `CANON-001` | Outstanding entries in `brain/canonical-challenges.md` | warning |
 | `STALE-001` | `last_verified` past threshold (curated/evidence 90d, stub 30d) | warning |
+| `DUP-001` | Two pages share a title or an alias. Titles and aliases are compared ignoring case and surrounding spaces. Each pair is reported once, on the page that sorts first, and the message names both pages. Template pages (`_` prefix) are exempt | warning |
+| `BASIS-001` | A `type: claim` page whose `## Basis` names a page with a `date_modified` later than the claim's `last_verified`, or the claim has no `last_verified`. The message names the page that changed | warning |
 
 Thresholds and severities are read from `brain.config.yaml` → `audit`, not hardcoded. Errors exit `1`; warnings do not. An error-level finding blocks the ingest commit — see *Approval gates*.
 
@@ -370,7 +379,7 @@ Thresholds and severities are read from `brain.config.yaml` → `audit`, not har
 👉 What would you like to address?
 ```
 
-**Emoji key:** 🔎 audit · 📋 schema · 🔗 broken link · 📎 citation · 🧾 provenance · 🕸️ stale · 👻 orphan · 🛡️ canonical challenge · ❌ error · ⚠️ warning · ⚡ action items · 👉 awaiting input.
+**Emoji key:** 🔎 audit · 📋 schema · 🔗 broken link · 📎 citation · 🧾 provenance · 🕸️ stale · 👯 duplicate · 👻 orphan · 🛡️ canonical challenge · ❌ error · ⚠️ warning · ⚡ action items · 👉 awaiting input.
 
 ### Actions after audit
 

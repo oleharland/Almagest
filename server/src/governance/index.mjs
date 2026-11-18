@@ -14,6 +14,7 @@ import { parseTokens } from '../core/auth.mjs';
 import { loadServiceConfig } from '../core/config.mjs';
 import { createChannels } from './channels/index.mjs';
 import { createConfirmations } from './confirmations.mjs';
+import { createHints, hintWords } from './hints.mjs';
 import { createIdentities, DEFAULT_CHANNEL_ROLES_MAX_AGE_HOURS } from './identity.mjs';
 import { createMerger, createMutex } from './merge.mjs';
 import { writableMatcher } from './paths.mjs';
@@ -48,7 +49,9 @@ export async function create(ctx) {
     challengesPath: config.v1.challengesPath, indexDir: config.v1.indexDir,
   });
   const merger = createMerger({ git: ctx.git, config, log, allowed });
-  const governance = createService(ctx, { merger, confirmations, lock, identities, allowed });
+  const hints = createHints(ctx);
+  const governance = createService(ctx, { merger, confirmations, lock, identities, allowed, hints });
+  governance.hints = hints;   // pages worth fixing as canonical (hints.mjs) — read by the inbox and `almagest canonical-hints`
 
   // How channel accounts are tied to people (identity.mjs). "multi" = counting
   // people matters, so every mapping must resolve to exactly one person.
@@ -114,6 +117,20 @@ export const commands = {
         const info = describe(p, d);
         process.stdout.write(`${p.id}  ${info.title}\n    ${info.sentence}\n    ${ctx.config.service.http.base_url}/inbox/p/${p.id}\n`);
       }
+      return 0;
+    },
+  },
+  'canonical-hints': {
+    summary: 'Pages worth fixing as canonical, most documents first [--json]. Read only: people decide in the inbox',
+    needsApp: true,
+    async run(argv, { ctx }) {
+      const hints = ctx.governance.hints;
+      if (!hints.settings().enabled) { process.stdout.write('Canonical suggestions are turned off (governance.canonical_hint.enabled: false).\n'); return 0; }
+      const list = await hints.list({ fresh: true });
+      if (argv.includes('--json')) { process.stdout.write(`${JSON.stringify({ suggestions: list }, null, 2)}\n`); return 0; }
+      if (list.length === 0) { process.stdout.write('No page stands out right now.\n'); return 0; }
+      for (const h of list) process.stdout.write(`${h.title} (${h.slug})\n    ${hintWords(h).join('; ')}\n`);
+      process.stdout.write(`\n${list.length} page${list.length === 1 ? '' : 's'}. Make a page canonical in the inbox: ${ctx.config.service.http.base_url}/inbox/canonical\n`);
       return 0;
     },
   },

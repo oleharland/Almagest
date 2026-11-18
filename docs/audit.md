@@ -55,6 +55,28 @@ Requires Node 22. No dependencies beyond what `site/` already installs (`gray-ma
 
 Warnings never change the exit code. That is deliberate: an orphan page or a stale `last_verified` is a thing to look at, not a thing that should stop a merge.
 
+## When it runs
+
+The audit runs whenever something is about to change the wiki:
+
+- On a commit. The pre-commit hook, once installed with `almagest hooks install`, audits the staged tree and refuses the commit on exit `1`.
+- On a push or pull request. CI runs it again (see [CI](#ci)).
+- In a service job. The v2 service audits what the headless agent wrote before it commits, and once more before it merges an approved proposal.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/audit-schedule-dark.png">
+  <img src="diagrams/audit-schedule.png" alt="Two things start work on a timer: a connector sync on its cron schedule, which queues an ingest job for each changed item, and the demand recompute every 5 minutes, which with auto_reverify on queues a reverify job for hot pages unverified for 30 days or more. Both become an agent job on an ingest/ branch. A commit or push starts the audit directly, through the pre-commit hook and CI. The audit, tools/audit.mjs, commits nothing on an error. A job that passes becomes a proposal with each changed fact beside its source, the service notifies a reviewer through Slack, email or a GitHub PR, and a person reviews and approves the version shown. The service then re-audits and merges, main moves, and the merge triggers a new recompute.">
+</picture>
+
+Two things put work in front of the audit on a timer, both in the v2 service:
+
+- A connector with a `schedule` (a cron expression, or a shorthand such as `@weekly`) syncs on that schedule and queues an ingest job for each item that changed.
+- With `telemetry.auto_reverify: true`, each demand recompute (every 5 minutes by default) queues a `reverify` job for every hot, non-canonical page that is due a re-check, at most once per page per `stale_after_days_hot` window.
+
+Either way the job ends as a proposal, the configured channels (Slack, email, a GitHub pull request) tell a reviewer, and a person approves it.
+
+No timer audits the whole wiki. A page nobody reads raises `STALE-001` once it passes its tier threshold, and that warning is seen only the next time the audit runs for another reason.
+
 ## What it checks
 
 Check IDs are **frozen**. `agent/rules/wiki.md`, `brain.config.yaml`, and the report all reference them by ID, so they do not get renamed.
@@ -68,8 +90,21 @@ Check IDs are **frozen**. `agent/rules/wiki.md`, `brain.config.yaml`, and the re
 | `SCHEMA-003` | Missing `type_fields` entry required for this `type` | error |
 | `SCHEMA-004` | `owner` missing or not in `owner_teams` while `require_owner: true` | error |
 | `SCHEMA-005` | `type` carries a `type_fields` vocabulary value (e.g. `type: organisation`) | error |
+| `SCHEMA-006` | The front matter uses a YAML anchor (`&name`), alias (`*name`) or merge key (`<<:`) | error |
+| `SCHEMA-007` | The page body ends inside an HTML comment (`<!--` with no `-->`), another HTML block that stays open to the end of the page (`<script`, `<pre`, `<style`, `<textarea`, `<?`, `<!X`, `<![CDATA[`), or a fenced code block | error |
 
 `SCHEMA-005` catches the single most common authoring mistake: `page_types` and the `type_fields` vocabularies are separate lists, and an organisation is `type: entity` with `entity_type: organisation`.
+
+`SCHEMA-006` keeps a page header plain. With an anchor and an alias, `tier: *t` takes its value from a `&t` on another line, so two edits that each look harmless can combine into a page that reads `canonical`. The check decides from the parsed YAML document: an anchor on any node, an alias node, or a plain `<<` key. A `*` or `&` that starts a continuation line of a multi-line plain scalar, or sits inside a quoted string, a comment or a block scalar, is text and is not a finding. Only a header that does not parse falls back to a scan of the raw text, and that page already fails to load.
+
+`SCHEMA-007` catches a body that ends inside a block that stays open to the end of the page. A Markdown renderer treats whatever is added below that point later as part of the block, so it would be hidden, shown as code or run as markup. The check follows the CommonMark block rules, line by line:
+
+- A fence opens with three or more backticks or tildes after at most three spaces of indent, and closes only with a fence of the same character, at least as long, with nothing after it but spaces.
+- An HTML block of type 1 (`<script`, `<pre`, `<style`, `<textarea`, open until the matching closing tag), type 2 (`<!--` until `-->`), type 3 (`<?` until `?>`), type 4 (`<!` and a letter, until `>`) or type 5 (`<![CDATA[` until `]]>`) starts only when a line begins with that text after at most three spaces of indent, outside any code block. It may interrupt a paragraph, and blank lines do not end it. Types 6 and 7 (`<div`, `<details` and the like) end at the next blank line, so they cannot swallow a later section and are not reported.
+- A block inside a list item or a blockquote ends with its container. An unclosed fence in a list item is closed by the end of the item, so it is not a finding.
+- Indented code is never scanned. Neither is inline text: a `<!--` in the middle of a line, or inside a code span, starts no block.
+
+The check never reads a line of prose as a block start, so a legitimate page is not refused for it. A page that quotes `<script>` as code puts it in a fence, a code span or indented code.
 
 ### Links — does the graph resolve?
 
@@ -137,6 +172,19 @@ A source fetched over MCP by the v2 service ([v2/connectors.md](v2/connectors.md
 | `CANON-001` | Outstanding entries in `brain/canonical-challenges.md` | warning |
 | `STALE-001` | `last_verified` past threshold | warning |
 
+The canonical set the audit uses is one definition, shared with the service: a page is canonical when its slug is in `canonical_pages` or its frontmatter says `tier: canonical` (`tools/lib/canonical.mjs`). It decides which pages are exempt from `LINK-002`. The audit cannot tell who set a tier, so the ingest runner and the merge are what stop an agent setting it.
+
+### Duplicates and moved ground
+
+| ID | Detects | Severity |
+|---|---|---|
+| `DUP-001` | Two pages share a title or an alias. Titles and aliases are compared ignoring case and surrounding spaces. Each pair is reported once, on the page that sorts first, and the message names both pages. Template pages (`_` prefix) are exempt | warning |
+| `BASIS-001` | A `type: claim` page whose `## Basis` names a page with a `date_modified` later than the claim's `last_verified`, or the claim has no `last_verified`. The message names the page that changed | warning |
+
+`DUP-001` usually means the same subject was written twice, for example when two sources describe one product. Merge the pages or give one a distinct title and its own aliases.
+
+`BASIS-001` means the ground under a conclusion moved. Read the claim again against the changed page, then set `last_verified` to today. A Basis page with no `date_modified` is skipped.
+
 `CANON-001` is informational by design. An open challenge means evidence contradicts a canonical page and a human has not yet ruled. That is a queue, not a failure. It stays visible in every audit run until the row's status changes.
 
 ### Demand — are the pages people rely on fit to be relied on? (opt-in: `--demand`)
@@ -202,7 +250,7 @@ audit:
     stub: 30             # by status; wins over the tier threshold
   severity:
     errors: [SCHEMA-001, …]
-    warnings: [LINK-002, CANON-001, STALE-001]
+    warnings: [LINK-002, CANON-001, STALE-001, DUP-001, BASIS-001]
   challenges_path: brain/canonical-challenges.md
   index_dir: brain/.index
 
@@ -283,7 +331,7 @@ Everything the agent does in response to a finding is a proposal. The audit repo
 👉 What would you like to address?
 ```
 
-**Emoji key:** 🔎 audit · 📋 schema · 🔗 broken link · 📎 citation · 🧾 provenance · 🕸️ stale · 👻 orphan · 🛡️ canonical challenge · 🔥 demand (`--demand` only) · ❌ error · ⚠️ warning · ⚡ action items · 👉 awaiting input.
+**Emoji key:** 🔎 audit · 📋 schema · 🔗 broken link · 📎 citation · 🧾 provenance · 🕸️ stale · 👯 duplicate · 👻 orphan · 🛡️ canonical challenge · 🔥 demand (`--demand` only) · ❌ error · ⚠️ warning · ⚡ action items · 👉 awaiting input.
 
 ## `--json`
 

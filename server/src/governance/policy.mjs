@@ -159,19 +159,32 @@ function describeWhen(when, change) {
  * @param {object} [input.source]    SourceRef
  * @param {string} [input.label]     the connector's label, when the source came from one
  * @param {Array}  [input.rules]     governance.rules
+ * @param {object} [input.tierChange] { from, to } of a tier proposal; moving a page to or from canonical
+ *                                    also needs `canonicalRole` (governance.canonical_role)
  * @returns {{ approvals, perPage, roles, teams, ownerTeam, distinctTeams, reasons, pages, canonical }}
  */
-export function computeRequirements({ changes = [], decisions = [], source = null, label = '', rules = [] }) {
+export function computeRequirements({ changes = [], decisions = [], source = null, label = '', rules = [], tierChange = null, canonicalRole = 'owner' }) {
   const proposal = emptyReq();
   proposal.approvals = 1;   // invariant, not config
+  if (tierChange && (tierChange.from === 'canonical' || tierChange.to === 'canonical')) {
+    addReq(proposal, { roles: [canonicalRole] }, 'moves a page to or from canonical');
+  }
   const pages = {};
+  const active = changes.filter((c) => c.pageStatus !== 'rejected');
+  // A page this proposal makes canonical (it is not canonical on main) needs an
+  // approver with the canonical role, whatever else the proposal is. `promotes`
+  // is a canonical tier nobody chose in the inbox (the merge refuses it anyway,
+  // but its approver is still the one who would have to decide); `tierSetBy`
+  // is a person's choice there.
+  for (const c of active) {
+    if (c.promotes || c.tierSetBy) addReq(proposal, { roles: [canonicalRole] }, `makes “${c.title || c.slug}” canonical`);
+  }
   const facts = {
     decisionKinds: decisions.map((d) => d.kind),
     label: label || '',
     connector: source?.connector || '',
     sourceKind: source?.kind || '',
   };
-  const active = changes.filter((c) => c.pageStatus !== 'rejected');
 
   for (const rule of rules || []) {
     const when = rule.when || {};

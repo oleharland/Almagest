@@ -415,6 +415,48 @@ the tables above.
 
 ---
 
+## Live lookup context size
+
+`lookup-context.mjs` measures one thing: how much context a chat receives when
+the server answers from source passages, compared with the whole source
+document. It makes no model calls and no network calls, and it costs nothing.
+
+```bash
+node benchmarks/lookup-context.mjs           # table and summary
+node benchmarks/lookup-context.mjs --json    # machine output
+node --test benchmarks/lookup-context.test.mjs
+```
+
+For each question in `questions.yaml` that lists `expected_sources`, it counts
+two things with `estimateTokens`. The first is the full text of those source
+files. The second is what `ask` would pack from all five fixture documents at
+the default `ask.token_budget`, using `buildPassageIndex`, `searchPassages` and
+`packPassages` directly. Questions with no expected source are skipped. The
+script exits 1 if a question it expected to measure could not be measured.
+
+"Answer present" is a string test. It is `yes` when every `must_contain`
+literal from `questions.yaml` appears in the packed text, and `not checked` when
+the question has none. Nothing is judged by a model.
+
+The fixtures are Markdown, so headings become `=== section: ... ===` markers
+before indexing, as they would in a real sidecar. `--no-markers` indexes the
+text as it is.
+
+Run it to get the numbers. They are not copied here because they change with the
+passage ranking.
+
+Limits:
+
+- It measures context size on a small fictional corpus with a characters/4
+  estimator. It says nothing about answer quality or cost in dollars.
+- It leaves out the tool definitions and search results a chat also carries
+  when it talks to a provider directly. That would make the whole-document case
+  larger.
+- Real documents are longer than these five fixtures.
+- `must_contain` is a recall floor. Short literals can match by accident.
+- It does not drive the full `createLookup` path. It calls the passage
+  functions that the sources step uses.
+
 ## What this cannot tell you
 
 Read this section before quoting any number this harness produces.
@@ -484,6 +526,7 @@ Read this section before quoting any number this harness produces.
 | `selftest.sh` | Verifies the harness against a test double. No API calls |
 | `questions.yaml` | 19 questions with ground truth. Format documented in the file header |
 | `questions-drift.yaml` | 4 re-ingest questions. Separate file because the drift arms see a different corpus |
+| `lookup-context.mjs` | Context size of live lookup against whole documents. No API calls. Test: `lookup-context.test.mjs` |
 | `rubric.md` | Every metric, how it is computed, and what it cannot tell you |
 | `prompts/_shared.md` | The answering protocol. **Identical for every arm** |
 | `prompts/baseline.md`, `prompts/baseline-retrieval.md`, `prompts/treatment.md` | Corpus orientation — the only prompt difference between arms |

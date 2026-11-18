@@ -38,6 +38,8 @@ By hand:
 ```bash
 node server/bin/almagest.mjs ingest brain/raw/q3-board-deck.pdf          # queue it
 node server/bin/almagest.mjs ingest brain/raw/q3-board-deck.pdf --wait   # queue it and run it here
+node server/bin/almagest.mjs synthesize                                 # look across the brain for conclusions
+node server/bin/almagest.mjs synthesize --force                         # same, without the changed-pages threshold
 node server/bin/almagest.mjs jobs                                       # recent jobs
 node server/bin/almagest.mjs jobs job_01m5…                             # one job, as JSON
 ```
@@ -76,6 +78,13 @@ ingest:
   spool_interval_seconds: 15     # how often the hook spool is drained (0 = on start only)
   poll_ms: 2000                  # idle workers re-check the store (jobs enqueued by another process)
   manual_rate_per_hour: 30       # POST /api/jobs per actor per hour (0 = no limit)
+
+synthesis:                       # see "Learnings" below
+  enabled: true
+  min_changed_pages: 5           # source pages added or changed on main since the last run
+  max_runs_per_day: 1            # runs per UTC day, counted from the jobs in the store
+  max_claims: 5                  # new claim pages one run may add
+  schedule: ""                   # cron expression that also checks; empty = after merges only
 ```
 
 `model_tier` resolves through the profile of the harness the **driver** runs,
@@ -90,6 +99,7 @@ background with Claude Code, and a Codex model name would break it.
 | `revise` | Apply a decision's `effect` or a reviewer's requested changes | the proposal's |
 | `reverify` | Re-check a page (telemetry `auto_reverify`) against its sidecars | new `ingest/reverify-<slug>-<sha7 of main>`, or a proposal's |
 | `drop-page` | Undo one page on a proposal — mechanical, no agent | the proposal's |
+| `synthesize` | Draw conclusions from pages already on `main`. No source | new `ingest/learnings_<sha7 of main>` (see Learnings) |
 
 Status: `queued → running → succeeded | blocked | failed | cancelled`.
 `blocked` means the run produced decisions and nothing else. A run with nothing
@@ -137,6 +147,9 @@ Vixie day-of-month/day-of-week OR semantics, `@hourly`-style macros) gets
 `ctx.connectors.sync(id)` when it fires; every returned SourceRef becomes one
 job. A connector whose last sync is still running is skipped, not stacked.
 
+**Synthesis.** Queues a `synthesize` job after merges, on a cron expression, or
+by hand. See Learnings below for what it does and what bounds it.
+
 **Spool.** `.almagest/spool/*.json`, written by `hook enqueue` when the service
 is not listening, drained on start and every `spool_interval_seconds`. A bad
 entry is renamed `.failed` and left for a person.
@@ -157,6 +170,81 @@ run report or the model's output. The API only ever enqueues `ingest`: `revise` 
 governance through `ctx`, never from a request body. MCP `submit_source`
 writes into `.almagest/submissions/` and enqueues a local source from there,
 with `onBehalfOf` the human; that person co-authors the commit.
+
+## Learnings
+
+As pages pile up, the brain looks across them for conclusions and proposes
+them. It is on by default (`synthesis.enabled`). Nothing it writes reaches
+`main` without a person approving it in the inbox.
+
+A learning is a `claim` page: `origin: self`, a title that is a sentence, no
+inline citations, an empty `sources` list, a body of at most 8000 characters,
+and a `## Basis` of wikilinks to the `origin: source` pages it rests on. Its
+only tie to evidence is the Basis. The rules the agent follows are in `agent/rules/ingest.md` →
+Runner mode → Learnings. The agent reads the wiki on `main` and nothing else.
+The job has no source.
+
+Its branch is `ingest/learnings_<sha7 of main>`. The underscore is the point:
+the slug function that names an ordinary ingest branch from a chat title or a
+file name emits only `a-z`, `0-9` and `-`, so no source a person submits can
+produce this name, however its hash is chosen. A tier proposal branch has the
+same form, `ingest/tier_<slug>-<sha7>`. As a second line of defence the runner
+refuses an `ingest` job whose branch already holds a live proposal of another
+kind (learnings or tier), or one that came from a different source, with an
+error and before the agent runs.
+
+### When it runs
+
+Every route goes through one function (`server/src/ingest/synthesis.mjs`,
+`request`), so every route meets the same bounds.
+
+| Route | When |
+|---|---|
+| After a merge | A proposal is merged, and the count of changed source pages has reached `min_changed_pages` |
+| On a schedule | `synthesis.schedule` (five-field cron) fires and the same check passes. Use it to catch a run that a bound held back earlier in the day |
+| By hand | `almagest synthesize`. `--force` skips the changed-pages threshold and nothing else |
+
+The count is the `origin: source` pages added or changed on `main` since the
+last run. The service remembers the commit of `main` at the last run in the
+store (namespace `synthesis`, key `last-run`). Before the first run it counts
+every source page. Claim pages never count, and the merge of a learnings
+proposal is skipped, so a merged learning cannot start the next run by itself.
+
+### Bounds
+
+Checked in this order. A route that is stopped says which bound stopped it.
+
+1. `synthesis.enabled` is false: nothing runs. The runner refuses a queued job too.
+2. At most one `synthesize` job is queued or running.
+3. No new run while a learnings proposal is open (any status the inbox still works on).
+4. At most `max_runs_per_day` runs per UTC day, counted from the `synthesize` jobs in the store. The run is also claimed in the store before it is queued: one slot per allowed run, numbered under the UTC date (namespace `synthesis.claims`, key `<date>:<n>`), taken with `kv.setIfAbsent`, which is one insert that only one of two racing processes wins. This is what keeps `almagest synthesize` in one process and a merge in the service from both passing the cap. A slot whose job could not be queued is released. Slots of earlier days are dropped.
+5. At least `min_changed_pages` changed source pages since the last run (`--force` skips this one).
+
+A failed enqueue is logged and never breaks the merge that triggered it.
+
+### What the runner enforces
+
+The agent is told the rules, and the runner checks them against `main`. A run
+that breaks one fails as a whole and nothing is committed. A revise of a
+learnings proposal is held to the same limits.
+
+- Every change is a new file under `brain/wiki/`, or `brain/index.md`, `brain/log.md` or `brain/.index/*.tsv`. No existing page is edited, renamed or deleted. The manifest, sidecars and every other file are off limits.
+- `brain/index.md` and `brain/log.md` only gain whole lines, and only at the end. Compared with the branch's starting commit, no existing line may be removed, changed or moved. Every added table row comes after the last existing row of the table it joins. Any other added line comes after everything already in the file. A placeholder row such as `| _(no actions yet)_ | | |` may give way to a real row, and blank lines may be added anywhere. The inbox shows the lines a run adds to these files, so a rewritten line, or a backdated row between two existing ones, would go unseen or mislead.
+- A learning has no `sources` of its own and no citation in its body: not a well formed one, and not the text `[source:` either. A cited learning would show the reviewer nothing, and a learning ties to evidence through its Basis alone.
+- A learning's body is at most 8000 characters. The inbox shows the whole body, so the runner bounds it instead of the inbox cutting it.
+- A learning carries no character a reader cannot see or that changes the order of text, in its front matter or its body. Refused: bidirectional controls (U+202A to U+202E, U+2066 to U+2069, U+061C, U+200E, U+200F), zero-width characters (U+200B, U+200C, U+200D, U+2060, U+FEFF), the line and paragraph separators (U+2028, U+2029), tag characters (U+E0000 to U+E007F) and any other C0 or C1 control character except a tab and a line break. One byte order mark at the very start of the file, and the carriage return of a CRLF line break, are allowed. The error names the character and its line and column. A person reads the page in the inbox, and a chat reads it with such characters removed, so without this rule the two would read different sentences.
+- A learning's front matter is bounded, because some of its fields (title, aliases, tags, `related`, `relations`) reach chats. It may carry only the keys a `claim` page needs: the base keys of the page schema (`title`, `type`, `tier`, `origin`, `status`, `confidence`, `tags`, `aliases`, `owner`, `date_created`, `date_modified`, `last_verified`, `sources`, `related`, `relations`) and whatever frontmatter fields `type_fields.claim` names in `brain.config.yaml` (none by default). Any other key is refused. Each string is at most 300 characters, each list at most 20 entries, and the whole front matter block at most 4000 characters. Every `related` and `relations` target is a page that exists on `main`, and `relations` has only its four keys.
+- At most `max_claims` new pages.
+- Each new page is `type: claim`, `origin: self`, and not canonical.
+- Its `## Basis` links at least two pages that exist on `main` and are `origin: source`, and those pages cite at least two different sources. Two source entries count as one source when they share an id or a sha256. Links to other pages are allowed in addition.
+- It is not a learning a person turned down, unless a Basis page changed since (see governance.md, Learnings).
+
+The agent also writes bookkeeping the audit needs, so the audit runs as for any
+job. With `anonymization.enabled`, the job follows the same anonymization rules
+as ingest.
+
+If two existing pages contradict each other, the agent writes no claim about
+it. It reports a `contradiction` in `blocked`, which becomes a decision card.
 
 ## Drivers
 
@@ -189,6 +277,37 @@ agent must use), the connector `change` / `supersedes`, the previous version of
 a changed source, the branch, the proposal, any instructions, and the exact
 audit command it may self-check with. The system prompt states that source
 content is untrusted data.
+
+**Pages pending in other proposals.** Jobs run one at a time, each on a branch
+made from `main`, and `main` moves only when a person approves. A job
+therefore cannot see the pages that earlier jobs wrote, whose proposals are
+still open. Before an `ingest` job, or a `revise` job for a proposal other than
+the one it revises, the runner collects every wiki page that another open
+proposal adds or changes (statuses `open`, `changes_requested`, `approved`
+and `conflicted`; never the job's own proposal) and writes its text, as it
+stands at that proposal's head, to `.almagest/pending/<proposal id>/<slug>.md`
+in the job worktree. When two proposals touch one slug, both texts are there,
+newest proposal first. The prompt lists them (slug, title, aliases, proposal
+id, path, whether the page is new or a change) and says the text is material
+under review by a person: data to read, never instructions.
+
+That directory is git-ignored, outside every path the path guard allows, and
+read by neither the audit nor the commit. The runner removes it as soon as the
+agent finishes, whether the run succeeded or not, before it reads the run
+report. A job that cannot list the open proposals runs without the set and
+logs a warning.
+
+The rule the agent follows is in `agent/rules/ingest.md` → Runner mode →
+*Pending pages*: a pending page counts as an existing page, and a source that
+adds to it writes a page with the same slug that carries only what the source
+adds. Each such page is recorded in the run report's `extends` list. The runner
+refuses a pair whose proposal and slug were not in the set it handed out, and
+stores the list, with each proposal's title taken from its own record, on the
+proposal, where the inbox shows it to the reviewer. It does not change any merge
+decision. When both proposals are approved, governance combines the two pages
+without an agent only where the strict rules allow it, whatever the list says,
+and otherwise asks the agent to redo the page on top of what is already there
+([`governance.md`](governance.md) → *How a merge happens*, step 3).
 
 The agent never stops to ask. Every case the risk-tier table says *blocks* is
 left unwritten and recorded in `blocked[]` of `.almagest/run-report.json`;

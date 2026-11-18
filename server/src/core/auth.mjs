@@ -71,6 +71,22 @@ export function assertCanApprove(actor) {
   }
 }
 
+/**
+ * Who may change a page's tier in the review inbox. A tier change is an
+ * approval of a kind, so it starts where approval starts: a human with an
+ * approver role, never an agent or a service. Changing a page to or from
+ * `canonical` needs, on top of that, the role the policy names
+ * (`governance.canonical_role`, default owner; an admin always has it).
+ * Whether the actor reached the inbox by a signed-in browser session is
+ * checked beside this, in governance/trust.mjs (assertMayAct).
+ */
+export function assertCanChangeTier(actor, { canonical = false, role = 'owner' } = {}) {
+  assertCanApprove(actor);
+  if (canonical && !hasRole(actor, role)) {
+    throw new ForbiddenError(`${actor.display} cannot change a page to or from canonical. That needs the ${role} role.`);
+  }
+}
+
 // ── providers ────────────────────────────────────────────────────────────────
 
 const PROVIDERS = new Map();

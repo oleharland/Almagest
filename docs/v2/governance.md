@@ -304,8 +304,14 @@ These are code, not config. No rule, profile or flag changes them.
 4. **Open questions block the merge.**
 5. **The automatic checks gate twice**: the runner's audit must have exit 0,
    and the service re-runs its *own* `tools/audit.mjs` on the merge result in a
-   throwaway worktree; anything but exit 0 means main does not move.
-6. **A proposal that modifies a canonical page never merges.** It gets a
+   throwaway worktree; anything but exit 0 means main does not move. Two of
+   those checks guard what a reviewer cannot see: `SCHEMA-006` refuses YAML
+   anchors, aliases and merge keys in a page's front matter, and `SCHEMA-007`
+   refuses a page body that ends inside an HTML comment, another HTML block that stays open to the end of the page, or a code fence.
+6. **A proposal that modifies a canonical page never merges.** (The canonical set
+   is the config list plus every page whose frontmatter on `main` says
+   `tier: canonical`. The one exception is a tier proposal's own `tier:` line,
+   which the merge verifies. See *Tiers in the inbox*.) It gets a
    `canonical_conflict` question whose only options are *record a challenge*
    (a row appended to `brain/canonical-challenges.md` on the proposal's branch,
    never a wiki edit) and *dismiss*; either way the page change is taken out.
@@ -384,18 +390,67 @@ merge (one at a time, under a lock):
    most **two** per proposal. After that the inbox says it needs a person (ask
    for specific changes, or turn it down and add the source again); asking for
    changes resets the count.
-3. A row is added to `brain/log.md`: date, proposal, approvers and channels,
-   the reviewed version, pages.
-4. A merge commit with two parents (main, the reviewed head). Author: the
+3. **Two approved versions of one wiki page are combined**, before a clash on
+   a page is given up on (`page-merge.mjs`). This applies when `git
+   merge-tree` reports a clash on `brain/wiki/<slug>.md` and both sides have
+   the file: both added it, or both changed it from a common base. A delete
+   against a change stays a clash, and so does any canonical page: one named in
+   `canonical_pages`, marked `tier: canonical` on any of the three versions, or
+   whose tier the audit's parser and the guard's parser read differently or
+   cannot read (see *Tiers in the inbox*). The page is read with the same
+   parser the audit uses (a `---js` block is refused, never run), then merged
+   key by key in the frontmatter and section by section (by `##` heading) in
+   the body. The rules are strict on purpose: where there is any doubt it is a
+   clash. What the agent reported (`extends`) plays no part in them.
+
+   | Part | Rule |
+   |---|---|
+   | `sources` | With a base: an entry either side removed since the base stays removed. The same `id` with different content on the two sides is a clash, and so is an entry removed on one side and changed on the other. Without a base: the union, with the same clash rule. Main's order first |
+   | `aliases`, `tags`, `related`, each list under `relations` | With a base: `(main ∪ head) − (base − main) − (base − head)`, so an item either side removed since the base stays removed. Without a base: the union. Main's order first |
+   | `title`, `type`, `tier`, `origin`, `status`, `confidence`, `owner`, any other key | Equal, or changed on one side only since the base (a key removed on one side and unchanged on the other stays removed). Changed differently on both sides is a clash. With no base, any difference is a clash, including a key only one side has |
+   | `date_created`, `last_verified` | The earlier. A page one side never verified has no `last_verified` |
+   | `date_modified` | The later |
+   | A section, with a base that has it | Changed on one side only: taken from that side. Changed the same way on both sides: kept once. Changed on both sides and the two results differ: a clash, even if `git merge-file` could splice the edits, because no reviewer saw those two statements together. A section removed on one side and unchanged on the other stays removed. Removed on one side and changed on the other is a clash |
+   | A section, with no base, or that the base does not have, on both sides | Identical text is kept once. If one side's text is the other's text with whole lines added after it (the shorter is an exact prefix of the longer, line for line), the longer is taken. Anything else is a clash. There is no set-based "superset" rule |
+   | A section on one side only that the base does not have | Kept |
+   | Order | Main's sections in main's order, then the proposal's new sections in theirs |
+
+   The result must satisfy one invariant: **every body line and every
+   frontmatter value of the combined page occurs in main's version or in the
+   reviewed head's version of that page; the lines that come from one version
+   keep that version's order; and no list item that either side removed since
+   the base is back.** Nothing is invented or reworded inside a line.
+   `page-merge.mjs` checks it before it returns, and step 6 checks it again from
+   main's version, the head's version and their merge base. Any clash, and any
+   failure of the check, leaves the file as a clash, and the proposal goes down
+   the `revise` path described in step 2, unchanged. Duplicate lines are kept
+   once, and `last_verified` can be dropped, so the combined page is not the
+   plain sum of the two.
+
+   `extends` is the list of pages the agent wrote as additions to a page that
+   was waiting in another proposal (see [`ingest.md`](ingest.md)). It is
+   information for the reviewer: it is stored on the proposal, shown in the
+   inbox, and fixed to the reviewed version, so a run that leaves the head
+   where it was cannot change it. It changes no merge decision.
+4. A row is added to `brain/log.md`: date, proposal, approvers and channels,
+   the reviewed version, pages. When a page was combined, the row says so:
+   *combined with what was already there: slug*. The proposal's `merge.combined`
+   and the activity entry carry the same list.
+5. A merge commit with two parents (main, the reviewed head). Author: the
    person whose approval completed it. Committer: `svc:governance`.
-5. Re-audit (above), then the path check (invariant 11) on the branch diff and
-   on the merge result.
-6. `main` moves by compare-and-swap: `git merge --ff-only` inside a working
+6. Re-audit (above), then the path check (invariant 11) on the branch diff and
+   on the merge result. The same gate (`verifyCandidate`) recomputes the page
+   invariant from main's version and the reviewed head's version of every page
+   that clashed, on the commit itself, whoever made it. It does not trust
+   step 3 to have been the author. A combined page that fails is refused with
+   reason `content`, and a clash on anything that is neither such a page nor a
+   bookkeeping file is refused too.
+7. `main` moves by compare-and-swap: `git merge --ff-only` inside a working
    copy that has main checked out (refused, with a "Try again" button, if that
    copy has unsaved edits to the same files), otherwise `git update-ref` with
    the old value. If main moved meanwhile, the merge is recomputed.
-7. With `service.git.push: true`, main is pushed to `service.git.remote`.
-8. The ingest worktree is removed and the merged branch deleted. A turned-down
+8. With `service.git.push: true`, main is pushed to `service.git.remote`.
+9. The ingest worktree is removed and the merged branch deleted. A turned-down
    or superseded proposal is cleaned up the same way (its branch is kept only
    with `governance.keep_closed_branches: true`).
 
@@ -521,7 +576,12 @@ to accept a commit, not an order to move main. In this order:
    hand-made merge commit can carry any edit, so a merge commit that changes,
    adds or removes anything beyond that merge is refused (reason `content`,
    naming the files), and so is a head that does not merge cleanly onto main,
-   since how GitHub settled the clash was never reviewed. GitHub's merge
+   since how GitHub settled the clash was never reviewed. The one clash with
+   an answer is a wiki page the service can combine (*How a merge happens*,
+   step 3): its expected content is what the service would have written, and
+   the commit must hold exactly that. A hand-made combination that differs by
+   one character is refused, even if every line in it comes from one of the two
+   versions. GitHub's merge
    button writes no log row and resolves no bookkeeping, so a plain merge of
    a clean PR passes. The one tolerance is the derived index
    (`brain/.index/`): its files may differ from the plain merge, because step
@@ -536,19 +596,191 @@ to accept a commit, not an order to move main. In this order:
 If any step fails, local main does not move. The proposal becomes
 **`merged_unaccepted`** ("Merged on GitHub, not accepted here" in the inbox)
 with `merge.accepted: false` and `merge.reason` (`policy` · `head` · `paths` ·
-`content` · `audit` · `shape` · `checkout` · `busy` · `error`) plus a message, and a
+`content` · `canonical` · `audit` · `shape` · `checkout` · `busy` · `error`) plus a message, and a
 **policy violation** in the activity log. An administrator reconciles it by
 hand (bring the change in through a new proposal, or revert it on GitHub).
 GitHub's **branch protection** is defence in depth: turn it on and mirror your
 rules there, so a bad merge is stopped before it reaches the remote, but the
 service does not rely on it.
 
+### Tiers in the inbox
+
+A page is canonical when its slug is in `canonical_pages` in `brain.config.yaml`
+or its frontmatter on `main` says `tier: canonical`. People set the second kind
+in the inbox. `brain.config.yaml` itself is never touched by the service.
+
+**The control.** Each page in an open proposal shows its tier (Evidence,
+Curated or Canonical) and a "Change the tier" choice. Picking one is a human
+edit to the proposal. The service writes one new commit on the proposal's
+branch that changes only the `tier:` line of that page. The person is the
+author and the service is the committer, and no checkout is touched. The
+service runs its own audit on the new head first. If the audit fails, the
+branch stays where it was and the person is told why. The reviewed version
+moves to the new head the way it does for a revision, so earlier approvals are
+kept in the record and no longer count. The person who made the edit joins
+the proposal's `submitters`, so with separation of duties on they cannot
+approve it alone, the same rule as for whoever proposed a tier. The control is
+not shown for a page that is already canonical on `main`, or for a tier
+proposal.
+
+**The tier proposal.** For a page already on `main`, the page's entry in the
+inbox (`/inbox/pages/<slug>`) offers "Make canonical", "Make curated" and "Make
+evidence". The service creates a small proposal authored by that person on a
+branch named `ingest/tier_<slug>-<sha7>`. It starts with `ingest/` like every other
+proposal branch, so the hooks and the path checks treat it like one, and the
+underscore is a character the slug function never emits, so no source a person
+submits can be given the same branch name. Its only
+change is the `tier:` line of that page. It is marked `kind: 'tier'` and
+carries `tier: { slug, from, to, title }`. Its title reads, for example, "Ole
+wants to make “Glossary” canonical." It goes through the normal gate: policy,
+audit, merge, and a row in `brain/log.md`. If the person's own approval meets
+the policy, it is recorded through the ordinary approve path, so in a solo
+brain the whole change is one action. Otherwise it waits in the inbox. A tier
+proposal has no agent to redo it: asking for changes or taking a page out is
+refused, and a clash with a newer `main` means turning it down and trying again.
+If the page changed on `main` after the tier change was proposed, approving it
+is refused with a plain sentence ("The page changed since this was proposed, so
+the tier change has to be proposed again") and a link to the page. The proposal
+is marked `conflicted`, like any proposal that can no longer merge, it is not
+logged as a policy violation, and a conflicted tier proposal no longer stops
+the same change from being proposed again.
+
+The merge checks a tier proposal in code. What the reviewer saw (the merge base
+to the head) must be one modified file, the page, whose text differs from the
+base only in the `tier:` line, going from the recorded tier to the recorded
+one. `main`'s copy of the page must be byte-identical to the base's: if the page
+changed since the tier was proposed, the person approved a tier for words that
+are no longer there, so the change is refused and has to be proposed again.
+There is no automatic rebase. The merge result may change only that page, the
+log and the derived index. Any other difference is refused with the reason
+`tier`. A page listed in `canonical_pages` cannot be
+lowered here. Open challenges against a demoted page stay in the ledger.
+
+**Who may.** Changing a page to or from canonical needs the role in
+`governance.canonical_role` (default `owner`; `admin` always qualifies), and a
+tier proposal that does so also needs an approver with that role. So does any
+other proposal whose head makes a page canonical that is not canonical on
+`main`, whether a person chose it in the inbox or not: the requirement reads
+*makes "Title" canonical* and the approval waits for someone with the role.
+Changing
+between evidence and curated needs the role that can approve the proposal. The
+check is `assertCanChangeTier` in `core/auth.mjs`, run at the top of every tier
+action in `governance/service.mjs` beside the browser-session check. Only a
+person in a signed-in browser session, in the web inbox, with the form's CSRF
+token, can do it. Agents, API and MCP tokens, the chat confirmation, Slack,
+email and GitHub cannot. Before the first confirm for canonical, the inbox says:
+"The agent can no longer change this page. New material that contradicts it is
+logged as a challenge and is not merged. Only a person can edit it."
+
+**The result is checked, not only the head.** Two heads that each read as
+evidence can merge cleanly into a page that reads canonical, for example when
+one defines a YAML anchor and the other reads it back. So for every wiki page
+that differs between `main` and the commit that is about to become `main`, the
+merge reads the tier of the result with `canonicalOrUnsure`. It refuses the
+merge with the reason `canonical` when the result is canonical or unsure, with
+two exceptions. A page that is canonical on `main` by the same definition and
+byte-identical to `main`'s version is not a change. A tier choice a person
+recorded is allowed: this proposal is that page's tier proposal, or it holds a
+`setPageTier` edit of it, and the page in the result is byte-identical to the
+page in the reviewed head that the choice produced, with both parsers reading
+plain `canonical`. A merge made on GitHub has no such exception.
+
+**Free text in a commit message.** A proposal title, a page title, a display
+name or a source name can hold line breaks. Everywhere such text goes into a
+commit message (the merge commit, the tier commits, the challenge commit and
+the author name) control characters and line breaks become single spaces and
+the length is capped, so a title cannot add an `Approved by:` line of its own.
+That covers the commits the ingest runner writes on a branch, which become the
+second parent of the merge on `main`: a chat's source title, the agent's page
+summaries and a decision's question are flattened, and so are the author and
+co-author names and emails of every commit (an email holds no `<`, `>` or
+space). The log row flattens its cells the same way, including a lone carriage
+return and the Unicode line and paragraph separators.
+
+**Agents and outside merges.** An agent never sets `tier: canonical`. The
+runner refuses a branch that does, on a new page or an existing one, and the
+merge refuses it again unless the service recorded a person's choice in the
+inbox for that exact page text. A commit merged outside the service (GitHub)
+may not make a page canonical or change a canonical page, whoever chose it.
+
+**Two parsers, one answer.** The guard reads a page's tier by cutting out the
+front matter block and parsing it with `yaml` (`tierOfText`). The audit and
+the site read it with gray-matter. They can disagree: a `---yaml` opening
+line, a tab, a merge key (`<<:`) or a missing closing `---` is read as
+canonical by one and as nothing by the other. `canonicalOrUnsure` in
+`tools/lib/canonical.mjs` closes that: a page counts as canonical, for the
+runner's guard, the merge, the proposal builder and the set of locked pages on
+`main`, when either parser reads canonical, when the two readings differ, or
+when either cannot read the tier. Such a page is refused like any other attempt
+to set canonical.
+
+**Suggestions.** "Pages worth fixing as canonical" (`/inbox/canonical`, linked
+in the navigation with a count) lists pages that many documents contribute to.
+For each page on `main` that is not canonical, not a `claim` page and not a
+template page (slug starting with `_`), the service counts the distinct sources
+in `brain/manifest.yaml` whose `pages` include it (superseded and skipped
+sources do not count), the other pages that link to it, and whether it is among
+the most read pages. A page is suggested when its documents reach `min_sources`
+or its backlinks reach `min_backlinks`. For a hot page both are multiplied by
+`hot_factor` and rounded up. Each row has "Make canonical" and "Dismiss". Dismissing hides the
+suggestion for everyone, so it needs the same role as making a page canonical,
+and the button is shown only to people who hold it. A
+dismissal is stored with the document count at the time, and the page comes
+back only when that count has grown to at least 1.5 times as many. The most
+documents come first, then the most backlinks.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `governance.canonical_role` | `owner` | the role that may move a page to or from canonical |
+| `governance.canonical_hint.enabled` | `true` | show the suggestions |
+| `governance.canonical_hint.min_sources` | `5` | documents that contribute to a page |
+| `governance.canonical_hint.min_backlinks` | `8` | other pages that link to it |
+| `governance.canonical_hint.hot_factor` | `0.6` | multiplier on both thresholds for a hot page |
+
+### Learnings
+
+When enough pages have been added, the brain looks across them for conclusions
+and proposes them (docs/v2/ingest.md, Learnings). The proposal is marked
+`kind: 'learnings'` and titled in plain words, for example "5 things the brain
+concluded from what it holds". It has no source file. Its `source` is
+`{ kind: 'synthesis', id: 'learnings_<sha7 of main>' }`, which stands for the
+commit of `main` the agent read. The id has an underscore because `slugify`, which turns a chat title or a file name into a source id, emits only `a-z`, `0-9` and `-`. No submitted source can share this id. The same holds for the branch, `ingest/learnings_<sha7 of main>`: no submitted source can be given it, and the runner refuses an ingest job whose branch holds a live proposal of another kind or from another source. A newer proposal replaces an older open one only when both have the same source id and the same kind, so a chat source can never close an open learnings proposal, nor the reverse.
+
+The proposal page opens with one sentence: these are conclusions the brain
+drew from pages that were already reviewed, each one lists the pages it rests
+on, and you can accept or turn down each one on its own. Each learning shows
+the front matter fields that carry meaning (title, aliases, tags, confidence, related pages and relations), open, because some of them reach chats. It then shows its Basis pages as links and its complete text: every section, in order, with
+no length cut, as plain text (the inbox escapes it, so a learning is never read
+as markup). This does not depend on whether the inbox could pair the text with
+a source. The whole front matter still sits in a fold below it, for the fields that carry no meaning. A learning
+cannot be so long that this is a problem: the runner refuses one over 8000
+characters. The buttons are the ones every
+proposal has: **Accept page**, **Take this page out**, **Approve all**, **Ask
+for changes** and **Turn down**.
+
+Approval follows the normal policy for a new curated page, with the same roles
+and the same rules. Nothing about who can approve changes. "Ask for changes"
+queues a `revise` as for any proposal. The runner holds that revise to the same
+write limits as the first run: new claim pages and bookkeeping only.
+
+**Remembering what was turned down.** When a person takes a learning out of the
+proposal, or turns the whole proposal down, the service keeps a record in the
+store (namespace `synthesis.rejected`): the sorted slugs of the learning's Basis
+pages, its title, and the sha256 of each Basis page's text on `main` at that
+time. The next synthesize prompt lists these records. The runner refuses a new
+page whose Basis is exactly the same set while every one of those pages is
+unchanged. When any of them changes, the same set may be proposed again. The
+record is kept in the audit log as `learning.turned_down`.
+
 ### CLI
 
 ```
-almagest proposals      # what's waiting, with inbox links
-almagest inbox-digest   # send the email digest now
+almagest proposals        # what's waiting, with inbox links
+almagest inbox-digest     # send the email digest now
+almagest canonical-hints  # pages worth fixing as canonical (read only; [--json])
 ```
+
+`almagest synthesize [--force]` queues a run that looks across the brain for conclusions; it is an ingest command (docs/v2/ingest.md, Learnings).
 
 ### Service API (for other modules)
 
@@ -574,4 +806,9 @@ with a source); plus `submitters`, `otherFiles` (each with `bytes`, `lines`,
 file, `added` for the lines a change adds), `files` (every changed path
 with mode and binary flag), `outside` (paths outside the writable set),
 `revision`, `revisedBecause`, `conflictRevise`, `mergeError`, `feedback`,
-`rejection`, `supersededBy`.
+`rejection`, `supersededBy`, `extends` (`[{ slug, proposalId, title }]`: pages
+written as additions to pages waiting in other proposals; stored by
+`createFromJob` from the run report when the reviewed version is new, and kept
+as it is when a run leaves the version unchanged; information for the reviewer
+only) and `merge.combined` (the slugs combined
+at merge).

@@ -73,6 +73,8 @@ export function createScheduler(ctx, { enqueue, now = () => new Date() }) {
       entries = [];
       for (const c of await connectors()) {
         if (!c?.schedule) continue;
+        // A live recipe is answered from and never synced; a sync would be refused on every tick.
+        if (c.live) { log.warn('schedule: ignored — a live connector is never synced', { connector: c.id }); continue; }
         try { entries.push({ id: c.id, cron: parseCron(c.schedule) }); }
         catch (err) { log.error('schedule: bad cron — connector will not sync on a schedule', { connector: c.id, error: err.message }); }
       }

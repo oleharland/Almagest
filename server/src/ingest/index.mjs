@@ -26,6 +26,7 @@ import { hookCommand, hooksCommand } from './hooks.mjs';
 import { createQueue, EnqueueError } from './queue.mjs';
 import { createRunner } from './runner.mjs';
 import { createScheduler } from './scheduler.mjs';
+import { createSynthesis } from './synthesis.mjs';
 import { localSource, realish } from './source.mjs';
 import { drainSpool } from './spool.mjs';
 import { createWatcher, listCandidates } from './watcher.mjs';
@@ -160,6 +161,7 @@ export async function create(ctx) {
   const drain = () => drainSpool(config.paths.spool, handleSpoolEntry, { log }).catch((err) => log.error('spool drain failed', { error: err.message }));
 
   const scheduler = createScheduler(mctx, { enqueue: (j) => queue.enqueue(j) });
+  const synthesis = createSynthesis(mctx, { enqueue: (j) => queue.enqueue(j) });
 
   // ── worktree lifecycle follows the proposal ───────────────────────────────
 
@@ -275,6 +277,7 @@ export async function create(ctx) {
     scan,
     drainSpool: drain,
     scheduler,
+    synthesis,
     get driver() { return driverProxy; },
 
     /** `triggers: false` runs workers only — `almagest ingest --wait` uses it. */
@@ -298,6 +301,7 @@ export async function create(ctx) {
         }
       }
       await scheduler.start();
+      synthesis.start();
       await drain();
       const every = Number(config.ingest.spool_interval_seconds ?? 15) * 1000;
       if (every > 0) {
@@ -311,6 +315,7 @@ export async function create(ctx) {
       started = false;
       watcher.stop();
       scheduler.stop();
+      synthesis.stop();
       clearInterval(spoolTimer);
       clearInterval(rescanTimer);
       await scanning;
@@ -377,6 +382,26 @@ export const commands = {
       const results = await waitFor(ctx, ids);
       for (const j of results) if (j) process.stdout.write(`${line(j)}\n`);
       return results.every((j) => j && (j.status === 'succeeded' || j.status === 'blocked')) ? 0 : 1;
+    },
+  },
+
+  synthesize: {
+    summary: 'Queue a run that looks across the brain\'s pages for conclusions [--force]',
+    needsApp: true,
+    async run(argv, { ctx }) {
+      const force = argv.includes('--force');
+      const stray = argv.filter((a) => a !== '--force');
+      if (stray.length) {
+        process.stderr.write(`usage: almagest synthesize [--force]\n  --force  skip the changed-pages threshold (every other limit still applies)\n`);
+        return 1;
+      }
+      const out = await ctx.ingest.synthesis.request({ force, via: 'manual', requestedBy: cliActor() });
+      if (out.queued) {
+        process.stdout.write(`${line(out.job)}\nQueued. ${out.changed} source page${out.changed === 1 ? '' : 's'} changed since the last run. The proposal appears in the inbox when the run finishes.\n`);
+        return 0;
+      }
+      process.stdout.write(`Not queued. ${out.reason}\n`);
+      return 1;
     },
   },
 

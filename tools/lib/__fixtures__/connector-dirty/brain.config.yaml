@@ -36,6 +36,8 @@ audit:
       - SCHEMA-003
       - SCHEMA-004
       - SCHEMA-005
+      - SCHEMA-006
+      - SCHEMA-007
       - LINK-001
       - LINK-003
       - CITE-001
@@ -53,6 +55,8 @@ audit:
       - PROV-005
       - CANON-001
       - STALE-001
+      - DUP-001
+      - BASIS-001
   challenges_path: brain/canonical-challenges.md
   index_dir: brain/.index
 

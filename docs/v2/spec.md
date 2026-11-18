@@ -163,9 +163,9 @@ optionally `commit` and `supersedes` (a v1 `kind: remote` manifest id). See
 
 ```js
 { id: 'job_…',
-  kind: 'ingest' | 'revise' | 'reverify' | 'drop-page',
+  kind: 'ingest' | 'revise' | 'reverify' | 'drop-page' | 'synthesize',
   source: SourceRef | null,
-  trigger: 'watch' | 'schedule' | 'manual' | 'mcp' | 'hook' | 'decision' | 'feedback' | 'demand',
+  trigger: 'watch' | 'schedule' | 'manual' | 'mcp' | 'hook' | 'decision' | 'feedback' | 'demand' | 'lookup' | 'synthesis',
   requestedBy: Actor.id,
   requester?: { id, kind?, display?, email? },   // when enqueue got an Actor, not an id — the commit co-author
   onBehalfOf?: Actor.id,                  // an agent acting for a person (MCP submit_source); also co-authors
@@ -174,6 +174,8 @@ optionally `commit` and `supersedes` (a v1 `kind: remote` manifest id). See
   slug?: '<page slug>',                   // reverify: the page to re-check (telemetry enqueues with trigger 'demand')
                                           // drop-page: the page to drop (required); `slugs?: [...]` for several
   instructions?: 'free text for the agent (decision resolution, reviewer feedback)',
+  lookupQuestion?: '<question a chat asked>',   // trigger 'lookup' only, and only when telemetry.store_queries is plain;
+                                                // up to 500 characters, shown on the proposal page, never in the agent prompt
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked' | 'cancelled',
   attempts: 0, maxAttempts: 2, lastError?, workerId?,
   branch?: 'ingest/<source-slug>-<sha7>', worktree?: '<abs path>', baseSha?, headSha?,
@@ -187,17 +189,24 @@ or no diff and no decisions) succeeds with no proposal, and an empty branch it
 created is deleted.
 
 Dedup: enqueueing a job whose `(kind, source.id, source.sha256)` matches a
-`queued` or `running` job returns the existing job. Refinements (ingest):
+`queued` or `running` job returns the existing job, with `deduplicated: true`
+set on it so a caller that counts new jobs can tell. Refinements (ingest):
 - a source-less `reverify` dedups on `(kind, slug)`;
 - `drop-page` dedups on `(proposalId, slug)`;
+- a `synthesize` job has no source and dedups on its kind alone: one is queued or running at a time;
 - a `revise` still **queued** for the same proposal absorbs the new
   `instructions` (appended) instead of being collapsed or duplicated: two
   decisions resolved back to back must both reach the agent;
-- an `ingest` from an automatic trigger (`watch`, `schedule`, `hook`, `mcp`)
+- an `ingest` from an automatic trigger (`watch`, `schedule`, `hook`, `mcp`, `lookup`)
   also returns a finished job for the same bytes whose proposal is not yet
   merged / rejected / superseded, or that found nothing to review: a connector
   re-listing an item under review every 15 minutes spawns no new jobs.
   `manual` skips this: `almagest ingest <path>` is how a person forces a re-run.
+
+A `synthesize` job (trigger `synthesis`) has no source. It reads `main` and may
+only add `claim` pages; the runner enforces that, and `ctx.ingest.synthesis.request()`
+holds the bounds for when one is queued. CLI: `almagest synthesize [--force]`.
+Rules and bounds: `docs/v2/ingest.md` → Learnings.
 
 ### RunReport — what the agent hands back
 
@@ -211,8 +220,17 @@ it; an invalid or missing report fails the job.
   pages: [{ slug, action: 'create' | 'update', tier, summary: 'one line' }],
   blocked: [{ kind: DecisionKind, slug, question, claimA?, sourceA?, claimB?, sourceB?,
               options: [{ id, label, effect }] }],
+  extends?: [{ slug, proposalId }],   // pages written as additions to pages pending in other open proposals
   notes?: '…' }
 ```
+
+`extends` is checked by the runner: every `{ slug, proposalId }` must have been
+in the pending set it handed the job (below), else the report is invalid and the
+job fails. The runner stores the list, with each proposal's `title`, on the
+proposal as `extends`, for the reviewer. It is information only: governance
+never uses it to decide how two approved versions of a page are combined
+(Governance → merge), and a run that leaves the reviewed version unchanged
+cannot change it.
 
 ### Proposal (governance owns; ingest creates)
 
@@ -225,12 +243,16 @@ it; an invalid or missing report fails the job.
   decisions: ['dec_…'],
   required: { approvals: n, perPage: bool, roles: [...], teams: [...], reasons: ['hot page: x', …] },
   approvals: [{ actorId, at, scope: 'all' | '<slug>', channel: ChannelKind }],
-  merge?: { sha, at, by },
+  merge?: { sha, at, by, combined?: [slug] },
+  extends?: [{ slug, proposalId, title }],   // pages written as additions to pages pending in other proposals
+  kind?: 'tier' | 'learnings', tier?: { slug, from, to, title },   // a tier proposal: one page, one `tier:` line (governance.md, Tiers in the inbox)
+  tierEdits?: { [slug]: { from, to, by, at, headSha, blob } },   // a person's tier choice on a page in this proposal
   createdAt, updatedAt }
 
 ProposalChange =
 { slug, path, action: 'create' | 'update' | 'delete' | 'rename',
   tier, hot: bool, demand: number,
+  canonical: bool, promotes?: bool, tierSetBy?: { by, display, at },   // locked on main, made canonical with no person's choice, chosen in the inbox
   claims: [{ op: 'add' | 'change' | 'remove', text, before?,
              citation?: { id, locator }, excerpt?: '<source passage the locator points at>' }],
   pageStatus: 'pending' | 'accepted' | 'rejected' }
@@ -331,7 +353,7 @@ What each module promises on `ctx`. The signatures are the contract; internals
 are the module's own business.
 
 ```
-ctx.ingest      .enqueue({ kind, source, trigger, requestedBy, onBehalfOf?, proposalId?, instructions?, slug?, slugs? }) → Job
+ctx.ingest      .enqueue({ kind, source, trigger, requestedBy, onBehalfOf?, proposalId?, instructions?, lookupQuestion?, slug?, slugs? }) → Job   // a deduplicated Job carries deduplicated: true
                 .get(id) .list(filter) .start() .stop() .cancel(id)
                 // requestedBy: an Actor.id or an Actor; a local source without sha256 is fingerprinted here.
                 // Local sources must live under sources.local.path or .almagest/submissions/.
@@ -339,6 +361,8 @@ ctx.ingest      .enqueue({ kind, source, trigger, requestedBy, onBehalfOf?, prop
 ctx.connectors  .list() → [{ id, mcp, recipe, schedule, lastSync }]
                 .sync(id, { since?, full?, dryRun? }) → [SourceRef]   // fetch + snapshot + fingerprint
                 .syncDetailed(id, opts) → { refs, unchanged, missing, errors, … }
+                .search(id, { terms, limit }) → [{ ref, title, version, mime }]   // live lookup; needs `lookup: true` and a recipe `search` block; terms are sanitised; strings come back as one line, with caps
+                .fetchOne(id, item) → { ref, text, sha256, title, truncated, reused }   // one document from search(), staged like a sync does; ref.via = 'lookup'
                 .snapshotPath(sourceRef) → 'brain/raw/extracted/<connector>/<file>.txt'
                 .stagedPath(sourceRef) → '<abs>/.almagest/connector-snapshots/<connector>/<file>.txt'
                 .materialize(sourceRef, worktreeDir) → snapshotPath   // copy staged → worktree; throws if sha256 moved
@@ -414,6 +438,13 @@ ingest:
   watch_raw: true
   max_attempts: 2
 
+synthesis:                         # docs/v2/ingest.md → Learnings. On by default
+  enabled: true
+  min_changed_pages: 5             # source pages added or changed on main since the last run
+  max_runs_per_day: 1
+  max_claims: 5                    # new claim pages one run may add
+  schedule: ""                     # cron expression that also checks; empty = after merges only
+
 sources:
   local: { path: brain/raw }
   remote: []                       # v1 — still read; treated as recipe github/gitlab connectors
@@ -437,6 +468,8 @@ governance:
   separation_of_duties: false      # profile default
   require_sso_for_approval: false  # enterprise: email/Slack links still demand an SSO session
   inherit_profile_rules: true      # the profile's rules come first, these are appended; false drops them (startup warning)
+  canonical_role: owner            # who may move a page to or from canonical in the inbox
+  canonical_hint: { enabled: true, min_sources: 5, min_backlinks: 8, hot_factor: 0.6 }   # pages worth fixing as canonical
   session_roles_max_age_minutes: 60  # a session's roles must be this recent to approve (enterprise: 30)
   channel_roles_max_age_hours: 24  # Slack / GitHub use roles cached at the last inbox sign-in (enterprise: 8)
   rules:                           # every matching rule adds requirements; they combine by max / union
@@ -449,6 +482,17 @@ mcp:                               # mcp — every key and its default: docs/v2/
   allow_url_fetch: false           # submit_source { url }, SSRF-guarded when on
   builtin_oauth: true              # token mode: OAuth 2.1 front door for claude.ai
   git_webhook_secret_env: ALMAGEST_GIT_WEBHOOK_SECRET
+  lookup:                          # live lookup, off by default: docs/v2/live-lookup.md
+    enabled: false
+    min_role: contributor          # who may receive unreviewed passages
+    steps: [sources, staged, connectors]
+    timeout_ms: 8000
+    max_fetch: 3                   # documents fetched per question
+    send_query: true               # false: the connectors step is off
+    negative_ttl_minutes: 60
+    rate: { per_caller_per_minute: 6, per_connector_per_minute: 30 }
+    ingest: auto                   # auto | off
+    max_ingest_per_day: 20
 
 telemetry:
   enabled: true
@@ -486,6 +530,10 @@ Runner, per job:
    a content-addressed staging copy taken at enqueue; connector snapshot via
    `ctx.connectors.materialize(ref, worktree)`), re-hashed against
    `source.sha256`.
+   For an `ingest` job, and a `revise` job for a proposal other than its own,
+   the runner also writes the text of every page that another open proposal adds
+   or changes to `.almagest/pending/<proposal id>/<slug>.md` (git-ignored, removed
+   when the driver returns) and lists the pages in the prompt.
 3. Run the driver (`ingest/drivers/*.mjs`) with cwd = worktree, the ingest
    prompt (rules + "runner mode" addendum + `instructions`), a **locked-down tool
    allowlist** (read/write/edit inside the worktree, `shasum`, and a per-job
@@ -494,7 +542,8 @@ Runner, per job:
    **no** git, **no** network, **no** MCP), the budget and the
    timeout. Source content is untrusted input; the prompt says so, and the tool
    allowlist is what makes it true.
-4. Validate `.almagest/run-report.json` (then remove `.almagest/` from the
+4. Validate `.almagest/run-report.json`, including `extends` against the pending
+   set (then remove `.almagest/` from the
    worktree, so it can never be committed). A local original moves to
    `processed/`. **Path guard:** any change outside `brain/`'s writable paths
    (wiki, raw, `.index`, index.md, manifest, log.md, canonical-challenges.md)
@@ -565,7 +614,9 @@ and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
   cannot approve; every review action needs a browser session + CSRF (or a
   signed Slack / GitHub request); bearer tokens are read-only; one person
   counts once (identity registry, by email); open decisions block merge; audit
-  exit 1 blocks merge; canonical pages are never modified by a proposal; files
+  exit 1 blocks merge; canonical pages (the config list plus `tier: canonical`
+  on `main`, one definition in `tools/lib/canonical.mjs`) are never modified by
+  a proposal, and an agent never sets `tier: canonical`; files
   outside the knowledge-base paths (`governance/paths.mjs`) block merge. See
   [security.md](security.md).
 - **Merge**: `git merge-tree --write-tree main <branch>` → `commit-tree` with
@@ -573,7 +624,11 @@ and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
   re-audit the merge tree → move `main` by compare-and-swap (`update-ref` with
   the old value), or `merge --ff-only` inside a worktree that has `main` checked
   out. Bookkeeping files merge structurally (`governance/bookkeeping.mjs`:
-  manifest `sources[]` by id, table rows with placeholder rows dropped); a real
+  manifest `sources[]` by id, table rows with placeholder rows dropped). Two
+  approved versions of one wiki page are combined section by section
+  (`governance/page-merge.mjs`) when that is provably safe: every line and value
+  of the result is in main's or the reviewed head's version, rechecked on the
+  merge commit itself, and canonical pages never. A real
   conflict enqueues a `revise` job, capped per proposal, after which it is
   `conflicted` and needs a person. `log.md` gets the approval line. `push: true`
   pushes `main`.
@@ -582,8 +637,12 @@ and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
   - `web`: the review inbox, server-rendered HTML at `/inbox`. Queue ordered by
     open decisions, then hot pages, then age. Per-proposal page: claim cards with
     source excerpts, per-page accept/reject, decision cards, approve / request
-    changes. Also `/inbox/reverify` and `/inbox/gaps` (from telemetry) and
-    `/inbox/activity` (the audit log).
+    changes. Also `/inbox/reverify` and `/inbox/gaps` (from telemetry),
+    `/inbox/activity` (the audit log), `/inbox/canonical` (pages worth fixing as
+    canonical; `POST /inbox/canonical/:slug/dismiss`), `/inbox/pages` and
+    `/inbox/pages/:slug`, and the tier forms `POST /inbox/pages/:slug/tier` and
+    `POST /inbox/p/:id/page/:slug/tier`. Tier changes exist only in the web
+    inbox: session plus CSRF, never a token or another channel.
   - `mcp`: chat can list and explain proposals and ask to approve; the service
     answers with a confirmation link that opens the full review page in an
     authenticated web session (no one-click button). The chat never approves.

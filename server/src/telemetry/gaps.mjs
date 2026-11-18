@@ -50,6 +50,41 @@ function plural(n, word) {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
+const STEP_WORDS = { sources: 'ingested sources', staged: 'staged documents', connectors: 'a connected source', live: 'a live source' };
+
+/**
+ * What live lookup did for the misses in one cluster, or null when none of
+ * them carries an `extra.lookup` summary. `members` are oldest first.
+ */
+function lookupSummary(members) {
+  const withLookup = members.filter((m) => m.extra?.lookup && typeof m.extra.lookup === 'object');
+  if (!withLookup.length) return null;
+  let served = 0;
+  let lastStep = null;
+  let connectorsAsked = 0;
+  const connectors = new Set();
+  const jobs = new Set();
+  for (const m of withLookup) {
+    const l = m.extra.lookup;
+    // A live source can answer alone (no ladder step) or next to one.
+    const live = Array.isArray(l.live) ? l.live : [];
+    if (l.step) { served++; lastStep = l.step; }
+    else if (live.length) { served++; lastStep = 'live'; }
+    for (const c of live) connectors.add(c);
+    if (Array.isArray(l.connectorsAsked)) for (const c of l.connectorsAsked) { connectors.add(c); connectorsAsked++; }
+    else connectorsAsked += Number(l.connectorsAsked) || 0;
+    for (const c of l.connectors || []) connectors.add(c);
+    for (const j of l.queued || []) jobs.add(j);
+  }
+  return { served, lastStep, connectors: [...connectors].sort(), connectorsAsked, jobs: [...jobs].sort() };
+}
+
+/** Where lookup found its answer, in words. */
+export function lookupSource(lookup) {
+  if ((lookup.lastStep === 'connectors' || lookup.lastStep === 'live') && lookup.connectors.length) return lookup.connectors.join(', ');
+  return STEP_WORDS[lookup.lastStep] || 'outside the wiki';
+}
+
 /**
  * @param {object[]} events   anything; misses and hits are picked out here
  * @param {object} options
@@ -118,8 +153,12 @@ function describe(cluster, members, { now, showQueries, answeredAt }) {
   const what = representative
     ? `No page covers "${representative}"`
     : `An unanswered question (cluster of ${plural(cluster.anchor.length, 'hashed token')})`;
+  const lookup = lookupSummary(members);
+  const served = lookup?.served
+    ? ` Served ${plural(lookup.served, 'time')} from ${lookupSource(lookup)}; ${lookup.jobs.length ? 'an ingest job is queued' : 'nothing is queued'}.`
+    : '';
   const suggestion = `${what} — ${plural(members.length, 'request')} in ${plural(days, 'day')}` +
-    `${sessions.size > 1 ? ` from ${sessions.size} sessions` : ''}; consider submitting a source.`;
+    `${sessions.size > 1 ? ` from ${sessions.size} sessions` : ''}; consider submitting a source.${served}`;
 
   return {
     cluster: `gap_${sha256(cluster.anchor.join(' ')).slice(0, 12)}`,
@@ -132,6 +171,7 @@ function describe(cluster, members, { now, showQueries, answeredAt }) {
     firstSeen,
     lastSeen,
     ...(answeredAt ? { reopenedAfter: answeredAt } : {}),
+    lookup,
     suggestion,
   };
 }

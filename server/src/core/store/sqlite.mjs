@@ -184,6 +184,12 @@ export function createSqliteStore({ file }) {
         db.prepare('INSERT INTO kv (ns, key, value) VALUES (?, ?, ?) ON CONFLICT (ns, key) DO UPDATE SET value = excluded.value')
           .run(ns, key, JSON.stringify(value));
       },
+      // One statement, so sqlite's own write lock makes it atomic across processes: the row is there or it is not.
+      async setIfAbsent(ns, key, value) {
+        const res = db.prepare('INSERT INTO kv (ns, key, value) VALUES (?, ?, ?) ON CONFLICT (ns, key) DO NOTHING')
+          .run(ns, key, JSON.stringify(value));
+        return Number(res.changes) === 1;
+      },
       async delete(ns, key) {
         db.prepare('DELETE FROM kv WHERE ns = ? AND key = ?').run(ns, key);
       },

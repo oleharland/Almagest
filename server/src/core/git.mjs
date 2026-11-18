@@ -13,6 +13,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import { oneLine } from './text.mjs';
+
 const exec = promisify(execFile);
 
 export class GitError extends Error {
@@ -237,10 +239,15 @@ export function createGit({ repoRoot, main = 'main', worktreeDir }) {
   async function commitWith(r, rev, { message, author, committer = author, coAuthors = [] }) {
     await r(['add', '-A']);
     if ((await r(['diff', '--cached', '--name-only'])).trim() === '') return null;
-    const trailers = coAuthors.map((a) => `\n\nCo-authored-by: ${a.name} <${a.email}>`).join('');
+    // Names and emails reach the history of main as the second parent of a
+    // merge: each is one line with a length cap, and an email has no `<`, `>`
+    // or space, so none can add a trailer or a line to the message.
+    const name = (v) => oneLine(v, 100) || 'Almagest';
+    const email = (v) => oneLine(v, 100).replace(/[<>\s]/g, '') || 'almagest@localhost';
+    const trailers = coAuthors.map((a) => `\n\nCo-authored-by: ${name(a.name)} <${email(a.email)}>`).join('');
     const env = {
-      GIT_AUTHOR_NAME: author.name, GIT_AUTHOR_EMAIL: author.email,
-      GIT_COMMITTER_NAME: committer.name, GIT_COMMITTER_EMAIL: committer.email,
+      GIT_AUTHOR_NAME: name(author.name), GIT_AUTHOR_EMAIL: email(author.email),
+      GIT_COMMITTER_NAME: name(committer.name), GIT_COMMITTER_EMAIL: email(committer.email),
     };
     await r(['commit', '--no-verify', '-m', message + trailers], { env });
     return rev('HEAD');

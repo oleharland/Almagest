@@ -10,31 +10,83 @@
  * `.almagest/connector-snapshots/`, and the ingest runner copies one into its
  * job worktree with `materialize()`.
  *
- *   ctx.connectors.list()                      → [{ id, mcp, recipe, schedule, lastSync, … }]
- *   ctx.connectors.sync(id, { since?, full?, dryRun? }) → [SourceRef]
+ *   ctx.connectors.list()                      → [{ id, mcp, recipe, schedule, lastSync, live, about, repo, … }]
+ *   ctx.connectors.sync(id, { since?, full?, dryRun? }) → [SourceRef]   (refuses a connector whose recipe is `live`)
  *   ctx.connectors.syncDetailed(id, opts)      → { refs, unchanged, missing, errors, … }
+ *   ctx.connectors.search(id, { terms, limit }) → [{ ref, title, version, mime }]   live lookup; needs `lookup: true` + a recipe `search` block
+ *   ctx.connectors.fetchOne(id, item)          → { ref: SourceRef (via: 'lookup'), text, sha256, title, truncated, reused }
+ *                                                 a `live` recipe: { live: true, fetchedAt, server, text, sha256, title, truncated }, nothing written, no SourceRef
  *   ctx.connectors.snapshotPath(ref)           → 'brain/raw/extracted/<connector>/<slug>.txt'
  *   ctx.connectors.stagedPath(ref)             → abs path of the staged snapshot
  *   ctx.connectors.materialize(ref, worktree)  → copies the staged snapshot in, sha-checked
  *   ctx.connectors.stop()
  *
- * Store namespaces:  connector-cursor (id) · connector-item (<id>:<ref>) · connector-oauth (server, sealed)
+ * Store namespaces:  connector-cursor (id) · connector-item (<id>:<ref>) · connector-lookup (<id>:<ref>,
+ *                     { at, title, failures, checkedAt } — refs fetched by live lookup; the sync re-checks them by ref) ·
+ *                     connector-oauth (server, sealed)
  */
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { loadManifest } from '../../../tools/lib/config.mjs';
 import { newId, nowIso } from '../core/schemas.mjs';
-import { fetchItem, listItems, resolveVars } from './execute.mjs';
+import { DEFAULT_MAX_ITEMS, DEFAULT_SEARCH_LIMIT, fetchItem, listItems, resolveVars, searchItems } from './execute.mjs';
 import { draftRecipe } from './init.mjs';
 import { createPool, DEFAULT_TIMEOUT_MS, NeedsLoginError, readMcpJson, resolveServer } from './mcp-client.mjs';
 import { createOAuthProvider, hasLogin, login as oauthLogin } from './oauth.mjs';
 import { recipeFor, RECIPES_DIR } from './recipes.mjs';
+import { flattenField } from './render.mjs';
 import { buildSnapshot, DEFAULT_MAX_BYTES, sha256, snapshotRelPath, stagingAbsPath } from './snapshot-file.mjs';
 
 export const CURSOR_NS = 'connector-cursor';
 export const ITEM_NS = 'connector-item';
+export const LOOKUP_NS = 'connector-lookup';
+// Raw titles of search hits that flattening changed, kept until the hit is fetched, so a restart does not lose them.
+const TITLE_NS = 'connector-lookup-title';
+export const MAX_SEARCH_TERMS = 8;
+export const MAX_TERM_CHARS = 64;
+export const MAX_QUERY_CHARS = 200;
+export const MAX_TITLE_CHARS = 200;
+/** A document that failed this many re-checks in a row, on complete syncs, is reported missing. */
+export const LOOKUP_MAX_FAILURES = 3;
+const MAX_SEARCH_LIMIT = 50;
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * Terms come from a chat, so they are untrusted. Keep only letters, digits
+ * (any script), spaces, hyphens, underscores and dots, so a term cannot close a
+ * quote or add an operator in a provider's query syntax. Everything else is
+ * dropped, whitespace collapses, empty terms go, and the number of terms and
+ * the total length are capped.
+ */
+export function sanitiseTerms(terms) {
+  const list = Array.isArray(terms) ? terms : terms == null ? [] : [terms];
+  const out = [];
+  let total = 0;
+  for (const t of list) {
+    if (out.length >= MAX_SEARCH_TERMS) break;
+    if (typeof t !== 'string' && typeof t !== 'number') continue;
+    let s = String(t).normalize('NFKC')
+      .replace(/\s+/gu, ' ')
+      .replace(/[^\p{L}\p{N} _.-]/gu, '')
+      // A word that starts with `-` or `.` could act as a negation or operator in a
+      // provider's full-text syntax; one with no letter or digit is only operators.
+      .split(' ')
+      .map((w) => w.replace(/^[.-]+/, ''))
+      .filter((w) => /[\p{L}\p{N}]/u.test(w))
+      .join(' ')
+      .slice(0, MAX_TERM_CHARS)
+      .trim();
+    if (!s) continue;
+    if (total + s.length + (out.length ? 1 : 0) > MAX_QUERY_CHARS) {
+      s = s.slice(0, Math.max(0, MAX_QUERY_CHARS - total - (out.length ? 1 : 0))).trim();
+      if (!s) break;
+    }
+    total += s.length + (out.length ? 1 : 0);
+    out.push(s);
+  }
+  return out;
+}
 
 export async function create(ctx) {
   return createConnectors(ctx);
@@ -134,6 +186,15 @@ export function createConnectors(ctx, options = {}) {
     const out = [];
     for (const c of byId.values()) {
       const cursor = (await store.kv.get(CURSOR_NS, c.id)) || {};
+      let searchable = false;
+      let live = false;
+      let about = [];
+      try {
+        const recipe = recipeFor(c, { repoRoot, dir: recipesDir });
+        searchable = Boolean(recipe.search);
+        live = recipe.live === true;
+        about = Array.isArray(recipe.about) ? recipe.about.map(String) : [];
+      } catch { searchable = false; }
       out.push({
         id: c.id,
         mcp: typeof c.mcp === 'string' ? c.mcp : c.mcp?.url || c.mcp?.command || 'inline',
@@ -143,6 +204,14 @@ export function createConnectors(ctx, options = {}) {
         tier: c.tier || 'evidence',
         snapshot: c.snapshot || 'commit',
         fromV1Remote: Boolean(c.fromV1Remote),
+        lookup: c.lookup === true,
+        searchable,
+        // A live recipe describes current state: lookup answers from it, and a sync refuses it.
+        live,
+        // What a question may mention to point at this connector (live lookup's pre-check): the recipe's own words
+        // and the repository `lookup` would search.
+        about,
+        repo: String((c.lookup_select || c.select)?.repo || ''),
         since: cursor.since || '',
         lastSync: cursor.lastSync || null,
       });
@@ -182,6 +251,83 @@ export function createConnectors(ctx, options = {}) {
     return results;
   }
 
+  /** A recipe whose `fetch` makes a call can fetch an item from its ref alone. */
+  const canFetchByRef = (recipe) => recipe.fetch?.tool !== undefined || recipe.fetch?.method !== undefined;
+
+  /**
+   * The one place an item becomes a snapshot: reuse the staged bytes when the
+   * version still matches, else fetch; build the snapshot; compare it with the
+   * manifest on main; stage it; record it in `connector-item`. Used by the sync
+   * and by live lookup, so both produce the same SourceRef.
+   *
+   * @param {object} run  { c, id, recipe, vars, client, spec, timeoutMs, maxBytes, manifest, startedAt }
+   * @returns {{ snap, ref, reused: boolean, fetched: boolean }}  `ref.change` is new | changed | unchanged | reappeared
+   */
+  async function stageItem(run, item, { dryRun = false, via = '' } = {}) {
+    const { c, id, recipe, vars, client, spec, timeoutMs, maxBytes, manifest, startedAt } = run;
+    const key = `${id}:${item.ref}`;
+    const relPath = snapshotRelPath(brainDir, id, item.ref);
+    const stage = stagingAbsPath(stateDir, id, item.ref);
+    const prior = await store.kv.get(ITEM_NS, key);
+
+    // `version` only ever saves a fetch. It is trusted exactly as far as
+    // the staged bytes still hash to what was fingerprinted last time.
+    let snap = null;
+    let reused = false;
+    let fetched = false;
+    if (item.version && prior?.version === item.version && fs.existsSync(stage)) {
+      const text = fs.readFileSync(stage, 'utf-8');
+      const digest = sha256(text);
+      if (digest === prior.sha256) { snap = { text, sha256: digest, bytes: Buffer.byteLength(text), truncated: Boolean(prior.truncated), title: prior.title }; reused = true; }
+    }
+    if (!snap) {
+      const out = await fetchItem(client, recipe, item, vars, { timeoutMs });
+      fetched = true;
+      snap = { ...buildSnapshot({ connector: id, server: spec.label, ref: item.ref, title: out.title, body: out.body, maxBytes }), title: out.title };
+    }
+
+    const { entry, previous } = findEntry(manifest, c, key, relPath, item);
+    const expected = entry ? entry.extractedSha256 || entry.sha256 : '';
+    const change = !entry ? (previous ? 'changed' : 'new')
+      : expected !== snap.sha256 ? 'changed'
+        : entry.status === 'missing' ? 'reappeared'
+          : 'unchanged';
+
+    if (!dryRun) {
+      if (!fs.existsSync(stage) || sha256(fs.readFileSync(stage)) !== snap.sha256) {
+        fs.mkdirSync(path.dirname(stage), { recursive: true });
+        fs.writeFileSync(stage, snap.text);
+      }
+      // `via` says who owns the record: absent when a sync listing wrote it (so also for records
+      // from before this field), 'lookup' when only live lookup has ever fetched it. A lookup
+      // fetch keeps the owner a sync record already has.
+      const owner = via === 'lookup' && (!prior || prior.via === 'lookup') ? { via: 'lookup' } : {};
+      await store.kv.set(ITEM_NS, key, { version: item.version, sha256: snap.sha256, title: snap.title, truncated: snap.truncated, path: relPath, syncedAt: startedAt, ...owner });
+    }
+
+    const ref = {
+      kind: 'connector',
+      id: key,
+      connector: id,
+      ref: item.ref,
+      server: spec.label,
+      path: relPath,
+      version: item.version || '',
+      ...(item.commit ? { commit: item.commit } : {}),
+      sha256: snap.sha256,
+      bytes: snap.bytes,
+      truncated: snap.truncated,
+      title: snap.title || item.title,
+      label: c.label || '',
+      tier: c.tier || 'evidence',
+      snapshot: c.snapshot || 'commit',
+      change,
+      ...(previous ? { supersedes: previous.id } : {}),
+      fetchedAt: startedAt,
+    };
+    return { snap, ref, reused, fetched };
+  }
+
   /**
    * The whole sync, with everything it learned. `sync()` returns just `.refs`.
    *
@@ -194,6 +340,9 @@ export function createConnectors(ctx, options = {}) {
   async function syncDetailed(id, opts = {}) {
     const c = connector(id);
     const recipe = recipeFor(c, { repoRoot, dir: recipesDir });
+    if (recipe.live === true) {
+      throw new Error(`connector "${id}": recipe "${recipe.name}" is live, so it is answered from and never ingested. Live sources describe current state; a sync would put a list into the wiki that is out of date once it is reviewed`);
+    }
     const timeoutMs = timeoutOf(c);
     const maxBytes = Number(c.max_bytes) > 0 ? Number(c.max_bytes) : DEFAULT_MAX_BYTES;
     const startedAt = nowIso();
@@ -215,77 +364,73 @@ export function createConnectors(ctx, options = {}) {
     let fetched = 0;
     let reused = 0;
 
-    await mapLimit(items, Number(c.concurrency) > 0 ? Number(c.concurrency) : 4, async (item) => {
+    const run = { c, id, recipe, vars, client, spec, timeoutMs, maxBytes, manifest, startedAt };
+    const stage = async (item) => {
       const key = `${id}:${item.ref}`;
+      const done = await stageItem(run, item, { dryRun: opts.dryRun });
+      if (done.reused) reused++;
+      if (done.fetched) fetched++;
+      if (done.ref.change === 'unchanged') unchanged.push(key);
+      else refs.push(done.ref);
+    };
+    const handle = async (item) => {
       try {
-        const relPath = snapshotRelPath(brainDir, id, item.ref);
-        const stage = stagingAbsPath(stateDir, id, item.ref);
-        const prior = await store.kv.get(ITEM_NS, key);
-
-        // `version` only ever saves a fetch. It is trusted exactly as far as
-        // the staged bytes still hash to what was fingerprinted last time.
-        let snap = null;
-        if (item.version && prior?.version === item.version && fs.existsSync(stage)) {
-          const text = fs.readFileSync(stage, 'utf-8');
-          const digest = sha256(text);
-          if (digest === prior.sha256) { snap = { text, sha256: digest, bytes: Buffer.byteLength(text), truncated: Boolean(prior.truncated), title: prior.title }; reused++; }
-        }
-        if (!snap) {
-          const out = await fetchItem(client, recipe, item, vars, { timeoutMs });
-          fetched++;
-          snap = { ...buildSnapshot({ connector: id, server: spec.label, ref: item.ref, title: out.title, body: out.body, maxBytes }), title: out.title };
-        }
-
-        const { entry, previous } = findEntry(manifest, c, key, relPath, item);
-        const expected = entry ? entry.extractedSha256 || entry.sha256 : '';
-        const change = !entry ? (previous ? 'changed' : 'new')
-          : expected !== snap.sha256 ? 'changed'
-            : entry.status === 'missing' ? 'reappeared'
-              : 'unchanged';
-
-        if (!opts.dryRun) {
-          if (!fs.existsSync(stage) || sha256(fs.readFileSync(stage)) !== snap.sha256) {
-            fs.mkdirSync(path.dirname(stage), { recursive: true });
-            fs.writeFileSync(stage, snap.text);
-          }
-          await store.kv.set(ITEM_NS, key, { version: item.version, sha256: snap.sha256, title: snap.title, truncated: snap.truncated, path: relPath, syncedAt: startedAt });
-        }
-
-        if (change === 'unchanged') { unchanged.push(key); return; }
-        refs.push({
-          kind: 'connector',
-          id: key,
-          connector: id,
-          ref: item.ref,
-          server: spec.label,
-          path: relPath,
-          version: item.version || '',
-          ...(item.commit ? { commit: item.commit } : {}),
-          sha256: snap.sha256,
-          bytes: snap.bytes,
-          truncated: snap.truncated,
-          title: snap.title || item.title,
-          label: c.label || '',
-          tier: c.tier || 'evidence',
-          snapshot: c.snapshot || 'commit',
-          change,
-          ...(previous ? { supersedes: previous.id } : {}),
-          fetchedAt: startedAt,
-        });
+        await stage(item);
       } catch (err) {
-        errors.push({ id: key, ref: item.ref, error: err.message });
+        errors.push({ id: `${id}:${item.ref}`, ref: item.ref, error: err.message });
         log?.warn('connector item failed', { connector: id, ref: item.ref, error: err.message });
       }
-    });
+    };
+
+    await mapLimit(items, Number(c.concurrency) > 0 ? Number(c.concurrency) : 4, handle);
 
     // Disappeared upstream: only a complete listing can say so. Nothing is
     // deleted — the next ingest marks the manifest entry `status: missing`.
+    // A ref that came in through live lookup may sit outside `select`, so not
+    // being listed says nothing about it: it is fetched again by ref instead.
+    // A ref the listing does include is the sync's own, so its mark is cleared.
     const listed = new Set(items.map((i) => i.ref));
-    const missing = complete
-      ? manifest.entries
-        .filter((e) => e.kind === 'connector' && e.connector === id && e.status !== 'missing' && e.ref && !listed.has(e.ref))
-        .map((e) => ({ id: e.id, ref: e.ref, path: e.extracted || e.path, pages: e.pages }))
-      : [];
+    const missing = [];
+    const lookedUp = [];
+    if (complete) {
+      const marks = new Map((await store.kv.list(LOOKUP_NS)).filter((r) => r.key.startsWith(`${id}:`)).map((r) => [r.key, r.value]));
+      for (const ref of listed) {
+        if (marks.has(`${id}:${ref}`) && !opts.dryRun) await store.kv.delete(LOOKUP_NS, `${id}:${ref}`);
+      }
+      for (const e of manifest.entries) {
+        if (e.kind !== 'connector' || e.connector !== id || e.status === 'missing' || !e.ref || listed.has(e.ref)) continue;
+        const mark = marks.get(`${id}:${e.ref}`);
+        if (mark) lookedUp.push({ e, mark });
+        else missing.push({ id: e.id, ref: e.ref, path: e.extracted || e.path, pages: e.pages });
+      }
+    }
+    if (lookedUp.length && canFetchByRef(recipe)) {
+      const cap = Number(c.max_items) > 0 ? Number(c.max_items) : DEFAULT_MAX_ITEMS;
+      // Oldest check first, so a bound smaller than the number of marks still reaches every one.
+      lookedUp.sort((x, y) => String(x.mark.checkedAt || '').localeCompare(String(y.mark.checkedAt || '')));
+      await mapLimit(lookedUp.slice(0, cap), Number(c.concurrency) > 0 ? Number(c.concurrency) : 4, async ({ e, mark }) => {
+        const key = `${id}:${e.ref}`;
+        // The title is the one the search gave: it is part of the snapshot header, so
+        // fetching with another would make an untouched document look changed.
+        const item = { ref: e.ref, version: '', title: mark.title || e.ref, commit: '', mime: '' };
+        let failures = 0;
+        try {
+          await stage(item);
+        } catch (err) {
+          failures = (Number(mark.failures) || 0) + 1;
+          if (failures >= LOOKUP_MAX_FAILURES) {
+            // Gone for good: report it like any disappeared item and stop fetching it.
+            missing.push({ id: e.id, ref: e.ref, path: e.extracted || e.path, pages: e.pages });
+            if (!opts.dryRun) await store.kv.delete(LOOKUP_NS, key);
+            log?.warn('connector lookup ref gone', { connector: id, ref: e.ref, error: err.message });
+            return;
+          }
+          errors.push({ id: key, ref: e.ref, error: err.message });
+          log?.warn('connector item failed', { connector: id, ref: e.ref, error: err.message });
+        }
+        if (!opts.dryRun) await store.kv.set(LOOKUP_NS, key, { ...mark, failures, checkedAt: nowIso() });
+      });
+    }
 
     refs.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const summary = {
@@ -316,6 +461,134 @@ export function createConnectors(ctx, options = {}) {
 
   async function sync(id, opts = {}) {
     return (await syncDetailed(id, opts)).refs;
+  }
+
+  function requireLookup(c) {
+    if (c.lookup !== true) throw new Error(`connector "${c.id}" is not enabled for live lookup (set \`lookup: true\` on it in brain.config.yaml)`);
+  }
+
+  // Returned strings are flattened, but the snapshot header is built from the title as the
+  // provider gave it, as in a sync; so fetchOne looks the raw title of a hit up here.
+  const rawTitles = new Map();
+  const flattenRef = (ref) => flattenField(ref, 500);
+
+  const lookupVars = (c) => ({ since: '', select: c.lookup_select || c.select || {}, connector: { id: c.id, label: c.label || '' } });
+
+  /**
+   * Live lookup: search the connector for a question. First page only.
+   * Terms are sanitised here; with none left the server is not called.
+   *
+   * @returns {Promise<Array<{ ref: string, title: string, version: string, mime: string }>>}
+   */
+  async function search(id, { terms, limit } = {}) {
+    const c = connector(id);
+    requireLookup(c);
+    const recipe = recipeFor(c, { repoRoot, dir: recipesDir });
+    if (!recipe.search) throw new Error(`connector "${id}": recipe "${recipe.name}" has no \`search\` block, so it cannot be searched`);
+    const clean = sanitiseTerms(terms);
+    if (!clean.length) return [];
+    const cap = Math.min(Number(limit) > 0 ? Math.floor(Number(limit)) : DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
+    const timeoutMs = timeoutOf(c);
+    const { client } = await clientFor(c);
+    const vars = await resolveVars(client, recipe, lookupVars(c), { timeoutMs });
+    const { items } = await searchItems(client, recipe, { ...vars, terms: clean }, { timeoutMs, limit: cap });
+    const out = [];
+    for (const i of items) {
+      // A ref is handed back to fetchOne, so it cannot be rewritten: one that
+      // flattening would change (control characters, newlines, over 500 characters)
+      // is not offered.
+      if (flattenRef(i.ref) !== i.ref) continue;
+      // A live document is never staged, so nothing needs its raw title later.
+      if (recipe.live !== true) {
+        rawTitles.set(`${id}:${i.ref}`, i.title);
+        // Flattening can change a title (newlines, a leading #, the length cap), and the snapshot
+        // header carries the raw one. Keep those across a restart.
+        if (flattenField(i.title, MAX_TITLE_CHARS) !== i.title) await store.kv.set(TITLE_NS, `${id}:${i.ref}`, { title: String(i.title) });
+        if (rawTitles.size > 500) rawTitles.delete(rawTitles.keys().next().value);
+      }
+      out.push({ ref: i.ref, title: flattenField(i.title, MAX_TITLE_CHARS), version: flattenField(i.version), mime: flattenField(i.mime) });
+    }
+    return out;
+  }
+
+  /**
+   * A live recipe's document: the search block is run again for the item with this ref (its text comes from the
+   * search result, as `fetch` without a call reads the list item), rendered and wrapped in the snapshot header,
+   * neutralised and capped like any other fetched text, and handed back. Nothing is written: no staged file, no
+   * `connector-item` or `connector-lookup` record, no title record, and no SourceRef that could be queued.
+   */
+  async function fetchLive(c, recipe, item) {
+    const timeoutMs = timeoutOf(c);
+    const maxBytes = Number(c.max_bytes) > 0 ? Number(c.max_bytes) : DEFAULT_MAX_BYTES;
+    const { spec, client } = await clientFor(c);
+    const vars = await resolveVars(client, recipe, lookupVars(c), { timeoutMs });
+    const { items } = await searchItems(client, recipe, { ...vars, terms: sanitiseTerms(item.terms) }, { timeoutMs, limit: MAX_SEARCH_LIMIT });
+    const hit = items.find((i) => i.ref === String(item.ref));
+    if (!hit) throw new Error(`connector "${c.id}": the live document "${flattenField(item.ref, 80)}" is not in the search result any more`);
+    const out = await fetchItem(client, recipe, hit, vars, { timeoutMs });
+    const fetchedAt = nowIso();
+    const snap = buildSnapshot({ connector: c.id, server: spec.label, ref: hit.ref, title: out.title, body: out.body, maxBytes });
+    return {
+      live: true,
+      fetchedAt,
+      server: spec.label,
+      text: snap.text,
+      sha256: snap.sha256,
+      title: flattenField(out.title, MAX_TITLE_CHARS),
+      truncated: Boolean(snap.truncated),
+    };
+  }
+
+  /**
+   * Live lookup: fetch one document a `search` returned, through the same
+   * fetch-and-stage the sync uses, and remember it in `connector-lookup`.
+   *
+   * @param {string} id
+   * @param {{ ref: string, title?: string, version?: string, mime?: string }} item  one entry of `search`
+   * @returns {Promise<{ ref: object, text: string, sha256: string, title: string, truncated: boolean, reused: boolean }>}
+   */
+  async function fetchOne(id, item) {
+    const c = connector(id);
+    requireLookup(c);
+    if (!item || item.ref === undefined || item.ref === null || item.ref === '') throw new Error('fetchOne needs an item from search() with a ref');
+    const recipe = recipeFor(c, { repoRoot, dir: recipesDir });
+    if (recipe.live === true) return fetchLive(c, recipe, item);
+    if (!canFetchByRef(recipe)) throw new Error(`connector "${id}": recipe "${recipe.name}" has no fetch call, so a document cannot be fetched by ref`);
+    const timeoutMs = timeoutOf(c);
+    const maxBytes = Number(c.max_bytes) > 0 ? Number(c.max_bytes) : DEFAULT_MAX_BYTES;
+    const startedAt = nowIso();
+    const { spec, client } = await clientFor(c);
+    const vars = await resolveVars(client, recipe, lookupVars(c), { timeoutMs });
+    const manifest = await mainManifest();
+    const key = `${id}:${String(item.ref)}`;
+    const kept = rawTitles.has(key) ? null : await store.kv.get(TITLE_NS, key);
+    const rawTitle = rawTitles.get(key) ?? kept?.title ?? (item.title ? String(item.title) : String(item.ref));
+    const it = { ref: String(item.ref), version: item.version ? String(item.version) : '', title: rawTitle, commit: '', mime: item.mime ? String(item.mime) : '' };
+    // The rule: a lookup fetch leaves a mark unless the sync is already responsible for the
+    // document. The sync is responsible when its listing wrote the record and main has no
+    // entry yet (the next listing will include it), or when main has an entry and the store
+    // holds no record at all. A record that only lookups wrote never counts, and neither does
+    // a sync record once main has the entry: the document may have left `select` since, and
+    // it has just been fetched, so it exists. A complete listing that includes it clears the
+    // mark, so marking a document the sync does list costs nothing.
+    // Read before staging: stageItem rewrites the record.
+    const before = await store.kv.get(ITEM_NS, key);
+    const inManifest = Boolean(manifest.byId.get(key) || manifest.byPath.get(snapshotRelPath(brainDir, id, it.ref)));
+    const syncOwns = before ? before.via !== 'lookup' && !inManifest : inManifest;
+    const done = await stageItem({ c, id, recipe, vars, client, spec, timeoutMs, maxBytes, manifest, startedAt }, it, { via: 'lookup' });
+    if (!syncOwns && !(await store.kv.get(LOOKUP_NS, key))) {
+      await store.kv.set(LOOKUP_NS, key, { at: startedAt, title: done.snap.title || it.title, failures: 0, checkedAt: startedAt });
+    }
+    await store.kv.delete(TITLE_NS, key);
+    const title = done.snap.title || it.title;
+    return {
+      ref: { ...done.ref, title: flattenField(done.ref.title, MAX_TITLE_CHARS), version: flattenField(done.ref.version), via: 'lookup' },
+      text: done.snap.text,
+      sha256: done.snap.sha256,
+      title: flattenField(title, MAX_TITLE_CHARS),
+      truncated: Boolean(done.snap.truncated),
+      reused: done.reused,
+    };
   }
 
   /** Connect + first page of the listing, mapped. With `fetch: true`, also the first item rendered. */
@@ -368,7 +641,7 @@ export function createConnectors(ctx, options = {}) {
   }
 
   return {
-    list, sync, syncDetailed, snapshotPath, stagedPath, materialize, test, inspect, login, stop,
+    list, sync, syncDetailed, search, fetchOne, snapshotPath, stagedPath, materialize, test, inspect, login, stop,
     hasLogin: (server) => hasLogin(store, server),
     get(id) { return connector(id); },
   };
@@ -383,6 +656,10 @@ const HELP = `Usage: almagest connectors <command>
                                 fetch, snapshot and fingerprint; print new/changed items
                                 (--ingest: also queue an ingest job per item for the service —
                                 the path for connectors with no schedule)
+  search <id> <query…> [--limit N] [--json]
+                                search a connector with \`lookup: true\` for the words; print the
+                                candidates (ref, version, title). Fetches nothing, queues nothing —
+                                it checks a recipe's \`search\` block against the real server
   test <id> [--fetch]           connect, list the first page, print the mapping
                                 (--fetch: also render the first item's snapshot)
   init <mcp> [--name <n>] [--stdout]
@@ -396,6 +673,7 @@ function flags(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--name') out.name = argv[++i];
+    else if (a === '--limit') out.limit = argv[++i];
     else if (a.startsWith('--')) out[a.slice(2)] = true;
     else out._.push(a);
   }
@@ -443,6 +721,17 @@ async function run(argv, env) {
         }
         return s.errors.length ? 1 : 0;
       }
+      case 'search': {
+        const words = f._.slice(2);
+        if (!target || !words.length) { process.stderr.write(HELP); return 2; }
+        const limit = f.limit === undefined ? undefined : Number(f.limit);
+        if (limit !== undefined && !(limit > 0)) { process.stderr.write('--limit needs a positive number\n'); return 2; }
+        const found = await svc.search(target, { terms: words, limit });
+        if (f.json) { print(JSON.stringify(found, null, 2)); return 0; }
+        print(`${target}: ${found.length} candidate(s) for "${words.join(' ')}"`);
+        for (const i of found) print(`  ${i.ref}  ${i.version ? `[${i.version}] ` : ''}${i.title}`);
+        return 0;
+      }
       case 'test': {
         if (!target) { process.stderr.write(HELP); return 2; }
         const t = await svc.test(target, { fetch: Boolean(f.fetch) });
@@ -482,5 +771,5 @@ async function run(argv, env) {
 }
 
 export const commands = {
-  connectors: { summary: 'list · sync · test · init · login — MCP servers as sources', needsApp: true, run },
+  connectors: { summary: 'list · sync · search · test · init · login — MCP servers as sources', needsApp: true, run },
 };

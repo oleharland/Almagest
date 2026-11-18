@@ -27,12 +27,14 @@ import { HttpError, sendJson } from '../core/http.mjs';
 import { createBrain } from './brain.mjs';
 import { mcpConfig } from './config.mjs';
 import { createHttpEndpoint, readRaw, verifyGitWebhook } from './http.mjs';
+import { createLookup } from './lookup.mjs';
 import { createOAuthServer } from './oauth.mjs';
 import { buildServer, newSessionId } from './tools.mjs';
 
 export async function create(ctx) {
   const cfg = mcpConfig(ctx.config);
   const brain = createBrain(ctx, cfg);
+  const lookup = createLookup(ctx, cfg, brain);
   const hooks = {};   // test seams that only ever narrow behaviour (fetch address policy)
   const timers = [];
 
@@ -44,7 +46,7 @@ export async function create(ctx) {
   }
   const authorizationServer = authProvider === 'oidc' ? String(ctx.config.service.auth.oidc?.issuer || '') : oauth ? oauth.issuer : '';
 
-  const build = (session) => buildServer(ctx, cfg, brain, { ...session, sessionId: session.sessionId || '' }, hooks);
+  const build = (session) => buildServer(ctx, cfg, brain, { ...session, sessionId: session.sessionId || '' }, hooks, lookup);
   const endpoint = createHttpEndpoint(ctx, cfg, { buildServer: build, authorizationServer });
 
   // ── routes ────────────────────────────────────────────────────────────────

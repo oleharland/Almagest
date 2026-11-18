@@ -194,7 +194,10 @@ anonymization:
 
 
 # ── Canonical pages ───────────────────────────────────────────────────────────
-# Wiki page slugs that are treated as locked reference lists.
+# Wiki page slugs that are treated as locked reference lists. A person can also
+# make a page canonical in the review inbox, which sets `tier: canonical` in the
+# page's own frontmatter; a page is canonical by either route. The service never
+# edits this file, so pages listed here stay locked until someone edits it by hand.
 # The agent will refuse to delete or rename these pages and will warn
 # before making structural edits to their content.
 
@@ -251,6 +254,8 @@ audit:
       - SCHEMA-003       # missing type_fields entry required for this type
       - SCHEMA-004       # owner missing or not in owner_teams while require_owner
       - SCHEMA-005       # type carries a type_fields vocabulary value
+      - SCHEMA-006       # front matter uses a YAML anchor, alias or merge key
+      - SCHEMA-007       # a page body ends inside an HTML comment or a code fence
       - LINK-001         # [[wikilink]] to a page that does not exist
       - LINK-003         # relations target does not exist
       - CITE-001         # citation does not parse against the frozen grammar
@@ -268,6 +273,8 @@ audit:
       - PROV-005         # page exists with no index.md row
       - CANON-001        # outstanding entries in canonical-challenges.md
       - STALE-001        # last_verified past threshold
+      - DUP-001          # two pages share a title or an alias
+      - BASIS-001        # a claim's Basis page changed after the claim's last_verified
       - DEMAND-001       # hot page past telemetry.stale_after_days_hot  (only with --demand)
       - DEMAND-002       # hot page with confidence: low | unknown        (only with --demand)
 
@@ -335,6 +342,28 @@ sources:
     #   schedule: "0 * * * *"      # cron; omit for manual sync only
     #   label: meetings
     #   tier: evidence
+    #   lookup: true               # let live lookup search this connector when no page answers
+    #
+    # A repository with the three GitHub connectors. `github` is synced and
+    # searched like any document source. The other two are live: lookup reads
+    # them when a question mentions the repository, its commits or its
+    # branches, and they are never synced or ingested, so they get no schedule.
+    # Unverified against the live server: docs/v2/live-lookup.md
+    # - id: platform-repo
+    #   mcp: github
+    #   recipe: github
+    #   select: { repo: acme/platform, paths: ["docs/**/*.md"] }
+    #   lookup: true
+    # - id: platform-commits
+    #   mcp: github
+    #   recipe: github-commits
+    #   select: { repo: acme/platform, branch: main, limit: 20 }   # branch: default branch when unset
+    #   lookup: true
+    # - id: platform-branches
+    #   mcp: github
+    #   recipe: github-branches
+    #   select: { repo: acme/platform }
+    #   lookup: true
 
 
 # ══ v2 service ═══════════════════════════════════════════════════════════════
@@ -374,11 +403,42 @@ governance:
   # rules:
   #   - when: { hot: true }
   #     require: { approvals: 2, per_page: true }
+  # canonical_role: owner            # who may change a page to or from canonical in the inbox
+  # canonical_hint:                  # the inbox suggests pages worth fixing as canonical
+  #   enabled: true
+  #   min_sources: 5                 # documents that contributed to the page
+  #   min_backlinks: 8               # other pages that link to it
+  #   hot_factor: 0.6                # both thresholds are multiplied by this for the most read pages
+
+# Learnings: once enough source pages have changed, the brain proposes
+# conclusions drawn from pages it already holds. Every run ends as a proposal
+# a person approves. docs/v2/ingest.md → Learnings
+synthesis:
+  enabled: true                    # set to false to turn learnings off
+  min_changed_pages: 5             # source pages added or changed on main since the last run
+  max_runs_per_day: 1
+  max_claims: 5                    # learnings one run may propose
+  schedule: ""                     # optional cron expression that also checks; empty = after merges only
 
 # Almagest as an MCP server for your chats — docs/v2/mcp.md
 mcp:
   allow_url_fetch: false           # let chats submit URLs for ingest
   builtin_oauth: true              # token mode: the OAuth front door claude.ai needs
+  # Live lookup: when no page answers, ask also tries source text, staged
+  # snapshots and the connectors that set `lookup: true`, then reads the live
+  # connectors (the `live` step). Off by default.
+  # docs/v2/live-lookup.md
+  # lookup:
+  #   enabled: false
+  #   min_role: contributor          # who may receive unreviewed passages
+  #   steps: [sources, staged, connectors, live]
+  #   timeout_ms: 8000               # for the whole lookup
+  #   max_fetch: 3                   # documents fetched per question
+  #   send_query: true               # false: the connectors step is off
+  #   negative_ttl_minutes: 60
+  #   rate: { per_caller_per_minute: 6, per_connector_per_minute: 30 }
+  #   ingest: auto                   # auto | off: queue fetched documents for review
+  #   max_ingest_per_day: 20
 
 # Request tracking and demand — docs/v2/telemetry.md
 telemetry:

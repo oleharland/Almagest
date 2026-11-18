@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import matter from 'gray-matter';
 
+import { bodyEndsOpen } from './checks.mjs';
 import { findCitations, parseBody, parseCitation, sectionLines } from './wiki-core.mjs';
 import { renderAliasesTsv, renderPagesTsv } from './derived-index.mjs';
 import { loadWiki } from './wiki-core.mjs';
@@ -85,6 +86,8 @@ const EXPECTED = {
   'SCHEMA-003': 'error',
   'SCHEMA-004': 'error',
   'SCHEMA-005': 'error',
+  'SCHEMA-006': 'error',
+  'SCHEMA-007': 'error',
   'LINK-001': 'error',
   'LINK-002': 'warning',
   'LINK-003': 'error',
@@ -101,6 +104,8 @@ const EXPECTED = {
   'PROV-005': 'warning',
   'CANON-001': 'warning',
   'STALE-001': 'warning',
+  'DUP-001': 'warning',
+  'BASIS-001': 'warning',
 };
 
 console.log('\ndirty fixture — every check ID fires at its documented severity');
@@ -136,6 +141,34 @@ console.log('\ndirty fixture — every check ID fires at its documented severity
     'PROV-003 catches a commit the manifest has moved past',
     json.findings.some((f) => f.id === 'PROV-003' && f.message.includes('deadbee'))
   );
+
+  // DUP-001 compares case-insensitively and trimmed, reports a pair once, and names both pages.
+  const dups = json.findings.filter((f) => f.id === 'DUP-001');
+  check('DUP-001 reports the pair once and names both pages',
+    dups.length === 1 && dups[0].message.includes('`dup-title`') && dups[0].message.includes('`orphan`'), JSON.stringify(dups.map((f) => f.message)));
+  // BASIS-001 names the page that changed.
+  check('BASIS-001 names the Basis page that changed after last_verified',
+    json.findings.some((f) => f.id === 'BASIS-001' && f.slug === 'basis-moved' && f.message.includes('`orphan`')));
+  check('BASIS-001 stays quiet for a Basis page not modified after last_verified',
+    !json.findings.some((f) => f.id === 'BASIS-001' && f.slug === 'bad-basis'));
+
+  // SCHEMA-006 and SCHEMA-007 name the page that has the problem, and only that one.
+  const where = (id) => json.findings.filter((f) => f.id === id).map((f) => f.slug);
+  check('SCHEMA-006 names only the page with the anchor and alias', JSON.stringify(where('SCHEMA-006')) === '["bad-anchor"]', JSON.stringify(where('SCHEMA-006')));
+  check('SCHEMA-007 names only the page that ends inside a fence', JSON.stringify(where('SCHEMA-007')) === '["bad-unclosed"]', JSON.stringify(where('SCHEMA-007')));
+
+  // SCHEMA-007 follows CommonMark: what stays open to the end of the page, and what only looks like it does.
+  for (const [what, body, expected] of [
+    ['an open fence', '## A\n\n```\ncode\n', 'fence'],
+    ['an open HTML comment block', '## A\n\n<!--\nnote\n', 'comment'],
+    ['an open <script block', '## A\n\n<script>\n', 'html'],
+    ['an open <pre block', '## A\n\n<pre>\ncode\n', 'html'],
+    ['an open <![CDATA[ block', '## A\n\n<![CDATA[\n', 'html'],
+    ['a <!-- inside indented code', '## A\n\n    <!-- code\n\nAfter.\n', null],
+    ['a <!-- in the middle of prose', '## A\n\nUse <!-- in prose.\n', null],
+    ['a fence that ends with its list item', '## A\n\n- item\n\n  ```\n  code\n', null],
+    ['a closed <script block', '## A\n\n<script>x</script>\n', null],
+  ]) check(`SCHEMA-007 reads ${what}`, bodyEndsOpen(body) === expected, String(bodyEndsOpen(body)));
 
   // The finding shape docs/audit.md documents.
   const sample = json.findings[0];
@@ -327,6 +360,54 @@ console.log('\nderived index — deterministic bytes, and drift is caught');
   check('the committed clean-fixture index is current', audit(['--repo', CLEAN, '--check-index']).code === 0);
 }
 
+// ── DUP-001 and BASIS-001, edge by edge ──────────────────────────────────────
+
+console.log('\nDUP-001 and BASIS-001 — what fires and what stays quiet');
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-dup-'));
+  try {
+    fs.cpSync(CLEAN, tmp, { recursive: true });
+    const wiki = (name) => path.join(tmp, 'brain', 'wiki', name);
+    const read = (name) => fs.readFileSync(wiki(name), 'utf-8');
+    const found = (id) => auditJson(tmp).json.findings.filter((f) => f.id === id);
+
+    check('clean control: neither check fires', found('DUP-001').length === 0 && found('BASIS-001').length === 0);
+
+    // An alias on one page equal to another page's title, apart from case and spaces.
+    fs.writeFileSync(wiki('beta.md'), read('beta.md').replace('aliases: ["B-1"]', 'aliases: ["B-1", "  ALPHA system "]'));
+    const alias = found('DUP-001');
+    check('DUP-001: an alias equal to another title fires once, naming both pages',
+      alias.length === 1 && alias[0].message.includes('`alpha`') && alias[0].message.includes('`beta`'), JSON.stringify(alias.map((f) => f.message)));
+
+    // A template page with the same title is exempt.
+    fs.writeFileSync(wiki('beta.md'), read('beta.md').replace('"  ALPHA system "', '"Beta"'));
+    fs.writeFileSync(wiki('_template.md'), read('alpha.md'));
+    check('DUP-001: a template page is left out of the comparison', found('DUP-001').length === 0);
+    fs.rmSync(wiki('_template.md'));
+
+    // Two pages sharing both a title and an alias are one pair, not two findings.
+    fs.writeFileSync(wiki('alpha-copy.md'), read('alpha.md'));
+    check('DUP-001: a pair that shares a title and an alias is reported once', found('DUP-001').length === 1, JSON.stringify(found('DUP-001').map((f) => f.message)));
+    fs.rmSync(wiki('alpha-copy.md'));
+
+    // A claim verified on the day its Basis page last changed is fine; the day after is not.
+    const claim = read('gamma-claim.md');
+    fs.writeFileSync(wiki('alpha.md'), read('alpha.md').replace('date_modified: "2026-01-05"', 'date_modified: "2026-01-06"'));
+    const moved = found('BASIS-001');
+    check('BASIS-001: a Basis page modified after last_verified fires and names it',
+      moved.length === 1 && moved[0].slug === 'gamma-claim' && moved[0].message.includes('`alpha`') && moved[0].message.includes('2026-01-06'), JSON.stringify(moved.map((f) => f.message)));
+    fs.writeFileSync(wiki('gamma-claim.md'), claim.replace('last_verified: "2026-01-05"', 'last_verified: "2026-01-06"'));
+    check('BASIS-001: updating last_verified clears it', found('BASIS-001').length === 0);
+    fs.writeFileSync(wiki('gamma-claim.md'), claim.replace('last_verified: "2026-01-05"\n', ''));
+    const unverified = found('BASIS-001');
+    check('BASIS-001: a claim with no last_verified fires for each Basis page that has a date',
+      unverified.length === 2 && unverified.every((f) => f.message.includes('no `last_verified`')), JSON.stringify(unverified.map((f) => f.message)));
+    check('BASIS-001 and DUP-001 are warnings: the run still exits 0', audit(['--repo', tmp, '--json']).code === 0);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 // ── the audit never writes to the wiki ───────────────────────────────────────
 
 console.log('\nblast radius — the audit reports, it does not fix');
@@ -445,6 +526,59 @@ console.log('\nCLI — exit codes are the contract');
     check('and is named as v1 string form', legacy.stdout.includes('retired v1 string form'));
   } finally {
     fs.rmSync(v1, { recursive: true, force: true });
+  }
+}
+
+// ── the canonical set ────────────────────────────────────────────────────────
+
+console.log('\ncanonical set — the config list and `tier: canonical` are one definition');
+{
+  const orphan = (tier) => `---
+title: "Orphan"
+type: topic
+tier: ${tier}
+origin: source
+status: draft
+confidence: high
+tags: []
+aliases: []
+owner: ""
+date_created: "2026-01-01"
+date_modified: "2026-01-05"
+last_verified: "2026-01-05"
+sources:
+  - id: alpha-pdf
+    path: brain/raw/extracted/alpha.pdf.txt
+    sha256: "3b50e003ca81fc8afceca1f8d8a259adfd2a3940144e429640ee160e4f8677d9"
+related: []
+relations:
+  supports: []
+  contradicts: []
+  supersedes: []
+  depends_on: []
+---
+
+## Summary
+
+Nothing links here. [source: alpha-pdf, §Overview]
+`;
+  const withOrphan = (tier, canonicalPages = '[]') => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-canon-'));
+    fs.cpSync(CLEAN, tmp, { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'brain', 'wiki', 'orphan.md'), orphan(tier));
+    const cfg = path.join(tmp, 'brain.config.yaml');
+    fs.writeFileSync(cfg, fs.readFileSync(cfg, 'utf-8').replace('canonical_pages: []', `canonical_pages: ${canonicalPages}`));
+    return tmp;
+  };
+  const orphans = (tmp) => auditJson(tmp).json.findings.filter((f) => f.id === 'LINK-002' && f.slug === 'orphan');
+  const dirs = [withOrphan('curated'), withOrphan('canonical'), withOrphan('curated', '[orphan]'), withOrphan('canonical', '[orphan]')];
+  try {
+    check('a curated page nothing links to is an orphan', orphans(dirs[0]).length === 1);
+    check('`tier: canonical` exempts a page from LINK-002', orphans(dirs[1]).length === 0);
+    check('the config list still exempts a page from LINK-002', orphans(dirs[2]).length === 0);
+    check('both at once is still one exemption', orphans(dirs[3]).length === 0);
+  } finally {
+    for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
   }
 }
 
