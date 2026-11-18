@@ -92,6 +92,12 @@ export function createMemoryStore() {
     kv: {
       async get(ns, key) { return clone(kv.get(`${ns}\0${key}`)) ?? null; },
       async set(ns, key, value) { kv.set(`${ns}\0${key}`, clone(value)); },
+      async setIfAbsent(ns, key, value) {
+        const k = `${ns}\0${key}`;
+        if (kv.has(k)) return false;
+        kv.set(k, clone(value));
+        return true;
+      },
       async delete(ns, key) { kv.delete(`${ns}\0${key}`); },
       async list(ns) {
         return [...kv.entries()]

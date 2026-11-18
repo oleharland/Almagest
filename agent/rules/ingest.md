@@ -537,6 +537,9 @@ A learning is a new `claim` page: `type: claim`, `origin: self`, a title that is
 - Write at most the number of pages the prompt names. Fewer is better than weak ones. When nothing qualifies, write nothing and report `unchanged`.
 - Do not edit, rename or delete any existing page. Do not touch `brain/manifest.yaml`, `brain/raw/` or `brain/canonical-challenges.md`. Write only the new claim pages, their rows in `brain/index.md`, a line in `brain/log.md`, and `brain/.index/`.
 - Do not propose a learning that the prompt lists as turned down, unless one of the pages it rests on has changed.
+- A learning has no sources of its own. Leave `sources` empty and write no `[source: ...]` citation in it. Its tie to evidence is the Basis.
+- Keep a learning to one conclusion. The body may not exceed 8000 characters.
+- In `index.md` and `log.md`, only add rows. Do not change, remove or reorder a row that is already there.
 - If two existing pages contradict each other, write no claim about it. Report a `contradiction` in `blocked[]`, quoting both claims with their sources.
 - Never set `tier: canonical`.
 

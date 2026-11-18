@@ -95,9 +95,9 @@ Check IDs are **frozen**. `agent/rules/wiki.md`, `brain.config.yaml`, and the re
 
 `SCHEMA-005` catches the single most common authoring mistake: `page_types` and the `type_fields` vocabularies are separate lists, and an organisation is `type: entity` with `entity_type: organisation`.
 
-`SCHEMA-006` keeps a page header plain. With an anchor and an alias, `tier: *t` takes its value from a `&t` on another line, so two edits that each look harmless can combine into a page that reads `canonical`. The check reads the raw header and the parsed YAML, and ignores a literal `&` or `*` inside a quoted string, a comment or a block scalar.
+`SCHEMA-006` keeps a page header plain. With an anchor and an alias, `tier: *t` takes its value from a `&t` on another line, so two edits that each look harmless can combine into a page that reads `canonical`. The check decides from the parsed YAML document: an anchor on any node, an alias node, or a plain `<<` key. A `*` or `&` that starts a continuation line of a multi-line plain scalar, or sits inside a quoted string, a comment or a block scalar, is text and is not a finding. Only a header that does not parse falls back to a scan of the raw text, and that page already fails to load.
 
-`SCHEMA-007` catches a body that ends inside an HTML comment or a fenced code block. Whatever is added below that point later would be hidden or shown as code. A fence closes only with a fence of the same character and at least the same length, as in CommonMark. Indented code and inline code are not fences.
+`SCHEMA-007` catches a body that ends inside an HTML comment or a fenced code block. Whatever is added below that point later would be hidden or shown as code. A fence closes only with a fence of the same character and at least the same length, as in CommonMark. Indented code is not a fence. Inline code follows CommonMark: a run of backticks closes with the next run of the same length, and a span may cross a line break but not a blank line. A `<!--` inside a code span or inside a closed fenced block never counts as an open comment.
 
 ### Links — does the graph resolve?
 
@@ -324,7 +324,7 @@ Everything the agent does in response to a finding is a proposal. The audit repo
 👉 What would you like to address?
 ```
 
-**Emoji key:** 🔎 audit · 📋 schema · 🔗 broken link · 📎 citation · 🧾 provenance · 🕸️ stale · 👻 orphan · 🛡️ canonical challenge · 🔥 demand (`--demand` only) · ❌ error · ⚠️ warning · ⚡ action items · 👉 awaiting input.
+**Emoji key:** 🔎 audit · 📋 schema · 🔗 broken link · 📎 citation · 🧾 provenance · 🕸️ stale · 👯 duplicate · 👻 orphan · 🛡️ canonical challenge · 🔥 demand (`--demand` only) · ❌ error · ⚠️ warning · ⚡ action items · 👉 awaiting input.
 
 ## `--json`
 

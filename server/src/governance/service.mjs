@@ -32,7 +32,7 @@ import { ingestBranch, newId, nowIso, ROLES } from '../core/schemas.mjs';
 import { NotFoundError } from '../core/store/index.mjs';
 import { attachDemand, buildChanges } from './builder.mjs';
 import { canonicalAt } from './canonical.mjs';
-import { basisOf, createRejectedMemory, readPage } from './learnings.mjs';
+import { basisOf, createRejectedMemory, LEARNINGS_SOURCE_PREFIX, readPage } from './learnings.mjs';
 import { appendChallenge, challengeFrom, challengeRow } from './challenges.mjs';
 import { normalizeAudit, oneLine, runAudit } from './merge.mjs';
 import { listChanges, outsideFiles } from './paths.mjs';
@@ -226,6 +226,9 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       try { page = typeof text === 'string' ? readPage(text) : null; } catch { page = null; }
       c.basis = [];
       if (!page) continue;
+      // The whole text, for the inbox: a person approves a learning from what it shows, so it shows all of it.
+      c.body = page.body.trim();
+      c.front = page.front.trim();
       for (const slug of basisOf(page.body, known).slugs) c.basis.push({ slug, title: await titleOf(slug) });
     }
   }
@@ -307,7 +310,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     const runReport = info.runReport || job.runReport || {};
     // A learnings proposal has no source file: it stands for the commit of main it read.
     const source = job.source || live?.source
-      || (kind === 'learnings' ? { kind: 'synthesis', id: `learnings-${String(baseSha).slice(0, 7)}`, title: 'the pages the brain already holds', sha256: baseSha } : null);
+      || (kind === 'learnings' ? { kind: 'synthesis', id: `${LEARNINGS_SOURCE_PREFIX}${String(baseSha).slice(0, 7)}`, title: 'the pages the brain already holds', sha256: baseSha } : null);
     if (kind === 'learnings') await attachBasis(changes, headSha);
     const proposalId = live?.id || newId('prp');
     const prior = live ? await store.decisions.listByProposal(live.id) : [];
@@ -390,12 +393,13 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     return proposal;
   }
 
-  /** A newer proposal for the same source replaces older live ones from other branches. */
+  /** A newer proposal for the same source replaces older live ones of the same kind from other branches. */
   async function supersedeOlder(p) {
     if (!p.source?.id) return;
     const live = await store.proposals.list({ status: policy.LIVE });
     for (const old of live) {
       if (old.id === p.id || old.branch === p.branch || old.source?.id !== p.source.id) continue;
+      if ((old.kind || '') !== (p.kind || '')) continue;   // a chat source and a learnings proposal never replace each other
       const updated = await store.proposals.update(old.id, { status: 'superseded', supersededBy: p.id, updatedAt: nowIso() });
       await record('proposal.supersede', svc, old.id, 'cli', { by: p.id });
       await cleanupClosed(old);

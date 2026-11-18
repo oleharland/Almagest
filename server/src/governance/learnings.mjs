@@ -33,6 +33,21 @@ export function synthesisSettings(config) {
   };
 }
 
+/**
+ * The longest a learning's body may be. A learning is one conclusion a person
+ * reads whole in the inbox; the runner refuses a longer one rather than the
+ * inbox cutting it.
+ */
+export const MAX_LEARNING_CHARS = 8000;
+
+/**
+ * The synthetic source of a learnings proposal is `learnings_<sha7 of main>`.
+ * `slugify` (what a chat title or a file name becomes) emits only a-z, 0-9 and
+ * "-", so no title can produce the underscore: a source submitted by hand can
+ * never share this id.
+ */
+export const LEARNINGS_SOURCE_PREFIX = 'learnings_';
+
 /** Store namespace for learnings a person turned down. Key: hash of the sorted Basis slugs. */
 export const REJECTED_NS = 'synthesis.rejected';
 
@@ -48,6 +63,7 @@ export function readPage(text) {
   return {
     data,
     body: parsed.content,
+    front: String(parsed.matter || ''),
     title: asString(data.title),
     type: asString(data.type),
     tier: asString(data.tier),

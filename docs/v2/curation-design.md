@@ -125,8 +125,9 @@ The agent takes no part in this version. It does not suggest a tier.
 ### What a learning is
 
 The schema already has the page for it: a `claim` page with `origin: self`. Its
-title is a sentence, it carries no inline citations, and its `## Basis` section
-links to the `origin: source` pages it rests on. The audit checks that a Basis
+title is a sentence, it carries no inline citations and no `sources` of its own,
+its body is at most 8000 characters, and its `## Basis` section links to the
+`origin: source` pages it rests on. The audit checks that a Basis
 exists and is made of wikilinks (`CITE-006`). What is missing is anything that
 writes one.
 
@@ -175,11 +176,16 @@ Both are plain comparisons, so they belong in `tools/audit.mjs`, as warnings:
   person approving it.
 - The job cannot touch a canonical page, cannot edit an existing page and
   cannot add a source. The runner's path guard enforces it: for this job kind
-  the only allowed change is new `claim` pages and the bookkeeping files.
+  the only allowed change is new `claim` pages and the bookkeeping files, and
+  the bookkeeping files (`index.md`, `log.md`) may only gain whole lines. A
+  learning is refused when it has a `sources` list, a citation or a body over
+  8000 characters. The inbox shows each learning whole, so a person approves
+  what they have read.
 - No loops and no floods. The code enforces these bounds, in this order:
   `synthesis.enabled`; one `synthesize` job queued or running; no new run while
   a learnings proposal is open; `max_runs_per_day` runs per UTC day counted from
-  the jobs in the store; the changed-pages threshold. A merged learnings
+  the jobs in the store and claimed in the store before queueing, so two
+  processes cannot both pass the cap; the changed-pages threshold. A merged learnings
   proposal never starts a run: it adds claim pages, which are not source pages,
   and its merge is skipped. The cap per run is `max_claims`. There is no
   separate dollar cap: the existing `ingest.budget_usd_per_job` applies to the

@@ -300,6 +300,8 @@ Frozen. Rules, config, and reports reference them by ID.
 | `SCHEMA-003` | Missing `type_fields` entry required for this `type` | error |
 | `SCHEMA-004` | `owner` missing or not in `owner_teams` while `require_owner: true` | error |
 | `SCHEMA-005` | `type` carries a `type_fields` vocabulary value (e.g. `type: organisation`) | error |
+| `SCHEMA-006` | The front matter uses a YAML anchor (`&name`), alias (`*name`) or merge key (`<<:`) | error |
+| `SCHEMA-007` | The page body ends inside an HTML comment (`<!--` with no `-->`) or a fenced code block | error |
 | `LINK-001` | `[[wikilink]]` to a page that does not exist | error |
 | `LINK-002` | Orphan — zero backlinks | warning |
 | `LINK-003` | `relations` target does not exist | error |
@@ -316,6 +318,8 @@ Frozen. Rules, config, and reports reference them by ID.
 | `PROV-005` | A page exists in `brain/wiki/` with no `index.md` row | warning |
 | `CANON-001` | Outstanding entries in `brain/canonical-challenges.md` | warning |
 | `STALE-001` | `last_verified` past threshold (curated/evidence 90d, stub 30d) | warning |
+| `DUP-001` | Two pages share a title or an alias. Titles and aliases are compared ignoring case and surrounding spaces. Each pair is reported once, on the page that sorts first, and the message names both pages. Template pages (`_` prefix) are exempt | warning |
+| `BASIS-001` | A `type: claim` page whose `## Basis` names a page with a `date_modified` later than the claim's `last_verified`, or the claim has no `last_verified`. The message names the page that changed | warning |
 
 Thresholds and severities are read from `brain.config.yaml` → `audit`, not hardcoded. Errors exit `1`; warnings do not. An error-level finding blocks the ingest commit — see *Approval gates*.
 
@@ -373,7 +377,7 @@ Thresholds and severities are read from `brain.config.yaml` → `audit`, not har
 👉 What would you like to address?
 ```
 
-**Emoji key:** 🔎 audit · 📋 schema · 🔗 broken link · 📎 citation · 🧾 provenance · 🕸️ stale · 👻 orphan · 🛡️ canonical challenge · ❌ error · ⚠️ warning · ⚡ action items · 👉 awaiting input.
+**Emoji key:** 🔎 audit · 📋 schema · 🔗 broken link · 📎 citation · 🧾 provenance · 🕸️ stale · 👯 duplicate · 👻 orphan · 🛡️ canonical challenge · ❌ error · ⚠️ warning · ⚡ action items · 👉 awaiting input.
 
 ### Actions after audit
 

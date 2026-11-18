@@ -203,7 +203,10 @@ function learningBody(change) {
     ${basis.length
       ? html`<ul class="basis">${basis.map((b) => html`<li><a href="/inbox/pages/${encodeURIComponent(b.slug)}">${b.title || b.slug}</a></li>`)}</ul>`
       : html`<p class="missing">This page names no pages it rests on. Do not accept it as it is.</p>`}
-    ${change.preview ? html`<p class="faint">The conclusion</p><pre class="preview">${change.preview}</pre>` : ''}`;
+    ${typeof change.body === 'string'
+      ? html`<p class="faint">The whole learning, as the brain wrote it</p><pre class="full">${change.body}</pre>
+        ${change.front ? html`<details><summary>Page details</summary><pre class="full">${change.front}</pre></details>` : ''}`
+      : change.preview ? html`<p class="faint">The conclusion (the start only)</p><pre class="preview">${change.preview}</pre>` : ''}`;
 }
 
 function pageCard(p, change, { canAct, csrf, required, why = null, tiers = null }) {

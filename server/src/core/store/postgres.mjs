@@ -262,6 +262,14 @@ export async function createPostgresStore({ url, schema = '', max = 10, pool: gi
           [ns, key, JSON.stringify(value)],
         );
       },
+      // One INSERT against the primary key: of any number of racing sessions exactly one inserts a row.
+      async setIfAbsent(ns, key, value) {
+        const res = await query(
+          'INSERT INTO kv (ns, key, value) VALUES ($1, $2, $3::jsonb) ON CONFLICT (ns, key) DO NOTHING',
+          [ns, key, JSON.stringify(value)],
+        );
+        return res.rowCount === 1;
+      },
       async delete(ns, key) {
         await query('DELETE FROM kv WHERE ns = $1 AND key = $2', [ns, key]);
       },

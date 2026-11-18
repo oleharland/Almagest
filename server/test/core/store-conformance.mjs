@@ -63,6 +63,20 @@ export function storeConformance(name, make, options = {}) {
       await s.close();
     });
 
+    it('kv.setIfAbsent inserts once and says whether it did, even when two callers race', async () => {
+      const s = await make();
+      assert.equal(await s.kv.setIfAbsent('claims', 'day:1', { by: 'a' }), true);
+      assert.equal(await s.kv.setIfAbsent('claims', 'day:1', { by: 'b' }), false);
+      assert.deepEqual(await s.kv.get('claims', 'day:1'), { by: 'a' }, 'the first value stays');
+      assert.equal(await s.kv.setIfAbsent('claims', 'day:2', { by: 'b' }), true, 'another key is free');
+      assert.equal(await s.kv.setIfAbsent('other', 'day:1', { by: 'c' }), true, 'another namespace is free');
+      await s.kv.delete('claims', 'day:1');
+      assert.equal(await s.kv.setIfAbsent('claims', 'day:1', { by: 'd' }), true, 'a deleted key is free again');
+      const race = await Promise.all(Array.from({ length: 8 }, (_, i) => s.kv.setIfAbsent('claims', 'race', { by: i })));
+      assert.equal(race.filter(Boolean).length, 1, 'exactly one of eight concurrent callers wins');
+      await s.close();
+    });
+
     it('audit is append-only and kv round-trips', async () => {
       const s = await make();
       await s.audit.append({ id: newId('aud'), action: 'proposal.approve', target: 'prp_1' });

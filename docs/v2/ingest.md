@@ -178,8 +178,9 @@ them. It is on by default (`synthesis.enabled`). Nothing it writes reaches
 `main` without a person approving it in the inbox.
 
 A learning is a `claim` page: `origin: self`, a title that is a sentence, no
-inline citations, and a `## Basis` of wikilinks to the `origin: source` pages
-it rests on. The rules the agent follows are in `agent/rules/ingest.md` →
+inline citations, an empty `sources` list, a body of at most 8000 characters,
+and a `## Basis` of wikilinks to the `origin: source` pages it rests on. Its
+only tie to evidence is the Basis. The rules the agent follows are in `agent/rules/ingest.md` →
 Runner mode → Learnings. The agent reads the wiki on `main` and nothing else.
 The job has no source.
 
@@ -207,7 +208,7 @@ Checked in this order. A route that is stopped says which bound stopped it.
 1. `synthesis.enabled` is false: nothing runs. The runner refuses a queued job too.
 2. At most one `synthesize` job is queued or running.
 3. No new run while a learnings proposal is open (any status the inbox still works on).
-4. At most `max_runs_per_day` runs per UTC day, counted from the `synthesize` jobs in the store.
+4. At most `max_runs_per_day` runs per UTC day, counted from the `synthesize` jobs in the store. The run is also claimed in the store before it is queued: one slot per allowed run, numbered under the UTC date (namespace `synthesis.claims`, key `<date>:<n>`), taken with `kv.setIfAbsent`, which is one insert that only one of two racing processes wins. This is what keeps `almagest synthesize` in one process and a merge in the service from both passing the cap. A slot whose job could not be queued is released. Slots of earlier days are dropped.
 5. At least `min_changed_pages` changed source pages since the last run (`--force` skips this one).
 
 A failed enqueue is logged and never breaks the merge that triggered it.
@@ -219,6 +220,9 @@ that breaks one fails as a whole and nothing is committed. A revise of a
 learnings proposal is held to the same limits.
 
 - Every change is a new file under `brain/wiki/`, or `brain/index.md`, `brain/log.md` or `brain/.index/*.tsv`. No existing page is edited, renamed or deleted. The manifest, sidecars and every other file are off limits.
+- `brain/index.md` and `brain/log.md` only gain whole lines. Compared with the branch's starting commit, no existing line may be removed, changed or moved. A placeholder row such as `| _(no actions yet)_ | | |` may give way to a real row. The inbox shows the lines a run adds to these files, so a rewritten line would go unseen.
+- A learning has no `sources` of its own and no citation in its body: not a well formed one, and not the text `[source:` either. A cited learning would show the reviewer nothing, and a learning ties to evidence through its Basis alone.
+- A learning's body is at most 8000 characters. The inbox shows the whole body, so the runner bounds it instead of the inbox cutting it.
 - At most `max_claims` new pages.
 - Each new page is `type: claim`, `origin: self`, and not canonical.
 - Its `## Basis` links at least two pages that exist on `main` and are `origin: source`, and those pages cite at least two different sources. Two source entries count as one source when they share an id or a sha256. Links to other pages are allowed in addition.

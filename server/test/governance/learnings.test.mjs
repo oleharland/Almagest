@@ -42,7 +42,7 @@ describe('governance: a learnings proposal', () => {
     assert.equal(p.title, '1 thing the brain concluded from what it holds');
     assert.equal(p.status, 'open');
     assert.equal(p.source.kind, 'synthesis');
-    assert.match(p.source.id, /^learnings-[0-9a-f]{7}$/);
+    assert.match(p.source.id, /^learnings_[0-9a-f]{7}$/);
     assert.equal(p.trigger, 'synthesis');
     assert.match(p.summary, /^1 thing the brain concluded from what it holds/);
     assert.equal(p.changes.length, 1);

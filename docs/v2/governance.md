@@ -730,13 +730,18 @@ When enough pages have been added, the brain looks across them for conclusions
 and proposes them (docs/v2/ingest.md, Learnings). The proposal is marked
 `kind: 'learnings'` and titled in plain words, for example "5 things the brain
 concluded from what it holds". It has no source file. Its `source` is
-`{ kind: 'synthesis', id: 'learnings-<sha7 of main>' }`, which stands for the
-commit of `main` the agent read.
+`{ kind: 'synthesis', id: 'learnings_<sha7 of main>' }`, which stands for the
+commit of `main` the agent read. The id has an underscore because `slugify`, which turns a chat title or a file name into a source id, emits only `a-z`, `0-9` and `-`. No submitted source can share this id. A newer proposal replaces an older open one only when both have the same source id and the same kind, so a chat source can never close an open learnings proposal, nor the reverse.
 
 The proposal page opens with one sentence: these are conclusions the brain
 drew from pages that were already reviewed, each one lists the pages it rests
 on, and you can accept or turn down each one on its own. Each learning shows
-its Basis pages as links, then the conclusion. The buttons are the ones every
+its Basis pages as links, then its complete text: every section, in order, with
+no length cut, as plain text (the inbox escapes it, so a learning is never read
+as markup). This does not depend on whether the inbox could pair the text with
+a source. The page details (the front matter) sit in a fold below it. A learning
+cannot be so long that this is a problem: the runner refuses one over 8000
+characters. The buttons are the ones every
 proposal has: **Accept page**, **Take this page out**, **Approve all**, **Ask
 for changes** and **Turn down**.
 

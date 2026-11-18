@@ -24,6 +24,7 @@ is blocked. Structured output does that; a paragraph of prose does not.
 | 🧭 manifest drift | 📝 file written | 📁 file moved | 🌿 branch |
 | 🔎 audit | 🕸️ stale | 👻 orphan | 🔗 broken link |
 | ❓ unknown | 🕳️ gap | 📊 stats | ⚡ action items |
+| 👯 duplicate | | | |
 
 ## Ingest
 
@@ -213,10 +214,14 @@ the report say the same word. The IDs are frozen; see `docs/audit.md`.
   • PROV-001    wiki/site-survey.md — sources[0].path missing on disk
                 brain/raw/extracted/kb-02-site-survey.pdf.txt
 
-🕸️ Stale (3 warnings)
+🕸️ Stale (4 warnings)
   • STALE-001   wiki/data-pipeline.md — verified 2026-03-15 (137d, curated)
   • STALE-001   wiki/auth-strategy.md — verified 2026-04-02 (119d, curated)
   • STALE-001   wiki/api-gateway.md — stub since 2026-06-20 (40d)
+  • BASIS-001   wiki/retry-claim.md — Basis page `data-pipeline` changed after last_verified
+
+👯 Duplicates (1 warning)
+  • DUP-001     wiki/api-gateway.md — shares its title with `wiki/gateway.md`
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 Audit summary
@@ -225,10 +230,11 @@ the report say the same word. The IDs are frozen; see `docs/audit.md`.
   🔗 Links:           1 error, 2 warnings
   📎 Citations:       3 errors
   🧾 Provenance:      1 error
-  🕸️ Stale:           3 warnings
+  🕸️ Stale:           4 warnings
+  👯 Duplicates:      1 warning
   ──────────────────────────────
   ⚡ Errors:          7   (exit 1)
-  ⚡ Warnings:        5
+  ⚡ Warnings:        6
 
 👉 What would you like to address?
 ```

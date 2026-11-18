@@ -101,3 +101,81 @@ describe('SCHEMA-007: a body does not end inside a comment or a code fence', () 
     assert.equal(bodyEndsOpen('```\r\ncode\r\n```\r\n'), null);
   });
 });
+
+describe('SCHEMA-006: decided from the parsed YAML, not from the look of a line', () => {
+  it('is quiet about a * or & that starts a continuation line of a plain scalar', () => {
+    const fm = [
+      'title: "X"',
+      'summary: this value runs on',
+      '  *over a second line',
+      '  &and a third',
+      'tags:',
+      '  - first item that runs on',
+      '    *and keeps going',
+      '    &and going',
+    ].join('\n');
+    assert.deepEqual(frontmatterIndirection(page(fm)), []);
+  });
+
+  it('is quiet about a quoted multi-line value and a folded block that start lines with * or &', () => {
+    const fm = ['title: "X"', 'a: "one', '  *two', '  &three"', 'b: >-', '  *four', '  &five', 'c: \'six', '  *seven\''].join('\n');
+    assert.deepEqual(frontmatterIndirection(page(fm)), []);
+  });
+
+  it('still flags a real alias and anchor next to such a value, with their line', () => {
+    const fm = ['title: "X"', 'summary: runs on', '  *over', 'tier: &t evidence', 'other: *t'].join('\n');
+    const found = frontmatterIndirection(page(fm));
+    assert.ok(found.some((f) => /anchor \(&t\) on line 4/.test(f)), found.join('|'));
+    assert.ok(found.some((f) => /alias/.test(f) && /line 5/.test(f)), found.join('|'));
+    assert.ok(!found.some((f) => /line 3/.test(f)), 'the continuation line is not a finding');
+  });
+
+  it('falls back to the raw text only for a header that does not parse', () => {
+    const found = frontmatterIndirection(page('title: "X"\ntags: [one\ntier: *t'));
+    assert.ok(found.length > 0, 'the unparsable header still shows the alias');
+  });
+
+  it('flags an anchor on a mapping, a sequence, a key and a merge key, and an alias to none', () => {
+    for (const fm of ['a: &m {x: 1}\nb: *m', 'a: &l [1]\nb: *l', '&k key: 1', 'a: {x: 1}\nb:\n  <<: *a', 'tier: *nothing']) {
+      assert.ok(frontmatterIndirection(page(fm)).length > 0, fm);
+    }
+  });
+});
+
+describe('SCHEMA-007: inline code spans as CommonMark reads them', () => {
+  it('a <!-- inside a code span that crosses a line break is code, not a comment', () => {
+    assert.equal(bodyEndsOpen('Text `code <!--\nmore code` end.\n'), null);
+    assert.equal(bodyEndsOpen('Text `code\nmore <!-- code` end.\n'), null);
+    assert.equal(bodyEndsOpen('Text ``code ` <!--\nmore`` end.\n'), null);
+  });
+
+  it('a span cannot cross a blank line, so the <!-- is a comment', () => {
+    assert.equal(bodyEndsOpen('Text `code\n\nmore <!-- code` end.\n'), 'comment');
+  });
+
+  it('a run closes only with a run of the same length', () => {
+    assert.equal(bodyEndsOpen('Text `code <!-- more`` end.\n'), 'comment');
+    assert.equal(bodyEndsOpen('Text ``code <!-- more` end.\n'), 'comment');
+    assert.equal(bodyEndsOpen('Text ``code <!-- more`` end.\n'), null);
+  });
+
+  it('a span a fence or a heading interrupts is not a span', () => {
+    assert.equal(bodyEndsOpen('Text `code <!--\n```\nx\n```\nmore` end.\n'), 'comment');
+    assert.equal(bodyEndsOpen('Text `code <!--\n## Heading with `tick`\n'), 'comment');
+  });
+
+  it('a <!-- inside a closed fenced block is never open, with either fence character', () => {
+    assert.equal(bodyEndsOpen('```md\n<!-- not a comment\n```\n\ntext\n'), null);
+    assert.equal(bodyEndsOpen('~~~\n<!--\n~~~\n'), null);
+    assert.equal(bodyEndsOpen('````\n```\n<!--\n```\n````\n'), null);
+  });
+
+  it('a comment that opens after a closed span on the same line is still caught', () => {
+    assert.equal(bodyEndsOpen('Use `x` then <!-- never closed\n'), 'comment');
+    assert.equal(bodyEndsOpen('Use `x\ny` then <!-- never closed\n'), 'comment');
+  });
+
+  it('an unclosed fence after a multi-line span is still caught', () => {
+    assert.equal(bodyEndsOpen('Text `a\nb` end.\n\n```\ncode\n'), 'fence');
+  });
+});

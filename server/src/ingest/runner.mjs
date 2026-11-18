@@ -26,14 +26,15 @@ import matter from 'gray-matter';
 import YAML from 'yaml';
 
 import { canonicalOrUnsure } from '../../../tools/lib/canonical.mjs';
-import { asArray, safeFrontmatter } from '../../../tools/lib/wiki-core.mjs';
+import { asArray, findCitations, safeFrontmatter } from '../../../tools/lib/wiki-core.mjs';
 
 import { serviceActor } from '../core/auth.mjs';
 import { modelForTier } from '../core/config.mjs';
 import { gitIdentity, WorktreeTamperedError } from '../core/git.mjs';
 import { ingestBranch, learningsBranch, nowIso, slugify, validateRunReport } from '../core/schemas.mjs';
 import { canonicalAt } from '../governance/canonical.mjs';
-import { basisOf, createRejectedMemory, distinctSources, readPage, synthesisSettings } from '../governance/learnings.mjs';
+import { basisOf, createRejectedMemory, distinctSources, MAX_LEARNING_CHARS, readPage, synthesisSettings } from '../governance/learnings.mjs';
+import { isPlaceholderRow } from '../governance/bookkeeping.mjs';
 import { agentInstructionPath, writableMatcher } from '../governance/paths.mjs';
 import { LIVE } from '../governance/policy.mjs';
 import { auditSummary, runAudit, wrapperIntact, writeAuditWrapper } from './audit.mjs';
@@ -109,6 +110,19 @@ async function touchedPaths(wt, startSha) {
 function tamperedJob(err, wt) {
   const content = err.content ? ` It now reads ${JSON.stringify(err.content.slice(0, 200))}.` : '';
   return new JobError(`the worktree's .git file was tampered with: ${err.message}.${content} Nothing was committed; the worktree is kept at ${wt} for inspection`);
+}
+
+/**
+ * The first line of `before` that `after` no longer holds in the same order,
+ * or null when `after` only adds whole lines. Placeholder rows may go: the
+ * bookkeeping replaces `| _(no actions yet)_ | | |` with the first real row.
+ */
+function firstLostLine(before, after) {
+  const lines = (text) => { const xs = text.split('\n'); if (xs.length && xs[xs.length - 1] === '') xs.pop(); return xs; };
+  const old = lines(before).filter((l) => !isPlaceholderRow(l));
+  let at = 0;
+  for (const line of lines(after)) if (at < old.length && line === old[at]) at += 1;
+  return at < old.length ? old[at] : null;
 }
 
 export function createRunner(ctx, { driver, logsDir }) {
@@ -386,6 +400,11 @@ export function createRunner(ctx, { driver, logsDir }) {
    *   - each new page is `type: claim`, `origin: self`, not canonical, and its
    *     `## Basis` names at least two pages on main that are `origin: source`
    *     and between them cite at least two different sources
+   *   - a learning has no `sources` of its own, no citation (nor the text
+   *     `[source:`) and a body of at most MAX_LEARNING_CHARS: the inbox shows
+   *     each learning whole, and its tie to evidence is the Basis alone
+   *   - `index.md` and `log.md` only gain whole lines: no existing line is
+   *     removed, changed or moved (a placeholder row may give way to a real one)
    *   - not a learning a person turned down, unless a Basis page changed since
    */
   async function guardLearnings(wt, wtPath, startSha) {
@@ -421,6 +440,17 @@ export function createRunner(ctx, { driver, logsDir }) {
     if (deleted.length) throw refuse(`learnings run deleted or renamed existing page(s) ${list(deleted)} — it may only add new claim pages and may not edit, rename or delete a page that is on ${main}`);
     if (elsewhere.length) throw refuse(`learnings run changed ${list(elsewhere)} — it may write only new claim pages under ${wikiPrefix} and the index, the log and the derived index; the manifest, sources and every other file are off limits`);
 
+    for (const p of bookkeeping) {
+      if (!changes.some((c) => c.path === p)) continue;
+      const before = await git.show(startSha, p);
+      const file = path.join(wtPath, p);
+      const after = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '';
+      const lost = typeof before === 'string' ? firstLostLine(before, after) : null;
+      if (lost !== null) {
+        throw refuse(`learnings run changed an existing line of ${p} (“${lost.trim().slice(0, 80)}”) — it may only add whole lines to the index and the log, because the inbox shows added lines only`);
+      }
+    }
+
     const onMain = new Set((await git.run(['ls-tree', '--name-only', main, '--', wikiPrefix])).split('\n').filter((f) => f.endsWith('.md')).map((f) => path.posix.basename(f, '.md')));
     const wikiAbs = path.join(wtPath, wikiPrefix);
     const fresh = (fs.existsSync(wikiAbs) ? fs.readdirSync(wikiAbs) : []).filter((f) => f.endsWith('.md') && !onMain.has(f.slice(0, -3))).map((f) => f.slice(0, -3)).sort();
@@ -445,6 +475,16 @@ export function createRunner(ctx, { driver, logsDir }) {
       catch (err) { throw refuse(`learnings run wrote ${slug}.md, whose front matter cannot be read (${String(err.message).split('\n')[0].slice(0, 120)})`); }
       if (page.type !== 'claim' || page.origin !== 'self') {
         throw refuse(`learnings run wrote ${slug}.md as type: ${page.type || 'none'}, origin: ${page.origin} — a learnings run writes only claim pages with origin: self`);
+      }
+      const ownSources = page.data.sources;
+      if ((Array.isArray(ownSources) && ownSources.length) || (!Array.isArray(ownSources) && ownSources) || page.sources.length) {
+        throw refuse(`learnings run wrote ${slug}.md with a non-empty \`sources\` of its own — a learning has no sources: its tie to evidence is its Basis`);
+      }
+      if (findCitations(page.body).length || page.body.includes('[source:')) {
+        throw refuse(`learnings run wrote ${slug}.md with a citation (or the text “[source:”) in its body — a learning carries no inline citations: its tie to evidence is its Basis`);
+      }
+      if (page.body.trim().length > MAX_LEARNING_CHARS) {
+        throw refuse(`learnings run wrote ${slug}.md with a body of ${page.body.trim().length} characters, over the limit of ${MAX_LEARNING_CHARS} characters — a learning is one conclusion a person reads whole`);
       }
       if (page.tier === 'canonical') throw refuse(`learnings run wrote ${slug}.md with tier: canonical — only a person makes a page canonical, in the review inbox (non-negotiable 4)`);
       const { slugs, missing } = basisOf(page.body, onMain);

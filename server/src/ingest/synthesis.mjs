@@ -14,7 +14,8 @@
  *   synthesis.enabled is false           nothing runs
  *   a synthesize job is queued or running  at most one at a time
  *   a learnings proposal is open          no new run until a person has dealt with it
- *   synthesis.max_runs_per_day            counted from the jobs in the store, by UTC date
+ *   synthesis.max_runs_per_day            counted from the jobs in the store, by UTC date, and
+ *                                         claimed in the store before queueing (see `claim`)
  *   synthesis.min_changed_pages           source pages added or changed since the last run
  *
  * What the job may write is the runner's business (runner.mjs → guardLearnings).
@@ -29,6 +30,8 @@ import { LIVE } from '../governance/policy.mjs';
 
 export const STATE_NS = 'synthesis';
 export const STATE_KEY = 'last-run';
+/** Where the daily run slots are claimed: key `<UTC date>:<n>`, one per allowed run. */
+export const CLAIM_NS = 'synthesis.claims';
 const REQUESTER = 'svc:synthesis';
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -88,6 +91,26 @@ export function createSynthesis(ctx, { enqueue, now = () => new Date() }) {
     return (open || []).filter((p) => p?.kind === 'learnings' && LIVE.includes(p.status));
   }
 
+  /**
+   * Take one of today's run slots, atomically in the shared store, so that
+   * `almagest synthesize` in one process and a merge in the service cannot both
+   * pass the cap: the chain above only orders requests inside one process.
+   * Slots are numbered 1..max_runs_per_day under `<UTC date>:<n>`; the first
+   * free one is ours. Slots of earlier days are dropped. Returns the key, or
+   * null when every slot is taken.
+   */
+  async function claim(at, max) {
+    const day = today(at);
+    for (const { key } of await store.kv.list(CLAIM_NS)) {
+      if (!key.startsWith(`${day}:`)) await store.kv.delete(CLAIM_NS, key);
+    }
+    for (let slot = 1; slot <= max; slot++) {
+      const key = `${day}:${slot}`;
+      if (await store.kv.setIfAbsent(CLAIM_NS, key, { at: at.toISOString(), pid: process.pid })) return key;
+    }
+    return null;
+  }
+
   const stop = (code, reason, extra = {}) => ({ queued: false, code, reason, ...extra });
 
   /**
@@ -124,13 +147,19 @@ export function createSynthesis(ctx, { enqueue, now = () => new Date() }) {
         return stop('below-threshold', `${plural(changed.length, 'source page')} changed since the last run, and synthesis.min_changed_pages is ${s.minChangedPages}.${via === 'manual' ? ' Use --force to run anyway.' : ''}`, { changed: changed.length });
       }
 
+      const slot = await claim(at, s.maxRunsPerDay);
+      if (!slot) return stop('daily-cap', `synthesis.max_runs_per_day is ${s.maxRunsPerDay} and today's runs are already taken (another process may have just queued one). Try again tomorrow.`);
+      const release = () => store.kv.delete(CLAIM_NS, slot).catch((err) => log.warn('synthesis: could not release a run slot', { slot, error: err.message }));
+
       let job;
       try {
         job = await enqueue({ kind: 'synthesize', source: null, trigger: 'synthesis', requestedBy });
       } catch (err) {
+        await release();
         log.error('synthesis: could not queue a job', { via, error: err.message });
         return stop('enqueue-failed', `The job could not be queued: ${err.message}`);
       }
+      if (job?.deduplicated) await release();
       if (job?.deduplicated) return stop('active', `A synthesize job is already ${job.status} (${job.id}). At most one runs at a time.`, { job });
       await store.kv.set(STATE_NS, STATE_KEY, { mainSha, at: at.toISOString(), jobId: job.id, changed: changed.length });
       log.info('synthesis: queued', { job: job.id, via, changed: changed.length, force });

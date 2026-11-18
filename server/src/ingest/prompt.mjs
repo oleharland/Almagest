@@ -99,7 +99,7 @@ function synthesisPrompt({ job, branch, auditCommand, allowedTools, learnings = 
   const parts = [
     `# Almagest synthesize job ${job.id}`,
     '',
-    `Read the wiki on \`main\` and find conclusions that rest on at least two \`origin: source\` pages that come from different sources. Write each one as a new \`claim\` page (\`origin: self\`, a title that is a sentence, a \`## Basis\` of wikilinks). Write nothing else. Follow the **Learnings** section of \`agent/rules/ingest.md\` → Runner mode. At most ${cap} new page${cap === 1 ? '' : 's'}; fewer is better than weak ones, and none is a good answer.`,
+    `Read the wiki on \`main\` and find conclusions that rest on at least two \`origin: source\` pages that come from different sources. Write each one as a new \`claim\` page (\`origin: self\`, a title that is a sentence, a \`## Basis\` of wikilinks). Write nothing else. Follow the **Learnings** section of \`agent/rules/ingest.md\` → Runner mode. At most ${cap} new page${cap === 1 ? '' : 's'}; fewer is better than weak ones, and none is a good answer. A learning has an empty \`sources\` list, no citation (never write \`[source:\`) and a body of at most 8000 characters. In \`brain/index.md\` and \`brain/log.md\` you may add whole lines and nothing else: never change, move or remove an existing line.`,
     '',
     '## Read first, in this order',
     '',
@@ -196,7 +196,7 @@ export function buildPrompt({ job, source, placed, branch, proposal, auditComman
       '',
       '## This proposal is a set of learnings',
       '',
-      `Its pages are conclusions the brain drew from pages already on \`main\`. Follow the **Learnings** section of \`agent/rules/ingest.md\` → Runner mode. You may change only the \`claim\` pages this branch adds, and the bookkeeping those pages need. Do not edit, rename or delete any page that is on \`main\`, and do not touch \`brain/manifest.yaml\` or \`brain/raw/\`. The runner refuses the whole run if you do. At most ${Number.isFinite(Number(learnings?.cap)) ? Number(learnings.cap) : 5} claim pages in all.`,
+      `Its pages are conclusions the brain drew from pages already on \`main\`. Follow the **Learnings** section of \`agent/rules/ingest.md\` → Runner mode. You may change only the \`claim\` pages this branch adds, and the bookkeeping those pages need. Do not edit, rename or delete any page that is on \`main\`, and do not touch \`brain/manifest.yaml\` or \`brain/raw/\`. The runner refuses the whole run if you do. At most ${Number.isFinite(Number(learnings?.cap)) ? Number(learnings.cap) : 5} claim pages in all. A learning has an empty \`sources\` list, no citation and a body of at most 8000 characters, and in \`brain/index.md\` and \`brain/log.md\` you may only add whole lines.`,
     );
   }
   parts.push(...pendingBlock(pending, proposal?.extends));

@@ -127,21 +127,43 @@ const BLOCK_SCALAR = /(?:^|[\s:-])[|>][1-9+-]{0,2}\s*$/;
  * matter, as short descriptions. A page header has no need for them, and they
  * let a value depend on another line (`tier: *t` reads whatever `&t` marked).
  *
- * Found two ways, so neither hides what the other sees: a scan of the raw text
- * (quoted strings, comments and block scalars are skipped, so a literal `&` or
- * `*` inside one is not a finding), and the parsed YAML document (an anchor, an
- * alias node, a plain `<<` key). Returns [] for a page with no front matter.
+ * Decided from the parsed YAML document: an anchor on any node, an alias node,
+ * a plain `<<` key. A `*` or `&` that starts a continuation line of a plain
+ * scalar, or sits in a quoted string, a comment or a block scalar, is text and
+ * is never a finding, because it is not a node. Only a header that does not
+ * parse falls back to a scan of the raw text (the page fails another check
+ * anyway, and the scan keeps a broken header from hiding an alias).
+ * Returns [] for a page with no front matter.
  */
 export function frontmatterIndirection(text) {
   const block = frontmatterBlock(text);
   if (block === null) return [];
   const found = [];
   const note = (what, line) => {
-    const msg = line ? `${what} on line ${line + 1} of the front matter` : `${what} in the front matter`;
+    const msg = line ? `${what} on line ${line} of the front matter` : `${what} in the front matter`;
     if (!found.includes(msg)) found.push(msg);
   };
 
-  // 1. The raw text.
+  let doc = null;
+  try {
+    const lineCounter = new YAML.LineCounter();
+    doc = YAML.parseDocument(block, { merge: false, lineCounter });
+    const lineOf = (node) => (node?.range ? lineCounter.linePos(node.range[0]).line : 0);
+    YAML.visit(doc, {
+      Alias(_key, node) { note(`an alias (*${node.source})`, lineOf(node)); },
+      Node(_key, node) { if (node.anchor) note(`an anchor (&${node.anchor})`, lineOf(node)); },
+      Pair(_key, pair) { if (YAML.isScalar(pair.key) && pair.key.value === '<<' && pair.key.type === 'PLAIN') note('a merge key (<<)', lineOf(pair.key)); },
+    });
+  } catch { doc = null; }
+  if (doc && doc.errors.length === 0) return found;
+
+  // The header does not parse as YAML: read the raw text so nothing hides in it.
+  rawIndirection(block, note);
+  return found;
+}
+
+/** The line-by-line reading, for a header that does not parse. Quoted strings, comments and block scalars are skipped. */
+function rawIndirection(block, note) {
   let quote = null;          // '"' | "'" | null, carried across lines
   let blockIndent = null;    // indent of the line that opened a block scalar
   block.split('\n').forEach((raw, n) => {
@@ -183,20 +205,30 @@ export function frontmatterIndirection(text) {
     }
     if (!quote && BLOCK_SCALAR.test(content)) blockIndent = indent;
   });
-
-  // 2. The parsed document.
-  try {
-    const doc = YAML.parseDocument(block, { merge: false });
-    YAML.visit(doc, {
-      Alias() { note('an alias'); },
-      Node(_key, node) { if (node.anchor) note(`an anchor (&${node.anchor})`); },
-      Pair(_key, pair) { if (YAML.isScalar(pair.key) && pair.key.value === '<<' && pair.key.type === 'PLAIN') note('a merge key (<<)'); },
-    });
-  } catch { /* a header that does not parse is reported elsewhere; the scan above still ran */ }
-  return found;
 }
 
-const CODE_SPAN = /(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g;
+const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+
+/** Does a line start a block that interrupts a paragraph (so no code span crosses into it)? */
+function interruptsParagraph(line) {
+  if (line.trim() === '') return true;
+  const open = FENCE_OPEN.exec(line);
+  if (open && !(open[1][0] === '`' && open[2].includes('`'))) return true;
+  return /^ {0,3}<!--/.test(line) || /^ {0,3}#{1,6}(\s|$)/.test(line);
+}
+
+/** Where a run of exactly `n` backticks starts in `line` at or after `from`, or -1. */
+function findBacktickRun(line, n, from) {
+  for (let i = from; i < line.length; i++) {
+    if (line[i] !== '`') continue;
+    let j = i;
+    while (line[j] === '`') j++;
+    if (j - i === n) return i;
+    i = j - 1;
+  }
+  return -1;
+}
 
 /**
  * Does a page body end inside an HTML comment (`<!--` with no `-->` after it)
@@ -206,41 +238,67 @@ const CODE_SPAN = /(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g;
  * Fences follow CommonMark: three or more backticks or tildes, indented up to
  * three spaces, a backtick fence's info string holding no backtick; one closes
  * only with the same character, at least as long, up to three spaces of indent,
- * and nothing after it but spaces. Indented code and inline code are not fences,
- * and a comment marker inside a fence (or a fence marker inside a comment) means
- * nothing.
+ * and nothing after it but spaces. Indented code is not a fence.
+ *
+ * Inline code follows CommonMark too: a run of backticks closes with the next
+ * run of the same length, and the span may cross a line break but not a blank
+ * line (nor a line that starts a fence, a comment or a heading). A `<!--` inside
+ * a span is code. A run with no closer is literal. A comment marker inside a
+ * fence (or a fence marker inside a comment) means nothing.
  */
 export function bodyEndsOpen(body) {
+  const lines = String(body ?? '').replace(/\r/g, '').split('\n');
   let fence = null;
   let comment = false;
-  for (const line of String(body ?? '').replace(/\r/g, '').split('\n')) {
-    let rest = line;
-    if (fence) {
-      const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
-      if (close && close[1][0] === fence.ch && close[1].length >= fence.len) fence = null;
-      continue;
-    }
-    if (comment) {
-      const end = line.indexOf('-->');
-      if (end === -1) continue;
-      comment = false;
-      rest = line.slice(end + 3);
-    } else {
-      const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-      if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
-        fence = { ch: open[1][0], len: open[1].length };
+  let at = 0;          // line index
+  let col = 0;         // column in lines[at]
+  while (at < lines.length) {
+    const line = lines[at];
+    if (col === 0) {
+      if (fence) {
+        const close = FENCE_CLOSE.exec(line);
+        if (close && close[1][0] === fence.ch && close[1].length >= fence.len) fence = null;
+        at++;
         continue;
       }
+      if (!comment) {
+        const open = FENCE_OPEN.exec(line);
+        if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
+          fence = { ch: open[1][0], len: open[1].length };
+          at++;
+          continue;
+        }
+      }
     }
-    const masked = rest.replace(CODE_SPAN, (m) => ' '.repeat(m.length));
-    let pos = 0;
-    for (;;) {
-      const s = masked.indexOf('<!--', pos);
-      if (s === -1) break;
-      const e = rest.indexOf('-->', s + 2);
-      if (e === -1) { comment = true; break; }
-      pos = e + 3;
+    if (comment) {
+      const end = line.indexOf('-->', col);
+      if (end === -1) { at++; col = 0; continue; }
+      comment = false;
+      col = end + 3;
+      continue;
     }
+    const tick = line.indexOf('`', col);
+    const start = line.indexOf('<!--', col);
+    if (tick === -1 && start === -1) { at++; col = 0; continue; }
+    if (start !== -1 && (tick === -1 || start < tick)) {
+      const end = line.indexOf('-->', start + 2);
+      if (end === -1) { comment = true; at++; col = 0; continue; }
+      col = end + 3;
+      continue;
+    }
+    let run = tick;
+    while (line[run] === '`') run++;
+    const n = run - tick;
+    // The closing run: on this line, or on a later line of the same paragraph.
+    let closeAt = findBacktickRun(line, n, run);
+    let closeLine = at;
+    for (let k = at + 1; closeAt === -1 && k < lines.length && !interruptsParagraph(lines[k]); k++) {
+      closeAt = findBacktickRun(lines[k], n, 0);
+      closeLine = k;
+    }
+    if (closeAt === -1) { col = run; continue; }   // no closer: the backticks are literal text
+    at = closeLine;
+    col = closeAt + n;
   }
   return fence ? 'fence' : comment ? 'comment' : null;
 }
