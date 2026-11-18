@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import { locate, markerFor, verifyPathFor } from '../../src/mcp/citations.mjs';
-import { answerRules } from '../../src/mcp/rules.mjs';
+import { LOOKUP_SECTION, answerRules, lookupRules } from '../../src/mcp/rules.mjs';
 import { buildIndex, normalizePhrase, search, snippetFor, splitSections, stem, tokenize } from '../../src/mcp/search.mjs';
 import { REPO_ROOT } from '../helpers.mjs';
 
@@ -129,3 +132,33 @@ describe('answer rules', () => {
     assert.match(r.text, /## Citation rules/);
   });
 });
+
+describe('lookup rules', () => {
+  it('are lifted from agent/rules/read.md when present', () => {
+    const r = lookupRules(REPO_ROOT);
+    assert.equal(r.source, 'agent/rules/read.md');
+    assert.ok(r.text.startsWith(`## ${LOOKUP_SECTION}`));
+    assert.match(r.text, /canonical page is the brain's position/);
+    assert.match(r.text, /Never write a `\[source: <id>, <locator>\]` citation/);
+  });
+
+  it('fall back to an embedded copy that matches read.md', () => {
+    const r = lookupRules('/nonexistent');
+    assert.equal(r.source, 'embedded');
+    assert.equal(r.text, lookupRules(REPO_ROOT).text);
+  });
+
+  it('fall back when read.md lacks the section', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rules-'));
+    fs.mkdirSync(path.join(dir, 'agent', 'rules'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'agent', 'rules', 'read.md'), '# Reader\n\n## Citation rules\n\n- x\n');
+    try { assert.equal(lookupRules(dir).source, 'embedded'); } finally { fs.rmSync(dir, { recursive: true }); }
+  });
+
+  it('leave the normal answer rules untouched', () => {
+    const r = answerRules(REPO_ROOT);
+    assert.ok(!r.text.includes(LOOKUP_SECTION));
+    assert.ok(!answerRules('/nonexistent').text.includes(LOOKUP_SECTION));
+  });
+});
+
