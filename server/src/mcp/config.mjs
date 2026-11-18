@@ -25,6 +25,19 @@ export const MCP_DEFAULTS = {
   search: { min_score: 0.2, min_coverage: 0.5, limit: 8 },
   ask: { token_budget: 2500, pages: 5 },
   get_page: { max_body_chars: 60_000, excerpt_chars: 400 },
+  // Live lookup (docs/v2/live-lookup.md): when no reviewed page answers, look in source text, staged snapshots, then connectors.
+  lookup: {
+    enabled: false,
+    min_role: 'contributor',        // who may receive unreviewed passages (steps staged and connectors)
+    steps: ['sources', 'staged', 'connectors'],
+    timeout_ms: 8000,               // for the whole lookup
+    max_fetch: 3,                   // documents fetched per question, across connectors
+    send_query: true,               // false: the connectors step is off
+    negative_ttl_minutes: 60,
+    rate: { per_caller_per_minute: 6, per_connector_per_minute: 30 },
+    ingest: 'auto',                 // auto | off
+    max_ingest_per_day: 20,
+  },
 };
 
 export function mcpConfig(config) {
