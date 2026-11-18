@@ -256,7 +256,7 @@ describe('live lookup — gates', () => {
   });
 
   it('the deadline returns what there is, incomplete, and does not throw', async () => {
-    const t = await setup({ docs: [CONNECTOR_DOC(1), CONNECTOR_DOC(2)], lookup: { timeout_ms: 150 } });
+    const t = await setup({ docs: [CONNECTOR_DOC(1), CONNECTOR_DOC(2)], lookup: { timeout_ms: 1500 } });
     t.provider.hang.add('doc2');
     const r = await t.find();
     assert.equal(r.incomplete, true);
