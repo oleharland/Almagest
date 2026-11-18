@@ -23,6 +23,7 @@ import {
   sectionLines,
   sectionNames,
 } from './wiki-core.mjs';
+import { canonicalSetOfPages } from './canonical.mjs';
 
 /** Categories drive the report layout and the emoji key in agent/rules/wiki.md. */
 export const CATEGORIES = [
@@ -254,6 +255,8 @@ function checkLinks(pages, known, config, out) {
   // An orphan is a page nothing points at, not a page nothing links from prose.
   const inbound = new Map();
   const note = (target) => inbound.set(target, (inbound.get(target) ?? 0) + 1);
+  // The one definition: the config list plus every page whose tier says canonical.
+  const canonical = canonicalSetOfPages(pages, config.canonicalPages);
 
   for (const page of pages) {
     for (const target of page.links) note(target);
@@ -287,7 +290,7 @@ function checkLinks(pages, known, config, out) {
       }
     }
 
-    if ((inbound.get(page.id) ?? 0) === 0 && !config.canonicalPages.includes(page.slug)) {
+    if ((inbound.get(page.id) ?? 0) === 0 && !canonical.has(page.slug)) {
       out.add('LINK-002', '0 backlinks', {
         ...where,
         hint: 'link it from a related page or archive it',

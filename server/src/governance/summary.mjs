@@ -54,6 +54,13 @@ export function titleFor(source) {
   return `New material from “${sourceName(source)}”`;
 }
 
+/** The title of a tier proposal: "Ole wants to make “Glossary” canonical." */
+export function tierTitle(who, pageTitle, to) {
+  return `${who} wants to make “${pageTitle}” ${to}.`;
+}
+
+const TIER_NAME = { canonical: 'canonical', curated: 'curated', evidence: 'evidence' };
+
 /** One line: what changed, about what. */
 export function changeLine(changes = []) {
   const c = counts(changes);
@@ -78,7 +85,10 @@ export function changeLine(changes = []) {
 export function describe(proposal, decisions = []) {
   const open = decisions.filter((d) => d.status === 'open').length;
   const hot = (proposal.changes || []).filter((c) => c.hot && c.pageStatus !== 'rejected').length;
-  const line = changeLine(proposal.changes);
+  const tier = proposal.kind === 'tier' ? proposal.tier : null;
+  const line = tier
+    ? `Changes one setting of one page, its tier, from ${TIER_NAME[tier.from] || tier.from} to ${TIER_NAME[tier.to] || tier.to}`
+    : changeLine(proposal.changes);
   const bits = [line];
   if (open) bits.push(`${plural(open, 'question')} ${open === 1 ? 'needs' : 'need'} you`);
   if (hot) bits.push(`${plural(hot, 'frequently-read page')}`);
@@ -86,7 +96,8 @@ export function describe(proposal, decisions = []) {
     title: proposal.title || titleFor(proposal.source),
     line,
     lookup: lookupSentence(proposal),
-    sentence: `${line} from “${sourceName(proposal.source)}”${proposal.trigger === 'lookup' ? ' · fetched by live lookup' : ''}${open ? ` · ${plural(open, 'question')} ${open === 1 ? 'needs' : 'need'} you` : ''}`,
+    tier,
+    sentence: tier ? `${proposal.title}${open ? ` · ${plural(open, 'question')} ${open === 1 ? 'needs' : 'need'} you` : ''}` : `${line} from “${sourceName(proposal.source)}”${proposal.trigger === 'lookup' ? ' · fetched by live lookup' : ''}${open ? ` · ${plural(open, 'question')} ${open === 1 ? 'needs' : 'need'} you` : ''}`,
     openDecisions: open,
     hot,
     counts: counts(proposal.changes),

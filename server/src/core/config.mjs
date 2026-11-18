@@ -15,7 +15,7 @@ import { loadConfig as loadV1Config } from '../../../tools/lib/config.mjs';
 
 export const PROFILES = ['solo', 'team', 'enterprise'];
 
-const BASE = {
+export const BASE = {
   service: {
     profile: 'solo',
     store: { driver: 'sqlite', path: '.almagest/almagest.db', url: '' },
@@ -39,6 +39,10 @@ const BASE = {
     inherit_profile_rules: true,
     channel_roles_max_age_hours: 24,
     session_roles_max_age_minutes: 60,
+    // The role that may change a page to or from canonical in the inbox.
+    canonical_role: 'owner',
+    // Pages worth fixing as canonical (governance/hints.mjs).
+    canonical_hint: { enabled: true, min_sources: 5, min_backlinks: 8, hot_factor: 0.6 },
     rules: [],
   },
   telemetry: {

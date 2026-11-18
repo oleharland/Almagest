@@ -237,8 +237,11 @@ Every wiki page carries a `tier` field. The tier determines how strictly the pag
 
 ### Canonical — locked definitions
 
-**What:** Agreed taxonomies, strategic decisions, fixed reference lists. Listed in `brain.config.yaml` → `canonical_pages`.
+**What:** Agreed taxonomies, strategic decisions, fixed reference lists.
 
+**How a page becomes canonical.** A page is canonical when its slug is in `brain.config.yaml` → `canonical_pages`, or when its frontmatter on `main` says `tier: canonical`. Both count the same everywhere: the audit, the ingest runner, the merge and the review inbox read one definition. A person sets the tier in the review inbox, on a page in an open proposal or on a page already on `main`, and the inbox suggests pages that many documents point at. The service never edits `brain.config.yaml`.
+
+- **You never set `tier: canonical`**, on a new page or an existing one. The runner refuses a run whose branch does that, and the merge refuses it again. Write a new page as `evidence` or `curated`; a person decides later whether it is canonical.
 - The agent **cannot propose changes** to canonical pages. Only a human edits them, directly. This is unchanged and non-negotiable #4.
 - Canonical pages are the **guardrails** for everything below.
 

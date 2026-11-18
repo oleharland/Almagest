@@ -21,18 +21,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { assertCanApprove, AuthError, ForbiddenError, hasRole, parseTokens, serviceActor } from '../core/auth.mjs';
+import matter from 'gray-matter';
+
+import { canonicalSet, TIERS, tierOfText, withTier } from '../../../tools/lib/canonical.mjs';
+import { assertCanApprove, assertCanChangeTier, AuthError, ForbiddenError, hasRole, parseTokens, serviceActor } from '../core/auth.mjs';
 import { gitIdentity } from '../core/git.mjs';
 import { HttpError } from '../core/http.mjs';
-import { newId, nowIso } from '../core/schemas.mjs';
+import { ingestBranch, newId, nowIso, ROLES } from '../core/schemas.mjs';
 import { NotFoundError } from '../core/store/index.mjs';
 import { attachDemand, buildChanges } from './builder.mjs';
+import { canonicalAt } from './canonical.mjs';
 import { appendChallenge, challengeFrom, challengeRow } from './challenges.mjs';
 import { normalizeAudit, runAudit } from './merge.mjs';
 import { listChanges, outsideFiles } from './paths.mjs';
 import * as policy from './policy.mjs';
 import { assertMayAct, vouchedAs } from './trust.mjs';
-import { describe, lookupQuestionOf, titleFor } from './summary.mjs';
+import { describe, lookupQuestionOf, tierTitle, titleFor } from './summary.mjs';
 
 /** canonical_conflict has exactly one non-dismiss effect (spec → Decision). Enforced by construction. */
 export const CANONICAL_OPTIONS = [
@@ -80,10 +84,15 @@ function approvalRecord(actor, { scope, channel, headSha }) {
   };
 }
 
-export function createService(ctx, { merger, confirmations, lock, identities, allowed }) {
+/** A page slug as it can appear in a route: one plain file name, never a path. */
+const PAGE_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export function createService(ctx, { merger, confirmations, lock, identities, allowed, hints = null }) {
   const { store, bus, git, config, log } = ctx;
   const gov = config.governance;
   const rules = policy.validateRules(gov.rules || []);
+  const canonicalRole = String(gov.canonical_role || 'owner');
+  if (!ROLES.includes(canonicalRole)) throw new Error(`governance.canonical_role must be one of ${ROLES.join(' | ')} (got "${canonicalRole}")`);
   const options = { separationOfDuties: Boolean(gov.separation_of_duties) };
   const requireSso = Boolean(gov.require_sso_for_approval);
   const rolesMaxAgeMs = Number(gov.session_roles_max_age_minutes ?? DEFAULT_SESSION_ROLES_MAX_AGE_MINUTES) * 60 * 1000;
@@ -93,6 +102,12 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
   const svc = serviceActor('governance');
 
   const labelFor = (source) => (config.sources.connectors || []).find((c) => c.id === source?.connector)?.label || '';
+
+  /** What a proposal needs: the rules, plus the canonical role for a tier proposal that moves a page to or from canonical. */
+  const requirementsFor = (p, { changes = p.changes, decisions = [] } = {}) => policy.computeRequirements({
+    changes, decisions, source: p.source, label: labelFor(p.source), rules,
+    tierChange: p.kind === 'tier' ? p.tier : null, canonicalRole,
+  });
 
   // Audit ids sort by time; keep them strictly increasing so two entries in
   // the same millisecond still list in the order they happened.
@@ -194,10 +209,31 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     const headSha = info.headSha || (await git.revParse(branch));
     const baseSha = info.baseSha || (await git.mergeBase(config.service.git.main, headSha));
 
-    const { changes, otherFiles } = await buildChanges({ git, baseSha, headSha, wikiDir, canonicalPages: config.v1.canonicalPages });
+    const locked = await canonicalAt(git, config);
+    const { changes, otherFiles } = await buildChanges({ git, baseSha, headSha, wikiDir, canonicalPages: config.v1.canonicalPages, locked });
     const files = await listChanges(git, baseSha, headSha);
     const outside = outsideFiles(files, allowed);
     await attachDemand(changes, ctx.demand, log);
+    // A tier proposal changes the tier line of one page, which is "canonical" on
+    // one side of it. The merge proves the diff is only that line; here the
+    // page just must not read as a forbidden change to a locked page.
+    const kind = live?.kind || (job.tierChange ? 'tier' : '');
+    const tier = live?.tier || job.tierChange || null;
+    if (kind === 'tier') {
+      for (const c of changes) if (c.slug === tier?.slug) { c.canonical = false; delete c.promotes; c.tierChange = { from: tier.from, to: tier.to }; }
+    }
+    // A page the branch makes canonical is fine only when a person chose it in
+    // the inbox and the page is still exactly what they chose it on.
+    const edits = live?.tierEdits || {};
+    for (const c of changes.filter((x) => x.promotes)) {
+      const edit = edits[c.slug];
+      const blob = (await git.tryRun(['rev-parse', `${headSha}:${c.path}`]))?.trim();
+      if (edit?.to === 'canonical' && edit.blob && edit.blob === blob) {
+        c.canonical = false;
+        c.tierSetBy = { by: edit.by, display: edit.display, at: edit.at };
+        delete c.promotes;
+      }
+    }
     if (live) {
       for (const c of changes) {
         const prev = (live.changes || []).find((x) => x.slug === c.slug);
@@ -223,7 +259,9 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       const claim = c.claims.find((x) => x.op !== 'remove');
       created.push(makeDecision(proposalId, {
         kind: 'canonical_conflict', slug: c.slug, auto: true,
-        question: `This proposal changes the locked reference page “${c.title}”. Locked pages are never changed by a proposal. Should the new material be recorded as a challenge to it?`,
+        question: c.promotes
+          ? `This proposal makes the page “${c.title}” canonical, and no person chose that in the inbox. Only a person makes a page canonical. Should the new material be recorded as a challenge instead?`
+          : `This proposal changes the locked reference page “${c.title}”. Locked pages are never changed by a proposal. Should the new material be recorded as a challenge to it?`,
         claimA: c.claims.find((x) => x.before)?.before || '',
         claimB: claim?.text || `Proposed edits to ${c.slug}`,
         sourceB: claim?.citation ? `${claim.citation.id}, ${claim.citation.locator}` : source?.id || '',
@@ -242,7 +280,8 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       ...(lookupQuestion ? { lookupQuestion } : {}),
       jobId: job.id || live?.jobId || '', branch, baseSha, headSha,
       worktree: info.worktree || job.worktree || live?.worktree || '',
-      title: titleFor(source), source,
+      ...(kind === 'tier' ? { kind: 'tier', tier } : {}),
+      title: kind === 'tier' ? (live?.title || tierTitle(job.tierWho || 'Someone', tier.title || tier.slug, tier.to)) : titleFor(source), source,
       audit: normalizeAudit(info.audit ?? job.audit),
       changes, otherFiles, files, outside,
       decisions: decisions.map((d) => d.id),
@@ -251,7 +290,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       extends: extendsFrom(runReport) ?? live?.extends ?? [],
       updatedAt: now,
     };
-    fields.required = policy.computeRequirements({ changes, decisions, source, label: labelFor(source), rules });
+    fields.required = requirementsFor({ kind, tier, source }, { changes, decisions });
     fields.summary = describe(fields, decisions).sentence;
 
     let proposal;
@@ -347,9 +386,9 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
 
     let status = 'approved';
     let job = null;
-    if (result.reason === 'paths') {
+    if (result.reason === 'paths' || result.reason === 'canonical' || result.reason === 'tier') {
       status = p.status;
-      await record('policy.violation', actor, p.id, channel, { reason: result.message, files: result.files, headSha: p.headSha });
+      await record('policy.violation', actor, p.id, channel, { reason: result.message, code: result.reason, files: result.files, headSha: p.headSha });
     } else if (result.reason === 'conflict' || result.reason === 'audit') {
       status = 'conflicted';
     } else if (result.reason === 'stale') {
@@ -361,7 +400,10 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     // proposal — after that a person has to look.
     let message = result.message;
     let conflictRevise = p.conflictRevise || { count: 0, headSha: '' };
-    if (status === 'conflicted') {
+    if (status === 'conflicted' && p.kind === 'tier') {
+      // A tier change has no agent to redo it: the page moved under it.
+      message = 'The page changed after this was proposed, so the change no longer fits. Turn this down and make the change again.';
+    } else if (status === 'conflicted') {
       const pending = conflictRevise.headSha === p.headSha;
       if (pending) {
         message = `${result.message} The agent is already redoing it.`;
@@ -438,11 +480,16 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     });
   }
 
+  const assertNotTier = (p) => {
+    if (p.kind === 'tier') throw new HttpError(409, 'This is a tier change. There is nothing for the agent to redo. Turn it down if you do not want it.');
+  };
+
   async function rejectPage(prpId, slug, actor, { channel = 'web', reason = '' } = {}) {
     assertReviewer(actor, channel);
     return lock(async () => {
       const p = await load(prpId);
       assertLive(p);
+      assertNotTier(p);
       const change = (p.changes || []).find((c) => c.slug === slug);
       if (!change) throw new HttpError(400, `There is no page "${slug}" in this proposal.`);
       if (change.pageStatus === 'rejected') return p;
@@ -453,7 +500,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       if (!job) throw new HttpError(503, "The page couldn't be taken out right now — the agent queue isn't reachable. Nothing was changed.");
       const changes = p.changes.map((c) => (c.slug === slug ? { ...c, pageStatus: 'rejected' } : c));
       const decisions = await store.decisions.listByProposal(p.id);
-      const required = policy.computeRequirements({ changes, decisions, source: p.source, label: labelFor(p.source), rules });
+      const required = requirementsFor(p, { changes, decisions });
       const updated = await store.proposals.update(p.id, { changes, required, updatedAt: nowIso() });
       await record('page.reject', actor, p.id, channel, { slug, headSha: p.headSha, jobId: job.id || null });
       bus.emit('proposal.updated', { proposal: updated });
@@ -468,6 +515,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     return lock(async () => {
       const p = await load(prpId);
       assertLive(p);
+      assertNotTier(p);
       const job = await enqueue({
         kind: 'revise', source: p.source, trigger: 'feedback', requestedBy: actor.id, proposalId: p.id,
         instructions: `A reviewer (${actor.display}) asked for changes to this proposal:\n\n${text}`,
@@ -482,6 +530,176 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       bus.emit('proposal.updated', { proposal: updated });
       return updated;
     });
+  }
+
+  // ── tiers ──────────────────────────────────────────────────────────────────
+
+  /**
+   * The first lines of every tier action: who, how they got here, and which
+   * role the change needs. Only a person in a signed-in browser session, in
+   * the web inbox, passes: not an agent, not an API or MCP token, and none of
+   * the chat, Slack, email or GitHub channels.
+   */
+  function assertMayChangeTier(actor, channel, { canonical = false } = {}) {
+    if (channel !== 'web') throw new ForbiddenError('A tier is changed only in the signed-in review inbox, not from chat, Slack, email or GitHub.');
+    assertCanChangeTier(actor, { canonical, role: canonicalRole });
+    assertMayAct(actor, 'web');
+    assertRolesFresh(actor);
+  }
+
+  function assertTier(to) {
+    if (!TIERS.includes(to)) throw new HttpError(400, `The tier must be one of ${TIERS.join(', ')}.`);
+  }
+
+  function assertConfirmed(to, confirm) {
+    if (to === 'canonical' && confirm !== true) throw new HttpError(400, 'Read what canonical means for the page, then confirm.');
+  }
+
+  const auditNote = (audit) => (audit.findings || []).filter((f) => f.severity === 'error').slice(0, 3).map((f) => `${f.id}${f.slug ? ` ${f.slug}` : ''}: ${f.message}`).join('; ') || audit.error || 'the audit did not pass';
+
+  /**
+   * Change the tier of one page in an open proposal. A human edit to the
+   * proposal: a new commit on its branch that changes only the `tier:` line of
+   * that page, authored by the person and committed by the service, written
+   * with git plumbing so no checkout is touched. The service's own audit runs
+   * on the new head first; if it fails the branch is not moved and the person
+   * is told why. The reviewed version then moves to the new head the way it
+   * does for a revision, so earlier approvals no longer count.
+   */
+  async function setPageTier(prpId, slug, to, actor, { channel = 'web', headSha, confirm = false } = {}) {
+    assertMayChangeTier(actor, channel, { canonical: to === 'canonical' });
+    assertTier(to);
+    assertConfirmed(to, confirm);
+    return lock(async () => {
+      const p = await load(prpId);
+      assertNotTier(p);
+      policy.assertMayApprove(p, actor, { ...(await policyOptions(p, actor)), requireSso, scope: 'all', channel, headSha, requireHead: true });
+      const change = (p.changes || []).find((c) => c.slug === slug && c.pageStatus !== 'rejected');
+      if (!change || change.action === 'delete') throw new HttpError(400, `There is no page "${slug}" in this proposal to change the tier of.`);
+      if ((p.changes || []).some((c) => c.pageStatus === 'rejected')) throw new HttpError(409, 'A page is being taken out of this proposal. Wait until that is done.');
+      if ((await canonicalAt(git, config)).has(slug)) {
+        throw new HttpError(409, 'This page is already canonical on the knowledge base. Change its tier from the page itself, not from a proposal.');
+      }
+      const file = change.path;
+      const text = await git.show(p.headSha, file);
+      if (text === null) throw new HttpError(409, 'The page is missing from this version of the proposal.');
+      const from = tierOfText(text);
+      assertMayChangeTier(actor, channel, { canonical: from === 'canonical' || to === 'canonical' });
+      if (from === to) throw new HttpError(409, `This page is already ${to}.`);
+      const next = withTier(text, to);
+      if (next === null) throw new HttpError(409, 'The tier line of this page cannot be edited here.');
+
+      if ((await store.jobs.list({ proposalId: p.id, status: ['queued', 'running'] })).length) {
+        throw new HttpError(409, 'The agent is still working on this proposal. Try again in a minute.');
+      }
+      const wtPath = (await git.worktreeFor(p.branch))?.path || '';
+      let handle = null;
+      if (wtPath) {
+        try { handle = await git.openWorktree(wtPath); } catch (err) { log.warn('proposal worktree is not usable', { proposal: p.id, error: err.message }); }
+        if (!handle || (await handle.run(['status', '--porcelain'])).trim() !== '') {
+          throw new HttpError(409, 'The agent is still working on this proposal. Try again in a minute.');
+        }
+      }
+
+      const tree = await merger.treeWith((await git.run(['rev-parse', `${p.headSha}^{tree}`])).trim(), [[file, next]]);
+      const sha = await merger.commitTree(tree, [p.headSha], `Set ${slug} to ${to} (${p.id})`, gitIdentity(actor));
+      const audit = await merger.auditCommit(sha);
+      if (audit.exit !== 0) {
+        await record('page.tier_refused', actor, p.id, channel, { slug, to, reason: auditNote(audit) });
+        throw new HttpError(409, `That change was not kept, because the automatic checks failed on the result (${auditNote(audit)}).`);
+      }
+      await git.run(['update-ref', '-m', `almagest: tier of ${slug} to ${to}`, `refs/heads/${p.branch}`, sha, p.headSha]);
+      if (handle) await handle.run(['reset', '--hard', '--quiet', sha]).catch((err) => log.warn('could not refresh the proposal worktree', { proposal: p.id, error: err.message }));
+
+      const blob = (await git.run(['rev-parse', `${sha}:${file}`])).trim();
+      const edit = { from, to, by: actor.id, display: actor.display, at: nowIso(), headSha: sha, blob };
+      await store.proposals.update(p.id, { tierEdits: { ...(p.tierEdits || {}), [slug]: edit } });
+      const updated = await upsert({ id: p.jobId, kind: 'tier-edit', source: p.source, requestedBy: actor.id, runReport: { blocked: [], notes: p.notes, pages: p.reportPages } },
+        { branch: p.branch, baseSha: p.baseSha, headSha: sha, audit, worktree: p.worktree });
+      await record('page.tier', actor, p.id, channel, { slug, from, to, headSha: sha, previousHeadSha: p.headSha });
+      return updated;
+    });
+  }
+
+  /**
+   * Change the tier of a page that is already on main. The service makes a
+   * small proposal authored by the person: a branch holding one commit on top
+   * of main that changes only the page's `tier:` line, then runs it through
+   * the normal gate. If the person's own approval satisfies the policy it is
+   * recorded through the ordinary approve path, so in a solo brain this is one
+   * action; otherwise the proposal waits in the inbox for the others.
+   */
+  async function proposeTier(slug, to, actor, { channel = 'web', confirm = false } = {}) {
+    assertMayChangeTier(actor, channel, { canonical: to === 'canonical' });
+    assertTier(to);
+    assertConfirmed(to, confirm);
+    if (!PAGE_SLUG.test(String(slug))) throw new HttpError(400, 'That is not a page name.');
+    const created = await lock(async () => {
+      const main = config.service.git.main;
+      const mainSha = await git.revParse(main);
+      const file = `${wikiDir}/${slug}.md`;
+      const text = await git.show(mainSha, file);
+      if (text === null) throw new HttpError(404, `There is no page "${slug}" on the knowledge base.`);
+      const from = tierOfText(text);
+      if (!TIERS.includes(from)) throw new HttpError(409, 'This page has no tier line to change.');
+      assertMayChangeTier(actor, channel, { canonical: from === 'canonical' || to === 'canonical' });
+      if (from === to) throw new HttpError(409, `This page is already ${to}.`);
+      const inConfig = canonicalSet({ configPages: config.v1.canonicalPages }).has(slug);
+      if (inConfig) {
+        throw new HttpError(409, to === 'canonical' ? 'This page is already canonical.' : 'This page is locked in brain.config.yaml. Only a person editing that file by hand can unlock it.');
+      }
+      for (const other of await store.proposals.list({ status: policy.LIVE })) {
+        if (other.kind === 'tier' && other.tier?.slug === slug) throw new HttpError(409, 'A tier change for this page is already waiting in the inbox.');
+      }
+      const next = withTier(text, to);
+      if (next === null) throw new HttpError(409, 'The tier line of this page cannot be edited here.');
+      const pageTitle = String(matter(text).data?.title || slug);
+
+      const tree = await merger.treeWith((await git.run(['rev-parse', `${mainSha}^{tree}`])).trim(), [[file, next]]);
+      const sha = await merger.commitTree(tree, [mainSha], `Set ${slug} to ${to}`, gitIdentity(actor));
+      const audit = await merger.auditCommit(sha);
+      if (audit.exit !== 0) throw new HttpError(409, `That change was not made, because the automatic checks failed on the result (${auditNote(audit)}).`);
+
+      let branch = ingestBranch({ id: `tier-${slug}`, sha256: mainSha });
+      if (await git.branchExists(branch)) branch = ingestBranch({ id: `tier-${slug}` });
+      await git.run(['update-ref', '-m', `almagest: tier proposal for ${slug}`, `refs/heads/${branch}`, sha]);
+      try {
+        const job = {
+          id: newId('job'), kind: 'tier', trigger: 'tier', branch, requestedBy: actor.id, runReport: { blocked: [] },
+          source: { kind: 'tier', id: `tier-${slug}`, title: pageTitle, sha256: mainSha },
+          tierChange: { slug, from, to, title: pageTitle }, tierWho: actor.display || actor.id,
+        };
+        const proposal = await upsert(job, { branch, baseSha: mainSha, headSha: sha, audit });
+        await record('page.tier_propose', actor, proposal.id, channel, { slug, from, to, headSha: sha });
+        return proposal;
+      } catch (err) {
+        await git.tryRun(['update-ref', '-d', `refs/heads/${branch}`]);
+        throw err;
+      }
+    });
+
+    // The person's own approval, when it is enough. Outside the lock: approve takes it itself.
+    try {
+      const fresh = await store.proposals.get(created.id);
+      const opts = { ...(await policyOptions(fresh, actor)), requireSso, scope: 'all', channel, headSha: fresh.headSha, requireHead: true };
+      policy.assertMayApprove(fresh, actor, opts);
+      const mine = approvalRecord(actor, { scope: 'all', channel, headSha: fresh.headSha });
+      const { evaluation } = await evaluateProposal({ ...fresh, approvals: [...(fresh.approvals || []), mine] });
+      if (evaluation.ready) return await approve(fresh.id, actor, { scope: 'all', channel, headSha: fresh.headSha });
+    } catch (err) {
+      log.debug('the proposer\'s own approval was not recorded', { proposal: created.id, reason: err.message });
+    }
+    return store.proposals.get(created.id);
+  }
+
+  /** Turn a canonical suggestion down. It returns only when the page's documents have grown by half. */
+  async function dismissHint(slug, actor, { channel = 'web' } = {}) {
+    assertMayChangeTier(actor, channel);
+    if (!hints) throw new HttpError(404, 'Suggestions are not available.');
+    const record_ = await hints.dismiss(String(slug), actor);
+    if (!record_) throw new HttpError(404, 'That page is not on the list of suggestions.');
+    await record('hint.dismiss', actor, `page:${slug}`, channel, { slug, documents: record_.documents });
+    return record_;
   }
 
   /** Append to the challenges ledger on the proposal's branch — a service commit, outside brain/wiki/. */
@@ -558,7 +776,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       // Refresh requirements and summary: the open-decision count changed.
       const decisions = await store.decisions.listByProposal(p.id);
       p = await store.proposals.update(p.id, {
-        required: policy.computeRequirements({ changes: p.changes, decisions, source: p.source, label: labelFor(p.source), rules }),
+        required: requirementsFor(p, { changes: p.changes, decisions }),
         summary: describe(p, decisions).sentence,
         updatedAt: nowIso(),
       });
@@ -668,6 +886,10 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     // extras (documented in docs/v2/governance.md)
     retryMerge,
     recordExternalMerge,
+    setPageTier,
+    proposeTier,
+    dismissHint,
+    canonicalRole,
     getDecision: (id) => store.decisions.get(id),
     listDecisions: (prpId) => store.decisions.listByProposal(prpId),
     async evaluate(prpId) {
@@ -685,6 +907,10 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       } catch (err) {
         return { ok: false, canReview, why: err.message };
       }
+    },
+    /** Is `actor` a person in a signed-in browser who could review at all? For showing or hiding controls — the actions re-check. */
+    canReview(actor) {
+      try { assertCanApprove(actor); assertMayAct(actor, 'web'); return true; } catch { return false; }
     },
     rules,
     options: { ...options, requireSso },

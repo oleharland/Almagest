@@ -194,7 +194,10 @@ anonymization:
 
 
 # ── Canonical pages ───────────────────────────────────────────────────────────
-# Wiki page slugs that are treated as locked reference lists.
+# Wiki page slugs that are treated as locked reference lists. A person can also
+# make a page canonical in the review inbox, which sets `tier: canonical` in the
+# page's own frontmatter; a page is canonical by either route. The service never
+# edits this file, so pages listed here stay locked until someone edits it by hand.
 # The agent will refuse to delete or rename these pages and will warn
 # before making structural edits to their content.
 
@@ -396,6 +399,12 @@ governance:
   # rules:
   #   - when: { hot: true }
   #     require: { approvals: 2, per_page: true }
+  # canonical_role: owner            # who may change a page to or from canonical in the inbox
+  # canonical_hint:                  # the inbox suggests pages worth fixing as canonical
+  #   enabled: true
+  #   min_sources: 5                 # documents that contributed to the page
+  #   min_backlinks: 8               # other pages that link to it
+  #   hot_factor: 0.6                # both thresholds are multiplied by this for the most read pages
 
 # Almagest as an MCP server for your chats — docs/v2/mcp.md
 mcp:

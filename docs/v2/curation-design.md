@@ -1,13 +1,15 @@
 # Curation: choosing a tier in the inbox, and learnings the brain proposes
 
-Status: design. Nothing in this document is built. It covers two gaps seen in
-the first real run of the service, and what to build for each. File and
-function names are the ones on the branch at the time of writing.
+Status: Part 1 (choosing a tier in the inbox) is built. Part 2 (learnings the
+brain proposes) is not built. The document covers two gaps seen in the first
+real run of the service. Part 1 now describes what the code does; where the
+code differs from the first design, this text follows the code. User-facing
+description: [governance.md](governance.md), section Tiers in the inbox.
 
 ## The two gaps
 
-1. **No way to make something canonical from the inbox.** A page becomes
-   canonical only when a person adds its slug to `canonical_pages` in
+1. **No way to make something canonical from the inbox.** A page became
+   canonical only when a person added its slug to `canonical_pages` in
    `brain.config.yaml` by hand, through git. The reviewer who reads a proposal
    and thinks "this is a definition everything else depends on" has nowhere to
    say so.
@@ -53,9 +55,9 @@ both sources through one function.
 
 | Where | What the reviewer sees | What happens |
 |---|---|---|
-| A new page in a proposal | A tier control beside the page: evidence, curated, canonical. It starts on what the agent wrote | Changing it is a human edit to the proposal. The service rewrites the `tier` line on the branch under the reviewer's name, the reviewed version moves, and approval applies to the new version |
-| A suggestion in the inbox | A list of pages many documents point at, each with its counts: "30 documents contributed to this page. Should it be canonical?" | The reviewer makes it canonical or dismisses the suggestion |
-| A page already on `main` | "Make canonical" or "Make curated" on the page's entry in the inbox | The service opens a small proposal authored by that person that changes only the `tier` line. It goes through the normal gate: policy, audit, merge |
+| A page in an open proposal | A tier control beside the page: evidence, curated, canonical. It starts on what the agent wrote | Changing it is a human edit to the proposal. The service adds one commit on the branch that changes only the `tier:` line, authored by the reviewer and committed by the service, after its own audit passes. The reviewed version moves, and earlier approvals no longer count |
+| A suggestion in the inbox | A list of pages many documents point at, each with its counts: "30 documents contributed to this page" | The reviewer makes it canonical or dismisses the suggestion |
+| A page already on `main` | "Make canonical", "Make curated" and "Make evidence" on the page's entry (`/inbox/pages/<slug>`) | The service opens a small proposal authored by that person on `ingest/tier-<slug>-<sha7>` that changes only the `tier:` line. It goes through the normal gate: policy, audit, merge, log row. If the person's own approval meets the policy it is recorded at once |
 
 Before the reviewer confirms canonical, the inbox says what it means in plain
 words: the agent can no longer change this page, new material that contradicts
@@ -90,9 +92,15 @@ The agent takes no part in this version. It does not suggest a tier.
 - Non-negotiable 4 is unchanged: an agent cannot propose a change to a
   canonical page. Suggesting that a page become canonical is not a change to
   one.
-- Promotion and demotion need a role the policy names. The default is `owner`,
-  the same role the `enterprise` profile already requires to settle a
-  canonical conflict.
+- Promotion and demotion need a role the policy names (`governance.canonical_role`).
+  The default is `owner`, the same role the `enterprise` profile already
+  requires to settle a canonical conflict. A tier proposal that moves a page to
+  or from canonical also needs an approver with that role. Changing between
+  evidence and curated needs the role that can approve the proposal.
+- Only a person in a signed-in browser session, in the web inbox, can change a
+  tier. Agents, API and MCP tokens, the chat confirmation, Slack, email and
+  GitHub cannot. A commit merged outside the service may not make a page
+  canonical or change a canonical page.
 - A promotion is a commit through the merge gate, attributed to the person,
   logged in `brain/log.md`. No approval is skipped.
 - Demotion (canonical to curated) is the same flow and the same role. Open
@@ -105,9 +113,10 @@ The agent takes no part in this version. It does not suggest a tier.
 | `tools/lib/config.mjs`, `tools/lib/wiki-core.mjs` | One function for "the canonical set": config list plus pages on `main` with `tier: canonical` |
 | `tools/audit.mjs` | Use that function wherever it reads the canonical set. The audit cannot tell who set a tier, so the runner guard is what stops an agent setting it |
 | `server/src/ingest/runner.mjs` | Refuse a run whose branch sets `tier: canonical` on a page that is not canonical on `main` |
-| `server/src/governance/hints.mjs` (new) | Count documents, backlinks and demand per page; decide which pages to suggest; remember dismissals |
-| `server/src/governance/service.mjs` | Set a page's tier on a proposal as a human edit; open a tier-only proposal for a page on `main` |
-| `server/src/governance/policy.mjs` | A rule key for tier changes, default `owner` |
+| `tools/lib/canonical.mjs` (new), `server/src/governance/canonical.mjs` (new) | The one definition, and reading it from `main` in git |
+| `server/src/governance/hints.mjs` (new) | Count documents, backlinks and demand per page; decide which pages to suggest; remember dismissals (store namespace `canonical-hints.dismissed`) |
+| `server/src/governance/service.mjs`, `merge.mjs` | `setPageTier`, `proposeTier`, `dismissHint`; the merge verifies a tier proposal is exactly one `tier:` line and refuses an unchosen or external promotion |
+| `server/src/governance/policy.mjs`, `core/config.mjs`, `core/auth.mjs` | `governance.canonical_role` (default `owner`), `assertCanChangeTier`, the role a tier proposal needs from its approver |
 | `server/src/governance/web/views.mjs`, `channels/web.mjs` | The tier control, the suggestions list, the explanation, the actions |
 | `agent/rules/wiki.md`, `agent/rules/ingest.md` | How a page becomes canonical now, and that the agent never sets it |
 
@@ -180,6 +189,7 @@ Both are plain comparisons, so they belong in `tools/audit.mjs`, as warnings:
 | `server/src/ingest/index.mjs` or a small `synthesis.mjs` | The trigger: count changed pages on merge, the cron, the window marker, the caps |
 | `server/src/governance/service.mjs`, `web/views.mjs` | Label the proposal, remember turned-down learnings |
 | `tools/audit.mjs`, `docs/audit.md` | `DUP-001`, `BASIS-001` |
+| `server/src/governance/index.mjs` (Part 1) | `almagest canonical-hints`, read only |
 | `server/bin/almagest.mjs` | `almagest synthesize` |
 
 ## Build order

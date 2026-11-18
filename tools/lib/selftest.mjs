@@ -448,5 +448,58 @@ console.log('\nCLI — exit codes are the contract');
   }
 }
 
+// ── the canonical set ────────────────────────────────────────────────────────
+
+console.log('\ncanonical set — the config list and `tier: canonical` are one definition');
+{
+  const orphan = (tier) => `---
+title: "Orphan"
+type: topic
+tier: ${tier}
+origin: source
+status: draft
+confidence: high
+tags: []
+aliases: []
+owner: ""
+date_created: "2026-01-01"
+date_modified: "2026-01-05"
+last_verified: "2026-01-05"
+sources:
+  - id: alpha-pdf
+    path: brain/raw/extracted/alpha.pdf.txt
+    sha256: "3b50e003ca81fc8afceca1f8d8a259adfd2a3940144e429640ee160e4f8677d9"
+related: []
+relations:
+  supports: []
+  contradicts: []
+  supersedes: []
+  depends_on: []
+---
+
+## Summary
+
+Nothing links here. [source: alpha-pdf, §Overview]
+`;
+  const withOrphan = (tier, canonicalPages = '[]') => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-canon-'));
+    fs.cpSync(CLEAN, tmp, { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'brain', 'wiki', 'orphan.md'), orphan(tier));
+    const cfg = path.join(tmp, 'brain.config.yaml');
+    fs.writeFileSync(cfg, fs.readFileSync(cfg, 'utf-8').replace('canonical_pages: []', `canonical_pages: ${canonicalPages}`));
+    return tmp;
+  };
+  const orphans = (tmp) => auditJson(tmp).json.findings.filter((f) => f.id === 'LINK-002' && f.slug === 'orphan');
+  const dirs = [withOrphan('curated'), withOrphan('canonical'), withOrphan('curated', '[orphan]'), withOrphan('canonical', '[orphan]')];
+  try {
+    check('a curated page nothing links to is an orphan', orphans(dirs[0]).length === 1);
+    check('`tier: canonical` exempts a page from LINK-002', orphans(dirs[1]).length === 0);
+    check('the config list still exempts a page from LINK-002', orphans(dirs[2]).length === 0);
+    check('both at once is still one exemption', orphans(dirs[3]).length === 0);
+  } finally {
+    for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+  }
+}
+
 console.log(`\n${fail === 0 ? green('✓') : red('✗')} ${pass} passed, ${fail} failed\n`);
 process.exitCode = fail === 0 ? 0 : 1;

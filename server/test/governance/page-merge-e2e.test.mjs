@@ -263,10 +263,10 @@ Morning Brew was founded in 2014. [source: beta-pdf, p.1]` });
     };
     const named = await attempt({ canonical: ['morningbrew'] });
     assert.equal(named.ok, false);
-    assert.equal(named.reason, 'conflict');
+    assert.equal(named.reason, 'canonical');   // refused before any combining: the merge itself now checks the canonical set
     const tiered = await attempt({ onMain: PAGE_A.replace('tier: evidence', 'tier: canonical'), pages: { b: PAGE_B.replace('tier: evidence', 'tier: canonical') } });
     assert.equal(tiered.ok, false);
-    assert.equal(tiered.reason, 'conflict');
+    assert.equal(tiered.reason, 'canonical');
     const normal = await attempt({});
     assert.equal(normal.ok, true, normal.message);
   });

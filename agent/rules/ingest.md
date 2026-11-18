@@ -22,6 +22,7 @@ The first non-negotiable is **no unreviewed writes** — not "no writes without 
 | Curated-tier new page or update, audit clean | Lands automatically |
 | Contradiction with any existing page | **Blocks** — resolve in-session or leave unwritten |
 | Contradicts a canonical page | **Blocks** — logged to `brain/canonical-challenges.md`, never merged silently |
+| Would set `tier: canonical` on any page | **Never.** Only a person makes a page canonical, in the review inbox. Write the page as `evidence` or `curated` |
 | Deletion, merge, or rename of an existing page | **Blocks** |
 | `confidence: low` on a curated page | **Blocks** |
 | Subject already has a page pending in another proposal (runner mode) | The pending page counts as an existing page: write only what this source adds, with the same slug (*Pending pages*). A contradiction with its text **Blocks** |
@@ -218,7 +219,7 @@ A changed source has already produced wiki pages, and the manifest entry's `page
    - **The sidecar diff shows what moved.** Every hunk crossing a marker line is a locator to re-check.
    - **`tools/audit.mjs` checks the rest.** `CITE-001` for a citation that does not parse, `CITE-002` for an `id` with no matching entry in `sources`.
    - **Then close it out.** Correct the locators, update `sources[].sha256` on every touched page to the new digest, re-run the audit. The re-ingest is not finished while `CITE-005` still fires for this source — a page left citing the old digest is a page whose citations nobody has checked.
-6. **Tier rules still apply.** A changed source that contradicts a canonical page is still out of scope — flag and skip, exactly as on first ingest.
+6. **Tier rules still apply.** A changed source that contradicts a canonical page is still out of scope — flag and skip, exactly as on first ingest. A page is canonical when it is listed in `canonical_pages` or its frontmatter on `main` says `tier: canonical`; you never set that tier yourself.
 7. **After approval, update the entry in place** — never append a second entry for the same source: new `sha256`, new `extracted_sha256`, new `bytes`, `last_ingested` set to today, `pages` set to the union of the old list and any newly touched slugs. `id` and `first_ingested` never change.
 
 ### Manifest edge cases
@@ -495,7 +496,7 @@ The non-negotiables do not move. What moves is **who does which step**: the runn
 
 Everything else in this file, unchanged: filename sanitization, the extracted-source sidecar with its page markers, the manifest lookup and the new / changed / unchanged decision, diff re-ingest for a changed source, entity resolution against `brain/.index/aliases.tsv`, pages written to `agent/rules/wiki.md`, inline citations, cross-links, the `index.md` rows, the `manifest.yaml` entry and the `log.md` line — all in the worktree, all in the one commit the runner makes.
 
-Write only under `brain/`: `brain/wiki/`, `brain/raw/` (sidecars), `brain/.index/`, `brain/index.md`, `brain/manifest.yaml`, `brain/log.md`, `brain/canonical-challenges.md`. The runner refuses the whole run if anything else in the worktree changed — `brain.config.yaml`, `agent/`, `tools/`, `CLAUDE.md` and the generated shims included — and if a canonical page changed at all.
+Write only under `brain/`: `brain/wiki/`, `brain/raw/` (sidecars), `brain/.index/`, `brain/index.md`, `brain/manifest.yaml`, `brain/log.md`, `brain/canonical-challenges.md`. The runner refuses the whole run if anything else in the worktree changed — `brain.config.yaml`, `agent/`, `tools/`, `CLAUDE.md` and the generated shims included — if a canonical page changed at all (listed in `canonical_pages`, or `tier: canonical` on `main`), and if any page you wrote says `tier: canonical`.
 
 ### Pending pages
 

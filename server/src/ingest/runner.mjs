@@ -25,12 +25,14 @@ import path from 'node:path';
 import matter from 'gray-matter';
 import YAML from 'yaml';
 
+import { tierOfText } from '../../../tools/lib/canonical.mjs';
 import { asArray } from '../../../tools/lib/wiki-core.mjs';
 
 import { serviceActor } from '../core/auth.mjs';
 import { modelForTier } from '../core/config.mjs';
 import { gitIdentity, WorktreeTamperedError } from '../core/git.mjs';
 import { ingestBranch, nowIso, slugify, validateRunReport } from '../core/schemas.mjs';
+import { canonicalAt } from '../governance/canonical.mjs';
 import { agentInstructionPath, writableMatcher } from '../governance/paths.mjs';
 import { LIVE } from '../governance/policy.mjs';
 import { auditSummary, runAudit, wrapperIntact, writeAuditWrapper } from './audit.mjs';
@@ -81,13 +83,11 @@ function modelFor(config, driverName) {
  * (CLAUDE.md, AGENTS.md, .claude/ …) passes either check.
  */
 function writablePaths(config) {
-  const brain = config.v1.brainDir.replace(/\/+$/, '');
   return {
     allowed: writableMatcher({
       brainDir: config.v1.brainDir, manifestPath: config.v1.manifestPath,
       challengesPath: config.v1.challengesPath, indexDir: config.v1.indexDir,
     }),
-    canonical: new Set(config.v1.canonicalPages.map((s) => `${brain}/wiki/${s}.md`)),
   };
 }
 
@@ -231,7 +231,7 @@ export function createRunner(ctx, { driver, logsDir }) {
     try { proposals = await ctx.governance.listProposals({ status: LIVE }); }
     catch (err) { log.warn('could not list open proposals, running without the pending set', { job: job.id, error: err.message }); return []; }
     const others = (proposals || [])
-      .filter((p) => p && LIVE.includes(p.status) && p.id !== t.proposal?.id && p.branch !== t.branch && SAFE_NAME.test(String(p.id)))
+      .filter((p) => p && p.kind !== 'tier' && LIVE.includes(p.status) && p.id !== t.proposal?.id && p.branch !== t.branch && SAFE_NAME.test(String(p.id)))
       .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
     const root = path.join(wt, PENDING_DIR);
     const pages = [];
@@ -336,9 +336,24 @@ export function createRunner(ctx, { driver, logsDir }) {
     if (outside.length) {
       throw new JobError(`agent wrote outside the brain's writable paths: ${outside.slice(0, 10).join(', ')}${outside.length > 10 ? ', …' : ''} — not committed (agent instruction files such as CLAUDE.md or AGENTS.md are never writable)`);
     }
-    const canonical = touched.filter((p) => allowed.canonical.has(p));
+    // The canonical set as it is on main now: the config list plus every page
+    // whose frontmatter on main says `tier: canonical`.
+    const wikiPrefix = `${config.v1.brainDir.replace(/\/+$/, '')}/wiki/`;
+    const pageSlug = (p) => (p.startsWith(wikiPrefix) && p.endsWith('.md') && !p.slice(wikiPrefix.length).includes('/') ? p.slice(wikiPrefix.length, -3) : '');
+    const locked = await canonicalAt(git, config);
+    const canonical = touched.filter((p) => locked.has(pageSlug(p)));
     if (canonical.length) {
       throw new JobError(`agent changed canonical page(s) ${canonical.join(', ')} — canonical pages are guardrails (non-negotiable 4); not committed`);
+    }
+    // An agent never makes a page canonical, new or existing: that is a
+    // person's decision, made in the review inbox.
+    const promoted = touched.filter((p) => {
+      const slug = pageSlug(p);
+      const file = path.join(wt.path, p);
+      return slug && !locked.has(slug) && fs.existsSync(file) && tierOfText(fs.readFileSync(file, 'utf-8')) === 'canonical';
+    });
+    if (promoted.length) {
+      throw new JobError(`agent set tier: canonical on ${promoted.join(', ')} — only a person makes a page canonical, in the review inbox (non-negotiable 4); not committed`);
     }
     return touched;
   }

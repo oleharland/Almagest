@@ -237,11 +237,14 @@ are combined at merge (Governance → merge).
   approvals: [{ actorId, at, scope: 'all' | '<slug>', channel: ChannelKind }],
   merge?: { sha, at, by, combined?: [slug] },
   extends?: [{ slug, proposalId, title }],   // pages written as additions to pages pending in other proposals
+  kind?: 'tier', tier?: { slug, from, to, title },   // a tier proposal: one page, one `tier:` line (governance.md, Tiers in the inbox)
+  tierEdits?: { [slug]: { from, to, by, at, headSha, blob } },   // a person's tier choice on a page in this proposal
   createdAt, updatedAt }
 
 ProposalChange =
 { slug, path, action: 'create' | 'update' | 'delete' | 'rename',
   tier, hot: bool, demand: number,
+  canonical: bool, promotes?: bool, tierSetBy?: { by, display, at },   // locked on main, made canonical with no person's choice, chosen in the inbox
   claims: [{ op: 'add' | 'change' | 'remove', text, before?,
              citation?: { id, locator }, excerpt?: '<source passage the locator points at>' }],
   pageStatus: 'pending' | 'accepted' | 'rejected' }
@@ -450,6 +453,8 @@ governance:
   separation_of_duties: false      # profile default
   require_sso_for_approval: false  # enterprise: email/Slack links still demand an SSO session
   inherit_profile_rules: true      # the profile's rules come first, these are appended; false drops them (startup warning)
+  canonical_role: owner            # who may move a page to or from canonical in the inbox
+  canonical_hint: { enabled: true, min_sources: 5, min_backlinks: 8, hot_factor: 0.6 }   # pages worth fixing as canonical
   session_roles_max_age_minutes: 60  # a session's roles must be this recent to approve (enterprise: 30)
   channel_roles_max_age_hours: 24  # Slack / GitHub use roles cached at the last inbox sign-in (enterprise: 8)
   rules:                           # every matching rule adds requirements; they combine by max / union
@@ -594,7 +599,9 @@ and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
   cannot approve; every review action needs a browser session + CSRF (or a
   signed Slack / GitHub request); bearer tokens are read-only; one person
   counts once (identity registry, by email); open decisions block merge; audit
-  exit 1 blocks merge; canonical pages are never modified by a proposal; files
+  exit 1 blocks merge; canonical pages (the config list plus `tier: canonical`
+  on `main`, one definition in `tools/lib/canonical.mjs`) are never modified by
+  a proposal, and an agent never sets `tier: canonical`; files
   outside the knowledge-base paths (`governance/paths.mjs`) block merge. See
   [security.md](security.md).
 - **Merge**: `git merge-tree --write-tree main <branch>` → `commit-tree` with
@@ -615,8 +622,12 @@ and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
   - `web`: the review inbox, server-rendered HTML at `/inbox`. Queue ordered by
     open decisions, then hot pages, then age. Per-proposal page: claim cards with
     source excerpts, per-page accept/reject, decision cards, approve / request
-    changes. Also `/inbox/reverify` and `/inbox/gaps` (from telemetry) and
-    `/inbox/activity` (the audit log).
+    changes. Also `/inbox/reverify` and `/inbox/gaps` (from telemetry),
+    `/inbox/activity` (the audit log), `/inbox/canonical` (pages worth fixing as
+    canonical; `POST /inbox/canonical/:slug/dismiss`), `/inbox/pages` and
+    `/inbox/pages/:slug`, and the tier forms `POST /inbox/pages/:slug/tier` and
+    `POST /inbox/p/:id/page/:slug/tier`. Tier changes exist only in the web
+    inbox: session plus CSRF, never a token or another channel.
   - `mcp`: chat can list and explain proposals and ask to approve; the service
     answers with a confirmation link that opens the full review page in an
     authenticated web session (no one-click button). The chat never approves.

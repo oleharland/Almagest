@@ -112,6 +112,11 @@ dl.facts dt{color:var(--text-faint)}dl.facts dd{margin:0;font-family:var(--font-
 table.list{width:100%;border-collapse:collapse;font-size:.92rem}
 table.list td,table.list th{border-bottom:1px solid var(--border);padding:.5rem .4rem;text-align:left;vertical-align:top}
 table.list th{color:var(--text-faint);font-weight:600;font-size:.8rem;text-transform:uppercase;letter-spacing:.04em}
+.tier{margin:.25rem 0 .5rem}
+details.confirm{margin:.5rem 0}
+details.confirm .card{margin-top:.25rem}
+ul.counts{margin:.25rem 0 .75rem;padding-left:1.1rem;color:var(--text-muted)}
+ul.queue li.card{list-style:none}
 .login{max-width:420px;margin:2.5rem auto}
 .code{font-family:var(--font-mono);font-size:1.1rem;letter-spacing:.08em}
 @media (max-width:640px){h1{font-size:1.3rem}.decision .vs{grid-template-columns:1fr}.who .name{display:none}main{padding-top:1rem}}
@@ -142,6 +147,7 @@ const NAV = [
   ['/inbox', 'To review', 'inbox'],
   ['/inbox/reverify', 'Re-check', 'reverify'],
   ['/inbox/gaps', 'Unanswered', 'gaps'],
+  ['/inbox/canonical', 'Canonical', 'canonical'],
   ['/inbox/activity', 'Activity', 'activity'],
 ];
 
@@ -160,9 +166,10 @@ document.addEventListener('submit', function (e) {
  * @param {string} p.nonce
  * @param {string} [p.csrf]
  * @param {string} [p.current]  nav key
+ * @param {object} [p.navCounts]  nav key → number shown beside the label when above zero
  * @param {*}      p.body       html``
  */
-export function layout({ title, actor = null, nonce, csrf = '', current = '', body, footer = null }) {
+export function layout({ title, actor = null, nonce, csrf = '', current = '', body, footer = null, navCounts = {} }) {
   return html`<!doctype html>
 <html lang="en">
 <head>
@@ -175,7 +182,7 @@ export function layout({ title, actor = null, nonce, csrf = '', current = '', bo
 <body>
 <header class="top"><div class="wrap">
   <a class="brand" href="/inbox">Almagest<span>Review</span></a>
-  ${actor ? html`<nav class="main" aria-label="Inbox">${NAV.map(([href, label, key]) => html`<a href="${safeUrl(href)}"${key === current ? raw(' aria-current="page"') : ''}>${label}</a>`)}</nav>
+  ${actor ? html`<nav class="main" aria-label="Inbox">${NAV.map(([href, label, key]) => html`<a href="${safeUrl(href)}"${key === current ? raw(' aria-current="page"') : ''}>${label}${navCounts[key] > 0 ? ` (${navCounts[key]})` : ''}</a>`)}</nav>
   <div class="who"><span class="name">${actor.display}</span>
     <form method="post" action="/inbox/logout"><input type="hidden" name="csrf" value="${csrf}"><button class="btn btn--small" type="submit">Sign out</button></form>
   </div>` : ''}

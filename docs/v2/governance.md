@@ -305,7 +305,10 @@ These are code, not config. No rule, profile or flag changes them.
 5. **The automatic checks gate twice**: the runner's audit must have exit 0,
    and the service re-runs its *own* `tools/audit.mjs` on the merge result in a
    throwaway worktree; anything but exit 0 means main does not move.
-6. **A proposal that modifies a canonical page never merges.** It gets a
+6. **A proposal that modifies a canonical page never merges.** (The canonical set
+   is the config list plus every page whose frontmatter on `main` says
+   `tier: canonical`. The one exception is a tier proposal's own `tier:` line,
+   which the merge verifies. See *Tiers in the inbox*.) It gets a
    `canonical_conflict` question whose only options are *record a challenge*
    (a row appended to `brain/canonical-challenges.md` on the proposal's branch,
    never a wiki edit) and *dismiss*; either way the page change is taken out.
@@ -585,18 +588,97 @@ to accept a commit, not an order to move main. In this order:
 If any step fails, local main does not move. The proposal becomes
 **`merged_unaccepted`** ("Merged on GitHub, not accepted here" in the inbox)
 with `merge.accepted: false` and `merge.reason` (`policy` · `head` · `paths` ·
-`content` · `audit` · `shape` · `checkout` · `busy` · `error`) plus a message, and a
+`content` · `canonical` · `audit` · `shape` · `checkout` · `busy` · `error`) plus a message, and a
 **policy violation** in the activity log. An administrator reconciles it by
 hand (bring the change in through a new proposal, or revert it on GitHub).
 GitHub's **branch protection** is defence in depth: turn it on and mirror your
 rules there, so a bad merge is stopped before it reaches the remote, but the
 service does not rely on it.
 
+### Tiers in the inbox
+
+A page is canonical when its slug is in `canonical_pages` in `brain.config.yaml`
+or its frontmatter on `main` says `tier: canonical`. People set the second kind
+in the inbox. `brain.config.yaml` itself is never touched by the service.
+
+**The control.** Each page in an open proposal shows its tier (Evidence,
+Curated or Canonical) and a "Change the tier" choice. Picking one is a human
+edit to the proposal. The service writes one new commit on the proposal's
+branch that changes only the `tier:` line of that page. The person is the
+author and the service is the committer, and no checkout is touched. The
+service runs its own audit on the new head first. If the audit fails, the
+branch stays where it was and the person is told why. The reviewed version
+moves to the new head the way it does for a revision, so earlier approvals are
+kept in the record and no longer count. The control is not shown for a page
+that is already canonical on `main`, or for a tier proposal.
+
+**The tier proposal.** For a page already on `main`, the page's entry in the
+inbox (`/inbox/pages/<slug>`) offers "Make canonical", "Make curated" and "Make
+evidence". The service creates a small proposal authored by that person on a
+branch named `ingest/tier-<slug>-<sha7>`, the same shape as every other
+proposal branch, so the hooks and the path checks treat it like one. Its only
+change is the `tier:` line of that page. It is marked `kind: 'tier'` and
+carries `tier: { slug, from, to, title }`. Its title reads, for example, "Ole
+wants to make “Glossary” canonical." It goes through the normal gate: policy,
+audit, merge, and a row in `brain/log.md`. If the person's own approval meets
+the policy, it is recorded through the ordinary approve path, so in a solo
+brain the whole change is one action. Otherwise it waits in the inbox. A tier
+proposal has no agent to redo it: asking for changes or taking a page out is
+refused, and a clash with a newer `main` means turning it down and trying again.
+
+The merge checks a tier proposal in code. What the reviewer saw (the merge base
+to the head) must be one modified file, the page, whose text differs from the
+base only in the `tier:` line, going from the recorded tier to the recorded
+one. `main`'s copy must still hold the tier it is leaving, and the merge result
+may change only that page, the log and the derived index. Any other difference
+is refused with the reason `tier`. A page listed in `canonical_pages` cannot be
+lowered here. Open challenges against a demoted page stay in the ledger.
+
+**Who may.** Changing a page to or from canonical needs the role in
+`governance.canonical_role` (default `owner`; `admin` always qualifies), and a
+tier proposal that does so also needs an approver with that role. Changing
+between evidence and curated needs the role that can approve the proposal. The
+check is `assertCanChangeTier` in `core/auth.mjs`, run at the top of every tier
+action in `governance/service.mjs` beside the browser-session check. Only a
+person in a signed-in browser session, in the web inbox, with the form's CSRF
+token, can do it. Agents, API and MCP tokens, the chat confirmation, Slack,
+email and GitHub cannot. Before the first confirm for canonical, the inbox says:
+"The agent can no longer change this page. New material that contradicts it is
+logged as a challenge and is not merged. Only a person can edit it."
+
+**Agents and outside merges.** An agent never sets `tier: canonical`. The
+runner refuses a branch that does, on a new page or an existing one, and the
+merge refuses it again unless the service recorded a person's choice in the
+inbox for that exact page text. A commit merged outside the service (GitHub)
+may not make a page canonical or change a canonical page, whoever chose it.
+
+**Suggestions.** "Pages worth fixing as canonical" (`/inbox/canonical`, linked
+in the navigation with a count) lists pages that many documents contribute to.
+For each page on `main` that is not canonical, not a `claim` page and not a
+template page (slug starting with `_`), the service counts the distinct sources
+in `brain/manifest.yaml` whose `pages` include it (superseded and skipped
+sources do not count), the other pages that link to it, and whether it is among
+the most read pages. A page is suggested when its documents reach `min_sources`
+or its backlinks reach `min_backlinks`. For a hot page both are multiplied by
+`hot_factor` and rounded up. Each row has "Make canonical" and "Dismiss". A
+dismissal is stored with the document count at the time, and the page comes
+back only when that count has grown to at least 1.5 times as many. The most
+documents come first, then the most backlinks.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `governance.canonical_role` | `owner` | the role that may move a page to or from canonical |
+| `governance.canonical_hint.enabled` | `true` | show the suggestions |
+| `governance.canonical_hint.min_sources` | `5` | documents that contribute to a page |
+| `governance.canonical_hint.min_backlinks` | `8` | other pages that link to it |
+| `governance.canonical_hint.hot_factor` | `0.6` | multiplier on both thresholds for a hot page |
+
 ### CLI
 
 ```
-almagest proposals      # what's waiting, with inbox links
-almagest inbox-digest   # send the email digest now
+almagest proposals        # what's waiting, with inbox links
+almagest inbox-digest     # send the email digest now
+almagest canonical-hints  # pages worth fixing as canonical (read only; [--json])
 ```
 
 ### Service API (for other modules)

@@ -159,6 +159,8 @@ A source fetched over MCP by the v2 service ([v2/connectors.md](v2/connectors.md
 | `CANON-001` | Outstanding entries in `brain/canonical-challenges.md` | warning |
 | `STALE-001` | `last_verified` past threshold | warning |
 
+The canonical set the audit uses is one definition, shared with the service: a page is canonical when its slug is in `canonical_pages` or its frontmatter says `tier: canonical` (`tools/lib/canonical.mjs`). It decides which pages are exempt from `LINK-002`. The audit cannot tell who set a tier, so the ingest runner and the merge are what stop an agent setting it.
+
 `CANON-001` is informational by design. An open challenge means evidence contradicts a canonical page and a human has not yet ruled. That is a queue, not a failure. It stays visible in every audit run until the row's status changes.
 
 ### Demand — are the pages people rely on fit to be relied on? (opt-in: `--demand`)
