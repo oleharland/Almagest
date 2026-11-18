@@ -514,3 +514,177 @@ describe('the rules carry the live kind', () => {
     }
   });
 });
+
+describe('ask: live pass beside a wiki answer', () => {
+  const PRODUCT = page({ title: 'Acme Docs Product', body: '## Summary\n\nThe acme docs product is a documentation repository tool for teams. It renders markdown for every acme docs repository.\n' });
+  const WIKI = { 'brain/wiki/acme-docs.md': PRODUCT };
+  const STATE_Q = 'What is the state of the acme docs repository?';
+  const STATE_BODY = '=== section: Recent commits ===\n- c0ffee0 2026-11-10 State of the acme docs repository: Fix zephyr gateway drains';
+  const LIVE_RE = /## Live state: read from a connected system at the time of asking, not reviewed/;
+  const RULES_RE = /## Answering from source and unreviewed passages/;
+
+  async function asks(t, args, human = contributor, transport) {
+    const { client, close } = await connectAs(t.ctx, human, transport);
+    try {
+      const on = await call(client, 'ask', args);
+      t.ctx.mcp.config.lookup.enabled = false;
+      const off = await call(client, 'ask', args);
+      t.ctx.mcp.config.lookup.enabled = true;
+      return { on, off };
+    } finally { await close(); }
+  }
+  const setupAnswered = (o = {}) => setup({ ...o, files: { ...WIKI, ...(o.files || {}) }, live: { 'gh-commits': { title: COMMITS_TITLE, body: STATE_BODY } } });
+  function assertUnchanged({ on, off }) {
+    assert.equal(off.structuredContent.answered, true, 'the wiki answers');
+    assert.equal(on.text, off.text);
+    assert.deepEqual(on.structuredContent, off.structuredContent);
+  }
+
+  it('a question naming the repository and a state word gets the wiki answer plus the live block', async () => {
+    const t = await setupAnswered();
+    const { on, off } = await asks(t, { question: STATE_Q });
+    assert.equal(on.structuredContent.answered, true);
+    assert.match(on.text, /Acme Docs Product/);
+    assert.match(on.text, LIVE_RE);
+    assert.match(on.text, RULES_RE);
+    assert.match(on.text, new RegExp(`Live from connector gh-commits \\(server github\\): "Recent commits in acme/docs \\(branch main\\)", as of ${LIVE_AT}`));
+    assert.match(on.text, /#### §Recent commits\n> - c0ffee0/);
+    assert.ok(on.text.startsWith(off.text), 'the wiki sections are printed exactly as today');
+    assert.doesNotMatch(off.text, RULES_RE);
+    assert.equal(on.structuredContent.lookup.step, null);
+    assert.equal(on.structuredContent.lookup.live.documents[0].connector, 'gh-commits');
+    assert.equal(t.calls.search.length, 1);
+    assert.equal(t.jobs.length, 0);
+  });
+
+  it('a question naming the repository but no state word calls no provider and is unchanged', async () => {
+    const t = await setupAnswered();
+    assertUnchanged(await asks(t, { question: 'Tell me about the acme docs repository' }));
+    assert.equal(t.calls.search.length, 0);
+    assert.equal(t.calls.fetch.length, 0);
+  });
+
+  it('a state word that names no connector calls no provider and is unchanged', async () => {
+    const files = { 'brain/wiki/zephyr.md': page({ title: 'Zephyr Gateway', body: '## Summary\n\nThe zephyr gateway fronts every broker.\n' }) };
+    const t = await setupAnswered({ files });
+    assertUnchanged(await asks(t, { question: 'What is the current state of the zephyr gateway?' }));
+    assert.equal(t.calls.search.length, 0);
+  });
+
+  it('the vocabulary side can be a word of the recipe about list', async () => {
+    const t = await setupAnswered({ connectors: [commitsConnector({ about: ['commits'] })] });
+    const { on } = await asks(t, { question: 'Which commits does the acme docs repository have?' });
+    assert.match(on.text, LIVE_RE);
+  });
+
+  for (const [what, setupArgs, human, transport] of [
+    ['a viewer', {}, viewer],
+    ['min_role above the caller', { lookup: { min_role: 'reviewer' } }, contributor],
+    ['send_query false', { lookup: { send_query: false } }, contributor],
+    ['stdio', {}, owner, 'stdio'],
+    ['the setting off', { lookup: { live_when_answered: false } }, contributor],
+    ['live not among the steps', { lookup: { steps: ['sources', 'staged', 'connectors'] } }, contributor],
+  ]) {
+    it(`gate: ${what} gives the unchanged answer and no provider call`, async () => {
+      const t = await setupAnswered(setupArgs);
+      assertUnchanged(await asks(t, { question: STATE_Q }, human, transport));
+      assert.equal(t.calls.search.length, 0);
+    });
+  }
+
+  it('gate: anonymization on gives the unchanged answer', async () => {
+    const config = `${fs.readFileSync(path.join(FIXTURES, 'clean', 'brain.config.yaml'), 'utf-8')}\nanonymization:\n  enabled: true\n`;
+    const t = await setupAnswered({ files: { 'brain.config.yaml': config } });
+    assertUnchanged(await asks(t, { question: STATE_Q }, owner));
+    assert.equal(t.calls.search.length, 0);
+  });
+
+  it('gate: the per-caller limit', async () => {
+    const t = await setupAnswered({ lookup: { rate: { per_caller_per_minute: 1, per_connector_per_minute: 1000 } } });
+    const first = await asks(t, { question: STATE_Q });
+    assert.match(first.on.text, LIVE_RE);
+    const second = await asks(t, { question: STATE_Q });
+    assertUnchanged(second);
+    assert.equal(t.calls.search.length, 1);
+  });
+
+  it('gate: the per-connector limit', async () => {
+    const t = await setupAnswered({ lookup: { rate: { per_caller_per_minute: 1000, per_connector_per_minute: 1 } } });
+    assertUnchanged(await asks(t, { question: STATE_Q }));
+    assert.equal(t.calls.fetch.length, 0);
+  });
+
+  it('gate: the deadline', async () => {
+    const t = await setupAnswered({ lookup: { timeout_ms: 120 } });
+    t.provider.hang = true;
+    assertUnchanged(await asks(t, { question: STATE_Q }));
+  });
+
+  it('no live connector at all is the unchanged answer', async () => {
+    const t = await setupAnswered({ connectors: [] });
+    assertUnchanged(await asks(t, { question: STATE_Q }));
+  });
+
+  it('a live pass that returns nothing is the unchanged answer', async () => {
+    const t = await setupAnswered();
+    t.provider.fail = true;
+    assertUnchanged(await asks(t, { question: STATE_Q }));
+  });
+
+  describe('budget', () => {
+    const big = page({ title: 'Acme Docs Product', body: `## Summary\n\nThe acme docs product is a documentation repository tool for teams.\n\n## Details\n\n${'The acme docs repository renders markdown for teams and tenants. '.repeat(120)}\n\n## More\n\n${'The acme docs product keeps repository settings. '.repeat(120)}\n` });
+    const liveBlock = (i) => `=== section: Chunk ${i} ===\n${Array.from({ length: 14 }, (_, j) => `- ${String(j).padStart(7, '0')} State of the acme docs repository commits ${i}`).join('\n')}`;
+    const bigLive = Array.from({ length: 8 }, (_, i) => liveBlock(i)).join('\n\n');
+
+    for (const budget of [2500, 600]) {
+      it(`the whole context stays within ${budget} tokens and the wiki sections are still there`, async () => {
+        const t = await setup({ files: { 'brain/wiki/acme-docs.md': big }, live: { 'gh-commits': { body: bigLive } } });
+        const { on, off } = await asks(t, { question: STATE_Q, max_tokens: budget });
+        const d = on.structuredContent;
+        assert.equal(d.answered, true);
+        assert.ok(d.pages.length >= 1 && d.pages[0].sections.length >= 1, 'wiki sections present');
+        assert.ok(d.lookup.live.documents.length, 'live text present');
+        assert.ok(d.lookup.live.tokens <= Math.floor(budget * LIVE_SHARE), `${d.lookup.live.tokens} live tokens`);
+        assert.ok(d.tokens + d.lookup.tokens <= budget, `${d.tokens + d.lookup.tokens} over ${budget}`);
+        assert.ok(off.structuredContent.tokens >= d.tokens, 'the wiki gave up room only to live text');
+        assert.match(on.text, /Acme Docs Product/);
+      });
+    }
+  });
+
+  it('a canonical page that answers is printed as today, with the live block after it', async () => {
+    const canonical = PRODUCT.replace('tier: curated', 'tier: canonical');
+    const t = await setupAnswered({ files: { 'brain/wiki/acme-docs.md': canonical } });
+    const { on, off } = await asks(t, { question: STATE_Q });
+    assert.equal(off.structuredContent.pages[0].tier, 'canonical');
+    assert.ok(on.text.startsWith(off.text));
+    assert.deepEqual(on.structuredContent.pages, off.structuredContent.pages);
+    assert.doesNotMatch(on.text, /The brain's position: canonical pages/);
+    assert.match(on.text, LIVE_RE);
+  });
+
+  it('telemetry: answered stays true, extra.lookup names the live ids and the live pass only, no text', async () => {
+    const t = await setupAnswered();
+    const { client, close } = await connectAs(t.ctx, contributor);
+    await call(client, 'ask', { question: STATE_Q });
+    const evt = t.events.at(-1);
+    assert.equal(evt.answered, true);
+    assert.deepEqual(evt.lookup.steps, ['live']);
+    assert.deepEqual(evt.lookup.live, ['gh-commits']);
+    assert.equal(evt.lookup.liveFetched, 1);
+    assert.equal(evt.lookup.step, null);
+    assert.doesNotMatch(JSON.stringify(evt), /c0ffee0|Fix zephyr|Recent commits in|2026-11-10/);
+    await close();
+  });
+
+  it('only the live pass runs: no source, staged or connector step, nothing queued', async () => {
+    const ladder = { id: 'team-drive', lookup: true, searchable: true, live: false };
+    const t = await setupAnswered({ connectors: [ladder, commitsConnector()], ladderDocs: [{ ref: 'd', title: 'Doc', body: 'acme docs repository state' }] });
+    const { on } = await asks(t, { question: STATE_Q });
+    assert.match(on.text, LIVE_RE);
+    assert.ok(t.calls.search.every((c) => c.id === 'gh-commits'));
+    assert.equal(t.jobs.length, 0);
+    const evt = t.events.at(-2);
+    assert.deepEqual(evt.lookup.steps, ['live']);
+  });
+});

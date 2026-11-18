@@ -33,6 +33,7 @@ export const MCP_DEFAULTS = {
     timeout_ms: 8000,               // for the whole lookup
     max_fetch: 3,                   // documents fetched per question, across connectors
     send_query: true,               // false: the connectors step is off
+    live_when_answered: true,       // false: the live step runs only when the wiki does not answer
     negative_ttl_minutes: 60,
     rate: { per_caller_per_minute: 6, per_connector_per_minute: 30 },
     ingest: 'auto',                 // auto | off
