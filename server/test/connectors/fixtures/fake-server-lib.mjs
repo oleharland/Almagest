@@ -10,7 +10,8 @@
  *     resources: [{ uri, name, mimeType, text? , blob? }],
  *     pageSize: 2,
  *     repo: { commit, files: [{ path, sha, content }] },
- *     fail: ['<doc id>'] }
+ *     fail: ['<doc id>'],
+ *     unlisted: ['<doc id>']   (docs list_docs leaves out; lookup_docs and get_doc still reach them) }
  *
  * No zod: the low-level Server takes plain JSON Schema, so the fixture adds no
  * dependency the server package does not already have.
@@ -51,7 +52,7 @@ export function buildFakeServer(getState, onCall = () => {}) {
     switch (name) {
       case 'list_docs': {
         const size = a.limit || s.pageSize || 100;
-        const all = (s.docs || []).filter((d) => !a.since || d.updatedAt > a.since);
+        const all = (s.docs || []).filter((d) => !(s.unlisted || []).includes(d.id) && (!a.since || d.updatedAt > a.since));
         const start = a.cursor ? Number(a.cursor) : 0;
         const page = all.slice(start, start + size).map(({ id, title, updatedAt }) => ({ id, title, updatedAt }));
         return json({ docs: page, nextCursor: start + size < all.length ? String(start + size) : null });

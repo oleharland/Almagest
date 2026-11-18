@@ -120,7 +120,8 @@ export const DEFAULT_SEARCH_LIMIT = 10;
 
 /**
  * Runs the recipe's `search` block the way `listItems` runs `list`: first page
- * only, at most `limit` items. `vars.terms` is the list of search terms;
+ * only, at most `limit` items, filtered by the search block's `where` (else the
+ * list block's, so lookup stays inside the configured scope). `vars.terms` is the list of search terms;
  * `{{query}}` is those terms joined by a space. Terms are rendered as given —
  * the caller sanitises them.
  */
@@ -129,7 +130,10 @@ export async function searchItems(client, recipe, vars, { limit = DEFAULT_SEARCH
   const terms = [].concat(vars.terms ?? []).map(String);
   const searchVars = { ...vars, terms, query: terms.join(' '), cursor: undefined };
   const cap = Number(limit) > 0 ? Math.floor(Number(limit)) : DEFAULT_SEARCH_LIMIT;
-  const { items } = await listItems(client, recipe, searchVars, { ...opts, block: recipe.search, maxItems: cap, firstPageOnly: true });
+  // The connector's scope applies to lookup too: `list.where` filters the results
+  // unless the search block brings its own `where`.
+  const block = recipe.search.where ? recipe.search : { ...recipe.search, where: recipe.list?.where };
+  const { items } = await listItems(client, recipe, searchVars, { ...opts, block, maxItems: cap, firstPageOnly: true });
   return { items };
 }
 

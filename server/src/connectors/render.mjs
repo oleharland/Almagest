@@ -29,6 +29,25 @@ export function neutralize(text) {
     .join('\n');
 }
 
+/**
+ * A provider-supplied string that is handed back to a caller (a chat) rather
+ * than written into a snapshot: one line, no control characters, collapsed
+ * whitespace, capped, and with a leading `#`, `>` or `=` run (and anything
+ * marker-like) escaped, so it cannot open a heading, a quote or a section of
+ * the answer it ends up in. Not used for snapshot bytes.
+ */
+export function flattenField(value, max = 500) {
+  let s = String(value ?? '')
+    .replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .slice(0, max)
+    .trim();
+  s = neutralize(s);
+  if (/^[#>=]/.test(s)) s = `\\${s}`;
+  return s;
+}
+
 export const marker = {
   section: (name) => `=== section: ${oneLine(name)} ===`,
   page: (n) => `=== page ${n} ===`,

@@ -21,7 +21,7 @@
  *   ctx.connectors.stop()
  *
  * Store namespaces:  connector-cursor (id) · connector-item (<id>:<ref>) · connector-lookup (<id>:<ref>,
- *                     { at, title } — refs fetched by live lookup, which the sync must not call missing) ·
+ *                     { at, title, failures, checkedAt } — refs fetched by live lookup; the sync re-checks them by ref) ·
  *                     connector-oauth (server, sealed)
  */
 import fs from 'node:fs';
@@ -34,6 +34,7 @@ import { draftRecipe } from './init.mjs';
 import { createPool, DEFAULT_TIMEOUT_MS, NeedsLoginError, readMcpJson, resolveServer } from './mcp-client.mjs';
 import { createOAuthProvider, hasLogin, login as oauthLogin } from './oauth.mjs';
 import { recipeFor, RECIPES_DIR } from './recipes.mjs';
+import { flattenField } from './render.mjs';
 import { buildSnapshot, DEFAULT_MAX_BYTES, sha256, snapshotRelPath, stagingAbsPath } from './snapshot-file.mjs';
 
 export const CURSOR_NS = 'connector-cursor';
@@ -42,6 +43,9 @@ export const LOOKUP_NS = 'connector-lookup';
 export const MAX_SEARCH_TERMS = 8;
 export const MAX_TERM_CHARS = 64;
 export const MAX_QUERY_CHARS = 200;
+export const MAX_TITLE_CHARS = 200;
+/** A document that failed this many re-checks in a row, on complete syncs, is reported missing. */
+export const LOOKUP_MAX_FAILURES = 3;
 const MAX_SEARCH_LIMIT = 50;
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -62,9 +66,12 @@ export function sanitiseTerms(terms) {
     let s = String(t).normalize('NFKC')
       .replace(/\s+/gu, ' ')
       .replace(/[^\p{L}\p{N} _.-]/gu, '')
-      .replace(/ +/g, ' ')
-      .replace(/^[\s.-]+/, '')
-      .trim()
+      // A word that starts with `-` or `.` could act as a negation or operator in a
+      // provider's full-text syntax; one with no letter or digit is only operators.
+      .split(' ')
+      .map((w) => w.replace(/^[.-]+/, ''))
+      .filter((w) => /[\p{L}\p{N}]/u.test(w))
+      .join(' ')
       .slice(0, MAX_TERM_CHARS)
       .trim();
     if (!s) continue;
@@ -335,16 +342,19 @@ export function createConnectors(ctx, options = {}) {
     let reused = 0;
 
     const run = { c, id, recipe, vars, client, spec, timeoutMs, maxBytes, manifest, startedAt };
-    const handle = async (item) => {
+    const stage = async (item) => {
       const key = `${id}:${item.ref}`;
+      const done = await stageItem(run, item, { dryRun: opts.dryRun });
+      if (done.reused) reused++;
+      if (done.fetched) fetched++;
+      if (done.ref.change === 'unchanged') unchanged.push(key);
+      else refs.push(done.ref);
+    };
+    const handle = async (item) => {
       try {
-        const done = await stageItem(run, item, { dryRun: opts.dryRun });
-        if (done.reused) reused++;
-        if (done.fetched) fetched++;
-        if (done.ref.change === 'unchanged') unchanged.push(key);
-        else refs.push(done.ref);
+        await stage(item);
       } catch (err) {
-        errors.push({ id: key, ref: item.ref, error: err.message });
+        errors.push({ id: `${id}:${item.ref}`, ref: item.ref, error: err.message });
         log?.warn('connector item failed', { connector: id, ref: item.ref, error: err.message });
       }
     };
@@ -355,23 +365,48 @@ export function createConnectors(ctx, options = {}) {
     // deleted — the next ingest marks the manifest entry `status: missing`.
     // A ref that came in through live lookup may sit outside `select`, so not
     // being listed says nothing about it: it is fetched again by ref instead.
+    // A ref the listing does include is the sync's own, so its mark is cleared.
     const listed = new Set(items.map((i) => i.ref));
     const missing = [];
     const lookedUp = [];
     if (complete) {
+      const marks = new Map((await store.kv.list(LOOKUP_NS)).filter((r) => r.key.startsWith(`${id}:`)).map((r) => [r.key, r.value]));
+      for (const ref of listed) {
+        if (marks.has(`${id}:${ref}`) && !opts.dryRun) await store.kv.delete(LOOKUP_NS, `${id}:${ref}`);
+      }
       for (const e of manifest.entries) {
         if (e.kind !== 'connector' || e.connector !== id || e.status === 'missing' || !e.ref || listed.has(e.ref)) continue;
-        const mark = await store.kv.get(LOOKUP_NS, `${id}:${e.ref}`);
+        const mark = marks.get(`${id}:${e.ref}`);
         if (mark) lookedUp.push({ e, mark });
         else missing.push({ id: e.id, ref: e.ref, path: e.extracted || e.path, pages: e.pages });
       }
     }
     if (lookedUp.length && canFetchByRef(recipe)) {
       const cap = Number(c.max_items) > 0 ? Number(c.max_items) : DEFAULT_MAX_ITEMS;
-      // The title is the one the search gave: it is part of the snapshot header, so
-      // fetching with another would make an untouched document look changed.
-      const again = lookedUp.slice(0, cap).map(({ e, mark }) => ({ ref: e.ref, version: '', title: mark.title || e.ref, commit: '', mime: '' }));
-      await mapLimit(again, Number(c.concurrency) > 0 ? Number(c.concurrency) : 4, handle);
+      // Oldest check first, so a bound smaller than the number of marks still reaches every one.
+      lookedUp.sort((x, y) => String(x.mark.checkedAt || '').localeCompare(String(y.mark.checkedAt || '')));
+      await mapLimit(lookedUp.slice(0, cap), Number(c.concurrency) > 0 ? Number(c.concurrency) : 4, async ({ e, mark }) => {
+        const key = `${id}:${e.ref}`;
+        // The title is the one the search gave: it is part of the snapshot header, so
+        // fetching with another would make an untouched document look changed.
+        const item = { ref: e.ref, version: '', title: mark.title || e.ref, commit: '', mime: '' };
+        let failures = 0;
+        try {
+          await stage(item);
+        } catch (err) {
+          failures = (Number(mark.failures) || 0) + 1;
+          if (failures >= LOOKUP_MAX_FAILURES) {
+            // Gone for good: report it like any disappeared item and stop fetching it.
+            missing.push({ id: e.id, ref: e.ref, path: e.extracted || e.path, pages: e.pages });
+            if (!opts.dryRun) await store.kv.delete(LOOKUP_NS, key);
+            log?.warn('connector lookup ref gone', { connector: id, ref: e.ref, error: err.message });
+            return;
+          }
+          errors.push({ id: key, ref: e.ref, error: err.message });
+          log?.warn('connector item failed', { connector: id, ref: e.ref, error: err.message });
+        }
+        if (!opts.dryRun) await store.kv.set(LOOKUP_NS, key, { ...mark, failures, checkedAt: nowIso() });
+      });
     }
 
     refs.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -409,6 +444,11 @@ export function createConnectors(ctx, options = {}) {
     if (c.lookup !== true) throw new Error(`connector "${c.id}" is not enabled for live lookup (set \`lookup: true\` on it in brain.config.yaml)`);
   }
 
+  // Returned strings are flattened, but the snapshot header is built from the title as the
+  // provider gave it, as in a sync; so fetchOne looks the raw title of a hit up here.
+  const rawTitles = new Map();
+  const flattenRef = (ref) => flattenField(ref, 500);
+
   const lookupVars = (c) => ({ since: '', select: c.lookup_select || c.select || {}, connector: { id: c.id, label: c.label || '' } });
 
   /**
@@ -429,7 +469,17 @@ export function createConnectors(ctx, options = {}) {
     const { client } = await clientFor(c);
     const vars = await resolveVars(client, recipe, lookupVars(c), { timeoutMs });
     const { items } = await searchItems(client, recipe, { ...vars, terms: clean }, { timeoutMs, limit: cap });
-    return items.map((i) => ({ ref: i.ref, title: i.title, version: i.version, mime: i.mime }));
+    const out = [];
+    for (const i of items) {
+      // A ref is handed back to fetchOne, so it cannot be rewritten: one that
+      // flattening would change (control characters, newlines, over 500 characters)
+      // is not offered.
+      if (flattenRef(i.ref) !== i.ref) continue;
+      rawTitles.set(`${id}:${i.ref}`, i.title);
+      if (rawTitles.size > 500) rawTitles.delete(rawTitles.keys().next().value);
+      out.push({ ref: i.ref, title: flattenField(i.title, MAX_TITLE_CHARS), version: flattenField(i.version), mime: flattenField(i.mime) });
+    }
+    return out;
   }
 
   /**
@@ -452,14 +502,22 @@ export function createConnectors(ctx, options = {}) {
     const { spec, client } = await clientFor(c);
     const vars = await resolveVars(client, recipe, lookupVars(c), { timeoutMs });
     const manifest = await mainManifest();
-    const it = { ref: String(item.ref), version: item.version ? String(item.version) : '', title: item.title ? String(item.title) : String(item.ref), commit: '', mime: item.mime ? String(item.mime) : '' };
+    const key = `${id}:${String(item.ref)}`;
+    const rawTitle = rawTitles.get(key) ?? (item.title ? String(item.title) : String(item.ref));
+    const it = { ref: String(item.ref), version: item.version ? String(item.version) : '', title: rawTitle, commit: '', mime: item.mime ? String(item.mime) : '' };
+    // Read before staging: stageItem records the item. Only a document the sync has
+    // never listed is the lookup's own; one it tracks must stay subject to the missing check.
+    const tracked = Boolean(manifest.byId.get(key) || manifest.byPath.get(snapshotRelPath(brainDir, id, it.ref)) || await store.kv.get(ITEM_NS, key));
     const done = await stageItem({ c, id, recipe, vars, client, spec, timeoutMs, maxBytes, manifest, startedAt }, it);
-    await store.kv.set(LOOKUP_NS, `${id}:${it.ref}`, { at: startedAt, title: done.snap.title || it.title });
+    if (!tracked && !(await store.kv.get(LOOKUP_NS, key))) {
+      await store.kv.set(LOOKUP_NS, key, { at: startedAt, title: done.snap.title || it.title, failures: 0, checkedAt: startedAt });
+    }
+    const title = done.snap.title || it.title;
     return {
-      ref: { ...done.ref, via: 'lookup' },
+      ref: { ...done.ref, title: flattenField(done.ref.title, MAX_TITLE_CHARS), version: flattenField(done.ref.version), via: 'lookup' },
       text: done.snap.text,
       sha256: done.snap.sha256,
-      title: done.snap.title || it.title,
+      title: flattenField(title, MAX_TITLE_CHARS),
       truncated: Boolean(done.snap.truncated),
       reused: done.reused,
     };
