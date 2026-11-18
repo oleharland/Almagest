@@ -698,7 +698,8 @@ come out of the passage share, as described under [The live pass](#the-live-pass
 
 A repository listed under `sources.remote` opts in the same way: add
 `lookup: true` to its entry. It runs through the `github` or `gitlab` recipe,
-so it can be searched only if that recipe has a `search` block.
+so it can be searched only if that recipe has a `search` block. The shipped
+`github` recipe has one. The `gitlab` recipe does not.
 
 ## Where the code is
 
