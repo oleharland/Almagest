@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { hasStaticAuth, missingEnv, resolveServer, toolResultValue } from '../../src/connectors/mcp-client.mjs';
+import { dropEmptyCredentials, hasStaticAuth, MissingCredentialError, missingEnv, resolveServer, toolResultValue } from '../../src/connectors/mcp-client.mjs';
 
 // The two entries Almagest ships in .mcp.json, verbatim.
 const MCP_JSON = {
@@ -79,5 +79,38 @@ describe('tool results', () => {
 
   it('throws on isError', () => {
     assert.throws(() => toolResultValue({ isError: true, content: [{ type: 'text', text: 'boom' }] }), /boom/);
+  });
+});
+
+describe('a credential header whose variable is unset', () => {
+  it('is left out, and the variable is remembered', () => {
+    const gh = resolveServer('github', { mcpServers: MCP_JSON, env: {} });
+    assert.equal('Authorization' in gh.headers, false);
+    assert.deepEqual(gh.emptyAuth, ['GITHUB_TOKEN']);
+    const gl = resolveServer('gitlab', { mcpServers: MCP_JSON, env: {} });
+    assert.equal('PRIVATE-TOKEN' in gl.headers, false);
+    assert.deepEqual(gl.emptyAuth, ['GITLAB_TOKEN']);
+  });
+
+  it('is sent unchanged when the variable is set', () => {
+    const gh = resolveServer('github', { mcpServers: MCP_JSON, env: { GITHUB_TOKEN: 'ghp_x' } });
+    assert.equal(gh.headers.Authorization, 'Bearer ghp_x');
+    assert.deepEqual(gh.emptyAuth, []);
+  });
+
+  it('keeps headers that carry no credential, and literal empty ones name no variable', () => {
+    const out = dropEmptyCredentials(
+      { 'X-MCP-Readonly': 'true', Authorization: 'Bearer ' },
+      { 'X-MCP-Readonly': 'true', Authorization: 'Bearer ' },
+    );
+    assert.deepEqual(out, { headers: { 'X-MCP-Readonly': 'true' }, emptyAuth: [] });
+  });
+
+  it('turns a failed connection into an error that names the variable and the fix', () => {
+    const err = new MissingCredentialError('github', ['GITHUB_TOKEN'], 'bad request: Authorization header is badly formatted');
+    assert.equal(err.code, 'MISSING_CREDENTIAL');
+    assert.match(err.message, /GITHUB_TOKEN is not set/);
+    assert.match(err.message, /almagest connectors login github/);
+    assert.match(err.message, /badly formatted/);
   });
 });

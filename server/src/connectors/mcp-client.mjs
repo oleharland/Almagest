@@ -45,6 +45,44 @@ export function readMcpJson(file) {
   return doc && typeof doc.mcpServers === 'object' ? doc.mcpServers : {};
 }
 
+const CREDENTIAL_HEADER = /^(authorization|private-token|x-api-key|api-key)$/i;
+const noCredential = (v) => String(v).replace(/^\s*(bearer|basic|token)\b\s*/i, '').trim() === '';
+
+/** The connection failed and a credential header was left out because its variable is unset. */
+export class MissingCredentialError extends Error {
+  constructor(server, vars, cause) {
+    const names = vars.join(', ');
+    super(`MCP server "${server}": ${names} is not set, so no credential was sent`
+      + `${cause ? ` (the server answered: ${String(cause).replace(/\s+/g, ' ').trim().slice(0, 200)})` : ''}. `
+      + `Set ${names} in the environment the service runs in (docs/remote-sources.md), `
+      + `or sign in with: almagest connectors login ${server}`);
+    this.name = 'MissingCredentialError';
+    this.code = 'MISSING_CREDENTIAL';
+    this.vars = vars;
+  }
+}
+
+/**
+ * Credential headers that expanded to nothing, e.g. `Bearer ${GITHUB_TOKEN:-}`
+ * with GITHUB_TOKEN unset. Sending `Authorization: Bearer ` gets a provider
+ * error that names neither the variable nor the fix, so the header is left out
+ * and the variable is remembered for the error message.
+ *
+ * @returns {{ headers: object, emptyAuth: string[] }}
+ */
+export function dropEmptyCredentials(rawHeaders = {}, headers = {}) {
+  const kept = {};
+  const vars = new Set();
+  for (const [k, v] of Object.entries(headers)) {
+    if (CREDENTIAL_HEADER.test(k) && noCredential(v)) {
+      for (const m of String(rawHeaders[k] ?? '').matchAll(/\$\{([A-Z0-9_]+)(:-[^}]*)?\}/gi)) vars.add(m[1]);
+      continue;
+    }
+    kept[k] = v;
+  }
+  return { headers: kept, emptyAuth: [...vars] };
+}
+
 /** Names of `${VAR}` references with no default whose variable is unset. */
 export function missingEnv(value, env = process.env) {
   const missing = new Set();
@@ -117,10 +155,12 @@ export function resolveServer(mcp, { mcpServers = {}, env = process.env, cwd } =
       cwd: spec.cwd || cwd,
     };
   }
+  const expanded = Object.fromEntries(Object.entries(spec.headers || {}).map(([k, v]) => [k, String(v)]));
+  const { headers, emptyAuth } = dropEmptyCredentials(raw.headers, expanded);
   return {
-    key, label, type, missingEnv: missing,
+    key, label, type, missingEnv: missing, emptyAuth,
     url: String(spec.url),
-    headers: Object.fromEntries(Object.entries(spec.headers || {}).map(([k, v]) => [k, String(v)])),
+    headers,
   };
 }
 
@@ -213,6 +253,8 @@ export function createPool({ authProviderFor, connect: connectOverride, log, tim
       await withTimeout(client.connect(transport, { timeout: timeoutMs }), timeoutMs, `connecting to "${spec.key}"`);
     } catch (err) {
       await transport.close?.().catch(() => {});
+      // An unset token variable is the likeliest reason, and the one a person can act on.
+      if (spec.emptyAuth?.length) throw new MissingCredentialError(spec.key, spec.emptyAuth, err?.message);
       if (err instanceof NeedsLoginError) throw err;
       if (err?.name === 'UnauthorizedError' || /unauthorized|needs oauth/i.test(err?.message || '')) throw new NeedsLoginError(spec.key);
       throw err;
