@@ -32,7 +32,7 @@ import { verifyPathFor } from './citations.mjs';
 import { LOOKUP_BUDGET_SPLIT } from './config.mjs';
 import { buildPassageIndex, packPassages, searchPassages } from './passages.mjs';
 import { tokenize } from './search.mjs';
-import { packSections } from './tools.mjs';
+import { oneLine, packSections } from './tools.mjs';
 
 /** kv namespace: sha256 of a connector document whose proposal was rejected → { at, proposalId, connector }. */
 export const REJECTED_NS = 'lookup-rejected';
@@ -45,6 +45,12 @@ export const CANONICAL_MIN_COVERAGE = 0.25;
 /** Share of the token budget canonical sections may take (the split lives in config.mjs, next to the weak-match share). */
 export const CANONICAL_SHARE = LOOKUP_BUDGET_SPLIT.canonical;
 export const CANONICAL_PAGES = 3;
+/** The canonical pass never gets less than this, so a matching canonical page is always shown at least as a truncated section. */
+export const CANONICAL_MIN_TOKENS = 64;
+/** How long the answer to "is this staged document under review?" is kept, per sha256. */
+export const REVIEW_CACHE_MS = 60_000;
+/** kv namespace: UTC day → { shas } staged documents whose failed ingest job lookup already retried that day. */
+export const RETRY_NS = 'lookup-ingest-retry';
 
 const STEPS = ['sources', 'staged', 'connectors'];
 /** A source file or snapshot bigger than this is not read. */
@@ -150,6 +156,19 @@ export function createLookup(ctx, cfg, brain) {
 
   let sourceCache = { sha: '', index: null, docs: 0 };
 
+  /**
+   * May the sources step serve this manifest entry's text file `rel`?
+   * Off: any text, meaning the entry's extracted sidecar or an original with a text extension (never a committed binary).
+   * Anonymization on: only a sidecar the ingest agent wrote (`rel` is the entry's `extracted` file and the entry is not a
+   * connector snapshot). The ingest rules anonymize what the agent writes; a committed original, and a connector
+   * snapshot (committed byte for byte), can carry personal names that nothing has removed.
+   */
+  function mayServe(e, rel) {
+    const isSidecar = Boolean(e.extracted) && e.extracted !== 'none' && rel === e.extracted;
+    if (anonymize) return isSidecar && e.kind !== 'connector';
+    return isSidecar || TEXT_EXT.test(rel);
+  }
+
   function sourceIndex(b) {
     if (sourceCache.sha === b.sha && sourceCache.index) return sourceCache.index;
     let root;
@@ -160,13 +179,9 @@ export function createLookup(ctx, cfg, brain) {
     let capped = false;
     for (const e of b.manifest.entries) {
       if (e.status === 'missing') continue;
-      // Connector snapshots are committed byte for byte, never anonymized; with anonymization on they stay out.
-      if (anonymize && e.kind === 'connector') continue;
       const rel = verifyPathFor({ id: e.id, path: e.path }, b.manifest);
       if (!rel || seenPaths.has(rel)) continue;
-      // Only text: the extracted sidecar, or an original with a text extension. Never a committed binary.
-      const isSidecar = Boolean(e.extracted) && e.extracted !== 'none' && rel === e.extracted;
-      if (!isSidecar && !TEXT_EXT.test(rel)) continue;
+      if (!mayServe(e, rel)) continue;
       const abs = path.resolve(root, rel);
       if (abs !== root && !abs.startsWith(root + path.sep)) continue;
       let text;
@@ -245,8 +260,9 @@ export function createLookup(ctx, cfg, brain) {
       tier: 'canonical', limit: CANONICAL_PAGES, minScore: CANONICAL_MIN_SCORE, minCoverage: CANONICAL_MIN_COVERAGE,
     });
     const results = r.results.filter((x) => x.match !== 'text' || (x.score >= CANONICAL_MIN_SCORE && x.coverage >= CANONICAL_MIN_COVERAGE));
-    if (!results.length) return { pages: [], tokens: 0, truncated: false };
-    return packSections(await brain.current(), { terms: r.terms, results }, Math.floor(budget * CANONICAL_SHARE));
+    if (!results.length) return { pages: [], tokens: 0, truncated: false, matched: [] };
+    const packed = packSections(await brain.current(), { terms: r.terms, results }, Math.max(CANONICAL_MIN_TOKENS, Math.floor(budget * CANONICAL_SHARE)));
+    return { ...packed, matched: results.map((x) => ({ slug: x.slug, title: x.title || '' })) };
   }
 
   // ── enrichment ────────────────────────────────────────────────────────────
@@ -293,21 +309,65 @@ export function createLookup(ctx, cfg, brain) {
     }
   }
 
-  /** Is there a live ingest job, or an open proposal, for this staged document? */
-  async function reviewExists(doc) {
+  const reviewCache = new Map();         // sha256 → { at, state }, oldest first
+  const rememberReview = (sha, state) => {
+    reviewCache.delete(sha);
+    reviewCache.set(sha, { at: Date.now(), state });
+    while (reviewCache.size > MAX_CACHE_ENTRIES) reviewCache.delete(reviewCache.keys().next().value);
+  };
+
+  /**
+   * Where does this staged document stand with the review queue?
+   *   'waiting'  a job is queued or running, or its proposal is open
+   *   'nothing'  a job succeeded and made no proposal: the agent found nothing to add
+   *   'failed'   the only jobs for it failed
+   *   'none'     no job that says anything (none, cancelled, or its proposal was closed)
+   * Job and proposal statuses come from `ingest/queue.mjs`: queued | running | succeeded | blocked | failed | cancelled,
+   * and a proposal is closed when merged, rejected or superseded. The store filters only on top-level fields, so the
+   * jobs are fetched by status (never the full list) and the answer is kept per sha256 for REVIEW_CACHE_MS.
+   */
+  async function reviewState(doc) {
+    const sha = doc.meta.sha256;
+    const hit = reviewCache.get(sha);
+    if (hit && Date.now() - hit.at < REVIEW_CACHE_MS) return hit.state;
+    const mine = (j) => j.source?.connector === doc.meta.connector && j.source?.sha256 === sha;
+    let state = 'none';
     try {
-      const jobs = (await ctx.ingest?.list?.({ kind: 'ingest' })) || [];
-      for (const j of jobs) {
-        if (j.source?.connector !== doc.meta.connector || j.source?.sha256 !== doc.meta.sha256) continue;
-        if (j.status === 'queued' || j.status === 'running') return true;
-        if (j.status !== 'succeeded' && j.status !== 'blocked') continue;     // failed or cancelled: nothing is waiting
-        if (!j.proposalId) return true;
+      const active = ((await ctx.ingest?.list?.({ kind: 'ingest', status: ['queued', 'running'] })) || []).filter(mine);
+      const done = ((await ctx.ingest?.list?.({ kind: 'ingest', status: ['succeeded', 'blocked', 'failed'] })) || []).filter(mine);
+      let waiting = active.some((j) => j.status === 'queued' || j.status === 'running');
+      let nothing = false;
+      let failed = false;
+      for (const j of done) {
+        if (waiting) break;
+        if (j.status === 'failed') { failed = true; continue; }
+        if (j.status !== 'succeeded' && j.status !== 'blocked') continue;     // cancelled: nothing is waiting
+        if (!j.proposalId) { nothing = true; continue; }
         let p;
         try { p = await ctx.governance.getProposal(j.proposalId); } catch { p = { status: 'open' }; }
-        if (p && !CLOSED_PROPOSAL.has(p.status)) return true;
+        if (p && !CLOSED_PROPOSAL.has(p.status)) waiting = true;
       }
-    } catch (err) { log.warn('live lookup: could not list ingest jobs', { error: errName(err) }); }
-    return false;
+      state = waiting ? 'waiting' : nothing ? 'nothing' : failed ? 'failed' : 'none';
+    } catch (err) {
+      log.warn('live lookup: could not list ingest jobs', { error: errName(err) });
+      return 'unknown';
+    }
+    rememberReview(sha, state);
+    return state;
+  }
+
+  /** A document whose last job failed is retried once per sha256 per UTC day. True when this call may queue it. */
+  async function claimRetry(sha) {
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      const shas = (await ctx.store.kv.get(RETRY_NS, day))?.shas || [];
+      if (shas.includes(sha)) return false;
+      await ctx.store.kv.set(RETRY_NS, day, { shas: [...shas, sha].slice(-MAX_CACHE_ENTRIES) });
+      return true;
+    } catch (err) {
+      log.warn('live lookup: could not record a retry', { error: errName(err) });
+      return false;
+    }
   }
 
   /** A SourceRef for a snapshot fetched earlier, as `ctx.connectors` would have made it. */
@@ -315,23 +375,25 @@ export function createLookup(ctx, cfg, brain) {
     const m = doc.meta;
     if (!m.ref) return null;
     const c = connectors.find((x) => x.id === m.connector) || {};
-    const id = `${m.connector}:${m.ref}`;
+    // Provider text reaches the ingest prompt, so it is flattened here. `path` and `sha256` locate and verify the
+    // snapshot and are taken from the raw ref and the file's bytes.
+    const ref = oneLine(m.ref);
+    const id = `${m.connector}:${ref}`;
     return {
-      kind: 'connector', id, connector: m.connector, ref: m.ref, server: m.server || c.label || '',
+      kind: 'connector', id, connector: m.connector, ref, server: oneLine(m.server || c.label || ''),
       path: snapshotRelPath(ctx.config.v1?.brainDir || 'brain', m.connector, m.ref),
-      version: '', sha256: m.sha256, bytes: m.bytes || 0, truncated: false, title: doc.title,
+      version: '', sha256: m.sha256, bytes: m.bytes || 0, truncated: false, title: oneLine(doc.title),
       label: c.label || '', tier: c.tier || 'evidence', snapshot: c.snapshot || 'commit',
-      change: b.manifest.byId?.has(id) ? 'changed' : 'new', fetchedAt: m.fetchedAt, via: 'lookup',
+      change: b.manifest.byId?.has(`${m.connector}:${m.ref}`) ? 'changed' : 'new', fetchedAt: m.fetchedAt, via: 'lookup',
     };
   }
 
   // ── step 3: connectors ────────────────────────────────────────────────────
 
-  async function connectorDocs({ connectors, raw, human, rejected, deadline, out, docs }) {
+  async function connectorDocs({ connectors, raw, rejected, deadline, out, docs }) {
     const termKey = sanitiseTerms(raw).map((t) => t.toLowerCase()).sort().join(' ');
     if (!termKey) return;                                  // nothing a provider would be asked
     let fetchBudget = Math.max(0, Number(lc.max_fetch) || 0);
-    let charged = false;
     for (const c of connectors) {
       if (!c.lookup || !c.searchable || fetchBudget <= 0) continue;
       const key = `${c.id}|${termKey}`;
@@ -339,11 +401,6 @@ export function createLookup(ctx, cfg, brain) {
       if (until !== undefined) {
         if (until > Date.now()) { out.stats.cacheHits += 1; continue; }
         negative.delete(key);                              // expired
-      }
-      // The per-caller limit protects the providers, so it is charged only when a call is about to go out.
-      if (!charged) {
-        if (!limiter.hit(`caller:${human.id}`, lc.rate.per_caller_per_minute)) { out.skipped.push({ step: 'all', reason: 'rate limit for this caller' }); return; }
-        charged = true;
       }
       if (!limiter.hit(`connector:${c.id}`, lc.rate.per_connector_per_minute)) { out.skipped.push({ step: 'connectors', reason: `rate limit for connector ${c.id}` }); continue; }
       out.stats.connectorsAsked += 1;
@@ -390,9 +447,9 @@ export function createLookup(ctx, cfg, brain) {
   function emptyResult() {
     return {
       step: null, kind: null,
-      canonical: { pages: [], tokens: 0, truncated: false },
+      canonical: { pages: [], tokens: 0, truncated: false, matched: [] },
       items: [], tokens: 0, truncated: false, incomplete: false,
-      skipped: [], queued: [],
+      skipped: [], queued: [], canonicalUnpacked: [],
       stats: { steps: [], connectorsAsked: 0, connectors: [], fetched: 0, cacheHits: 0, latencyMs: 0 },
     };
   }
@@ -417,22 +474,31 @@ export function createLookup(ctx, cfg, brain) {
         if (r.answered) found = { step: 'sources', kind: 'source', results: r.results };
       }
 
-      const needsConnectorList = privileged && (steps.includes('staged') || (steps.includes('connectors') && lc.send_query && transport !== 'stdio'));
+      // The per-caller limit protects the providers and the review queue. Local source lookups are never charged;
+      // a lookup is charged once, as soon as it reaches a privileged step (staged or connectors).
+      const reachesConnectors = steps.includes('connectors') && lc.send_query && transport !== 'stdio';
+      let allowed = true;
+      if (!found && privileged && (steps.includes('staged') || reachesConnectors)) {
+        allowed = limiter.hit(`caller:${human.id}`, lc.rate.per_caller_per_minute);
+        if (!allowed) out.skipped.push({ step: 'all', reason: 'rate limit for this caller' });
+      }
+
+      const needsConnectorList = allowed && privileged && (steps.includes('staged') || (steps.includes('connectors') && lc.send_query && transport !== 'stdio'));
       let rejected = new Set();
       if (!found && needsConnectorList) {
         try { connectors = (await ctx.connectors.list()) || []; } catch (err) { log.warn('live lookup: could not list connectors', { error: errName(err) }); }
         rejected = await rejectedShas();
       }
 
-      if (!found && privileged && steps.includes('staged') && deadline.left() > 0) {
+      if (!found && allowed && privileged && steps.includes('staged') && deadline.left() > 0) {
         out.stats.steps.push('staged');
         const r = searchPassages(await stagedIndex(b, connectors, rejected), question, opts);
         if (r.answered) found = { step: 'staged', kind: 'unreviewed', results: r.results };
       }
 
-      if (!found && privileged && steps.includes('connectors') && lc.send_query && transport !== 'stdio') {
+      if (!found && allowed && privileged && reachesConnectors) {
         out.stats.steps.push('connectors');
-        try { await connectorDocs({ connectors, raw, human, rejected, deadline, out, docs: fetchedDocs }); }
+        try { await connectorDocs({ connectors, raw, rejected, deadline, out, docs: fetchedDocs }); }
         catch (err) { if (!(err instanceof Timeout)) throw err; out.incomplete = true; }
         // A deadline that passes mid-way still ranks whatever was fetched before it.
         const r = searchPassages(buildPassageIndex(fetchedDocs), question, opts);
@@ -446,6 +512,12 @@ export function createLookup(ctx, cfg, brain) {
     if (!found) return;
 
     const canonical = await canonicalPass(question, raw, budget);
+    // Unreviewed text is never shown without the canonical text that outranks it. If a canonical page matched and
+    // none of it could be packed, show nothing from outside the wiki; `ask` says which page covers the topic.
+    if (canonical.matched.length && !canonical.pages.length) {
+      out.canonicalUnpacked = canonical.matched;
+      return;
+    }
     // The weak page matches `ask` prints keep their share; the passages get the rest.
     const room = Math.max(0, Math.floor(budget * (1 - LOOKUP_BUDGET_SPLIT.weak)) - canonical.tokens);
     const packed = packPassages(found.results, room);
@@ -460,10 +532,14 @@ export function createLookup(ctx, cfg, brain) {
       // Say "waiting for review" only when one exists; otherwise queue it now.
       items = [];
       for (const item of packed.items) {
-        const exists = await reviewExists(item.doc);
-        items.push({ ...item, doc: { ...item.doc, meta: { ...item.doc.meta, review: exists ? 'waiting' : 'none' } } });
-        const ref = exists ? null : stagedRef(item.doc, b, connectors);
-        if (ref) toQueue.push(ref);
+        let state;
+        try { state = await deadline.within(reviewState(item.doc)); }
+        catch (err) { if (!(err instanceof Timeout)) throw err; state = 'unknown'; out.incomplete = true; }
+        // 'none' queues it; 'failed' queues it once a day; the rest queue nothing.
+        const queue = state === 'none' || (state === 'failed' && await claimRetry(item.doc.meta.sha256));
+        items.push({ ...item, doc: { ...item.doc, meta: { ...item.doc.meta, review: state } } });
+        const ref = queue ? stagedRef(item.doc, b, connectors) : null;
+        if (ref) { toQueue.push(ref); reviewCache.delete(item.doc.meta.sha256); }
       }
     }
 
@@ -481,7 +557,7 @@ export function createLookup(ctx, cfg, brain) {
       sink.closed = true;
       if (found.step === 'staged') {
         const done = new Set(sink.queued.map((q) => `${q.connector}\n${q.ref}`));
-        for (const item of items) if (done.has(`${item.doc.meta.connector}\n${item.doc.meta.ref}`)) item.doc.meta.review = 'waiting';
+        for (const item of items) if (done.has(`${item.doc.meta.connector}\n${oneLine(item.doc.meta.ref)}`)) item.doc.meta.review = 'waiting';
       }
     }
 
@@ -529,7 +605,7 @@ export function createLookup(ctx, cfg, brain) {
   }
 
   /** Entries held in memory, for tests and for a look at how full the caps are. */
-  const sizes = () => ({ negative: negative.size, limiter: limiter.size() });
+  const sizes = () => ({ negative: negative.size, limiter: limiter.size(), review: reviewCache.size });
 
   return { find, sizes };
 }

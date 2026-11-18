@@ -73,9 +73,15 @@ function pageMarkdown(page) {
 const SOURCE_HEADING = 'Source passages: from ingested sources, not yet on a reviewed page';
 const UNREVIEWED_HEADING = 'Unreviewed passages: nobody has reviewed these';
 
+/** Zero-width and direction-changing characters: removed from every provenance value. */
+const INVISIBLE = /[\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
+/** Characters that reorder how a line displays. Removed from passage text; zero-width joiners stay, some scripts need them. */
+const BIDI = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+
 /** One line, for a value that came from a document or a provider: control characters and line breaks become spaces, length capped. */
 export function oneLine(value, max = 200) {
   const t = String(value ?? '')
+    .replace(INVISIBLE, '')
     .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -85,6 +91,7 @@ export function oneLine(value, max = 200) {
 /** Text from a document, printed as quoted data: every line starts with `> `, so none of it can pass for a heading of ours. */
 export function quoted(text) {
   return String(text ?? '')
+    .replace(BIDI, '')
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u0084\u0086-\u009f]/g, ' ')
     .split(/\r\n|[\r\n\u0085\u2028\u2029]/)
     .map((l) => `> ${l}`)
@@ -104,13 +111,21 @@ function renderCanonical(canonical) {
   return lines;
 }
 
+/** How a staged document stands with the review queue (`review` in lookup.mjs). */
+const STAGED_STATE = {
+  waiting: ' (staged, waiting for review)',
+  nothing: ' (fetched earlier; ingest found nothing to add to the wiki)',
+  failed: ' (fetched earlier; the ingest job failed)',
+  unknown: ' (staged)',
+  none: ' (fetched earlier, not yet queued for review)',
+};
+
 /** One line saying where a document came from. Every value in it is flattened to one line. */
 function provenanceLine(kind, doc) {
   const m = doc.meta || {};
   const title = oneLine(doc.title);
   if (kind === 'source') return `Source: "${title}" (${oneLine(m.sourceId, 80) || 'no id'}), ${oneLine(m.path)}`;
-  const state = m.via !== 'staged' ? ''
-    : m.review === 'waiting' ? ' (staged, waiting for review)' : ' (fetched earlier, not yet queued for review)';
+  const state = m.via !== 'staged' ? '' : STAGED_STATE[m.review] ?? STAGED_STATE.none;
   return `From connector ${oneLine(m.connector, 80)}${m.server ? ` (server ${oneLine(m.server, 80)})` : ''}: "${title}", ref ${oneLine(m.ref)}, sha256 ${oneLine(String(m.sha256 || '').slice(0, 7), 7)}, fetched ${oneLine(m.fetchedAt, 40)}${state}`;
 }
 
@@ -380,6 +395,11 @@ export function buildServer(ctx, cfg, brain, { human, sessionId, transport = 'me
         + 'Text from outside the wiki follows, labelled by what it is. Answer from it only as the rules below say, and tell the user which parts are reviewed and which are not.', '');
       lines.push(lookupRules(b.snap.dir).text, '');
       if (found.canonical.pages.length) lines.push(...renderCanonical(found.canonical));
+    } else if (!answered && found?.canonicalUnpacked?.length) {
+      // Unreviewed text is never shown without the canonical text that outranks it.
+      const pages = found.canonicalUnpacked.map((c) => `${pageRef({ id: oneLine(c.slug, 120) })}${c.title ? ` "${oneLine(c.title)}"` : ''}`).join(', ');
+      lines.push('## Context', '', `A canonical page covers this topic: ${pages}. Its text did not fit in the token budget, so nothing from outside the wiki is shown, because it must not appear without the canonical text that outranks it. `
+        + 'Call get_page for that page, or ask again with a larger max_tokens.');
     } else if (!answered) {
       lines.push('## Context', '', `The brain has no page that answers this well${r.results.length ? ` (best match: [[${r.results[0].slug}]], weak)` : ''}. `
         + 'Tell the user plainly that the brain does not cover it. Do not present general knowledge as if it came from the brain. Offer to call report_gap.');
@@ -414,6 +434,7 @@ export function buildServer(ctx, cfg, brain, { human, sessionId, transport = 'me
           sections: p.sections,
         })),
         ...(hasPassages ? { lookup: lookupData(found) } : {}),
+        ...(!hasPassages && found?.canonicalUnpacked?.length ? { canonicalCovers: found.canonicalUnpacked } : {}),
       },
       telemetry: {
         query: question, results: resultsForTelemetry(r.results), pagesRead: packed.pages.map((p) => p.page.id), answered,

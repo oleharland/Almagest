@@ -40,6 +40,8 @@ import { buildSnapshot, DEFAULT_MAX_BYTES, sha256, snapshotRelPath, stagingAbsPa
 export const CURSOR_NS = 'connector-cursor';
 export const ITEM_NS = 'connector-item';
 export const LOOKUP_NS = 'connector-lookup';
+// Raw titles of search hits that flattening changed, kept until the hit is fetched, so a restart does not lose them.
+const TITLE_NS = 'connector-lookup-title';
 export const MAX_SEARCH_TERMS = 8;
 export const MAX_TERM_CHARS = 64;
 export const MAX_QUERY_CHARS = 200;
@@ -247,7 +249,7 @@ export function createConnectors(ctx, options = {}) {
    * @param {object} run  { c, id, recipe, vars, client, spec, timeoutMs, maxBytes, manifest, startedAt }
    * @returns {{ snap, ref, reused: boolean, fetched: boolean }}  `ref.change` is new | changed | unchanged | reappeared
    */
-  async function stageItem(run, item, { dryRun = false } = {}) {
+  async function stageItem(run, item, { dryRun = false, via = '' } = {}) {
     const { c, id, recipe, vars, client, spec, timeoutMs, maxBytes, manifest, startedAt } = run;
     const key = `${id}:${item.ref}`;
     const relPath = snapshotRelPath(brainDir, id, item.ref);
@@ -282,7 +284,11 @@ export function createConnectors(ctx, options = {}) {
         fs.mkdirSync(path.dirname(stage), { recursive: true });
         fs.writeFileSync(stage, snap.text);
       }
-      await store.kv.set(ITEM_NS, key, { version: item.version, sha256: snap.sha256, title: snap.title, truncated: snap.truncated, path: relPath, syncedAt: startedAt });
+      // `via` says who owns the record: absent when a sync listing wrote it (so also for records
+      // from before this field), 'lookup' when only live lookup has ever fetched it. A lookup
+      // fetch keeps the owner a sync record already has.
+      const owner = via === 'lookup' && (!prior || prior.via === 'lookup') ? { via: 'lookup' } : {};
+      await store.kv.set(ITEM_NS, key, { version: item.version, sha256: snap.sha256, title: snap.title, truncated: snap.truncated, path: relPath, syncedAt: startedAt, ...owner });
     }
 
     const ref = {
@@ -476,6 +482,9 @@ export function createConnectors(ctx, options = {}) {
       // is not offered.
       if (flattenRef(i.ref) !== i.ref) continue;
       rawTitles.set(`${id}:${i.ref}`, i.title);
+      // Flattening can change a title (newlines, a leading #, the length cap), and the snapshot
+      // header carries the raw one. Keep those across a restart.
+      if (flattenField(i.title, MAX_TITLE_CHARS) !== i.title) await store.kv.set(TITLE_NS, `${id}:${i.ref}`, { title: String(i.title) });
       if (rawTitles.size > 500) rawTitles.delete(rawTitles.keys().next().value);
       out.push({ ref: i.ref, title: flattenField(i.title, MAX_TITLE_CHARS), version: flattenField(i.version), mime: flattenField(i.mime) });
     }
@@ -503,15 +512,25 @@ export function createConnectors(ctx, options = {}) {
     const vars = await resolveVars(client, recipe, lookupVars(c), { timeoutMs });
     const manifest = await mainManifest();
     const key = `${id}:${String(item.ref)}`;
-    const rawTitle = rawTitles.get(key) ?? (item.title ? String(item.title) : String(item.ref));
+    const kept = rawTitles.has(key) ? null : await store.kv.get(TITLE_NS, key);
+    const rawTitle = rawTitles.get(key) ?? kept?.title ?? (item.title ? String(item.title) : String(item.ref));
     const it = { ref: String(item.ref), version: item.version ? String(item.version) : '', title: rawTitle, commit: '', mime: item.mime ? String(item.mime) : '' };
-    // Read before staging: stageItem records the item. Only a document the sync has
-    // never listed is the lookup's own; one it tracks must stay subject to the missing check.
-    const tracked = Boolean(manifest.byId.get(key) || manifest.byPath.get(snapshotRelPath(brainDir, id, it.ref)) || await store.kv.get(ITEM_NS, key));
-    const done = await stageItem({ c, id, recipe, vars, client, spec, timeoutMs, maxBytes, manifest, startedAt }, it);
-    if (!tracked && !(await store.kv.get(LOOKUP_NS, key))) {
+    // The rule: a lookup fetch leaves a mark unless the sync is already responsible for the
+    // document. The sync is responsible when its listing wrote the record and main has no
+    // entry yet (the next listing will include it), or when main has an entry and the store
+    // holds no record at all. A record that only lookups wrote never counts, and neither does
+    // a sync record once main has the entry: the document may have left `select` since, and
+    // it has just been fetched, so it exists. A complete listing that includes it clears the
+    // mark, so marking a document the sync does list costs nothing.
+    // Read before staging: stageItem rewrites the record.
+    const before = await store.kv.get(ITEM_NS, key);
+    const inManifest = Boolean(manifest.byId.get(key) || manifest.byPath.get(snapshotRelPath(brainDir, id, it.ref)));
+    const syncOwns = before ? before.via !== 'lookup' && !inManifest : inManifest;
+    const done = await stageItem({ c, id, recipe, vars, client, spec, timeoutMs, maxBytes, manifest, startedAt }, it, { via: 'lookup' });
+    if (!syncOwns && !(await store.kv.get(LOOKUP_NS, key))) {
       await store.kv.set(LOOKUP_NS, key, { at: startedAt, title: done.snap.title || it.title, failures: 0, checkedAt: startedAt });
     }
+    await store.kv.delete(TITLE_NS, key);
     const title = done.snap.title || it.title;
     return {
       ref: { ...done.ref, title: flattenField(done.ref.title, MAX_TITLE_CHARS), version: flattenField(done.ref.version), via: 'lookup' },

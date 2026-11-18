@@ -7,7 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 import { humanActor } from '../../src/core/auth.mjs';
-import { buildSnapshot } from '../../src/connectors/snapshot-file.mjs';
+import { buildSnapshot, snapshotRelPath } from '../../src/connectors/snapshot-file.mjs';
 import { createBrain } from '../../src/mcp/brain.mjs';
 import { createLookup, INGEST_COUNT_NS, MAX_CACHE_ENTRIES, MAX_SOURCE_BYTES, MAX_SOURCE_INDEX_BYTES, REJECTED_NS, roleRank } from '../../src/mcp/lookup.mjs';
 import { oneLine, quoted } from '../../src/mcp/tools.mjs';
@@ -293,23 +293,22 @@ describe('live lookup — gates', () => {
     assert.match(r.skipped.map((s) => s.reason).join(), /rate limit for connector team-drive/);
   });
 
-  it('per-caller rate limit is charged only when a provider call is about to go out, and skips the connectors step for that caller only', async () => {
-    const t = await setup({ docs: [CONNECTOR_DOC()], searchResult: () => [], lookup: { rate: { per_caller_per_minute: 2, per_connector_per_minute: 1000 } } });
+  it('per-caller rate limit is charged once per lookup that reaches a privileged step, and skips the rest for that caller only', async () => {
+    const t = await setup({ docs: [CONNECTOR_DOC()], searchResult: () => [], lookup: { rate: { per_caller_per_minute: 3, per_connector_per_minute: 1000 } } });
     // the local sources step is never charged, however often it runs
     for (let i = 0; i < 5; i += 1) assert.equal((await t.find({ keywords: SOURCE_KW })).step, 'sources');
     // a viewer is stopped by the role gate before any charge
     for (let i = 0; i < 5; i += 1) await t.find({ human: viewer, keywords: [`v${i}`] });
     assert.equal(t.calls.search.length, 0);
-    // a negative-cache hit does not reach a provider and is not charged
     await t.find({ keywords: ['aaa'] });
-    for (let i = 0; i < 4; i += 1) await t.find({ keywords: ['aaa'] });
-    assert.equal(t.calls.search.length, 1);
+    await t.find({ keywords: ['aaa'] });                  // a negative-cache hit still reached a privileged step
     await t.find({ keywords: ['bbb'] });
-    const third = await t.find({ keywords: ['ccc'] });
-    assert.equal(third.step, null);
-    assert.equal(third.skipped[0].step, 'all');
-    assert.match(third.skipped[0].reason, /rate limit/);
-    assert.equal(t.calls.search.length, 2, 'the third provider call was not made');
+    assert.equal(t.calls.search.length, 2);
+    const fourth = await t.find({ keywords: ['ccc'] });
+    assert.equal(fourth.step, null);
+    assert.equal(fourth.skipped[0].step, 'all');
+    assert.match(fourth.skipped[0].reason, /rate limit/);
+    assert.equal(t.calls.search.length, 2, 'the fourth lookup made no provider call');
     assert.equal((await t.find({ human: owner, keywords: ['ddd'] })).skipped.length, 0);
     assert.equal(t.calls.search.length, 3);
   });
@@ -840,5 +839,172 @@ describe('live lookup — the keywords input tells the chat when to supply them 
     assert.match(ask.inputSchema.properties.keywords.description, /not in a language written with spaces/);
     assert.match(ask.inputSchema.properties.keywords.description, /different words from the likely source text/);
     await close();
+  });
+});
+
+// ── closing round: items 1 to 8 ─────────────────────────────────────────────
+
+describe('live lookup — the canonical guardrail survives a small budget (R1)', () => {
+  const bigCanonical = page({ title: 'Message Retention Policy', body: `## Summary\n\nThe nimbus broker retention policy is fixed: messages are kept for seven days. ${'Retention applies to every tenant without exception. '.repeat(120)}\n` })
+    .replace('tier: curated', 'tier: canonical');
+  const blocks = Array.from({ length: 4 }, (_, i) => `=== page ${i + 1} ===\nThe zephyr gateway drains connections for ninety seconds before restart ${i}.`).join('\n\n');
+  const QUESTION = 'nimbus broker retention failover quasar ledger zephyr';
+
+  for (const budget of [200, 230, 255, 2500]) {
+    it(`a large matching canonical page is shown at max_tokens ${budget}`, async () => {
+      const t = await setup({ files: { 'brain/raw/extracted/ops.pdf.txt': blocks, 'brain/wiki/message-retention.md': bigCanonical } });
+      const { client, close } = await connect(t.ctx, viewer);
+      const r = await call(client, 'ask', { question: QUESTION, keywords: SOURCE_KW, max_tokens: budget });
+      assert.ok(!r.isError, r.text);
+      assert.ok(r.structuredContent.lookup.canonical.some((c) => c.slug === 'message-retention'), `canonical page missing at ${budget}`);
+      assert.match(r.text, /### \[\[message-retention\]\]/);
+      await close();
+    });
+  }
+
+  it('canonical matched but nothing of it fits: no unreviewed or source text, and the chat is told to get_page', async () => {
+    const empty = page({ title: 'Message Retention nimbus broker', body: '' }).replace('tier: curated', 'tier: canonical');
+    const t = await setup({ files: { 'brain/raw/extracted/ops.pdf.txt': blocks, 'brain/wiki/message-retention.md': empty } });
+    const { client, close } = await connect(t.ctx, viewer);
+    const r = await call(client, 'ask', { question: QUESTION, keywords: SOURCE_KW });
+    assert.ok(!r.isError, r.text);
+    assert.doesNotMatch(r.text, /Source passages|Unreviewed passages|ninety seconds/);
+    assert.match(r.text, /canonical page covers this topic/);
+    assert.match(r.text, /\[\[message-retention\]\]/);
+    assert.match(r.text, /get_page/);
+    assert.match(r.text, /max_tokens/);
+    await close();
+  });
+});
+
+describe('live lookup — anonymization serves only agent-written sidecars (R2)', () => {
+  const NOTES_MANIFEST = `${MANIFEST}  - id: standup-notes
+    kind: local
+    path: brain/raw/processed/standup-notes.md
+    sha256: 6666666666666666666666666666666666666666666666666666666666666666
+    extracted: none
+    bytes: 100
+    first_ingested: 2026-01-01
+    last_ingested: 2026-01-01
+    pages: []
+    status: ingested
+`;
+  const files = { 'brain/manifest.yaml': NOTES_MANIFEST, 'brain/raw/processed/standup-notes.md': 'Maria Schmidt said the osprey ledger mirrors every night.\n' };
+  const KW = ['osprey', 'ledger', 'mirrors'];
+
+  it('a text original with a personal name is served when anonymization is off and not when it is on; sidecars still are', async () => {
+    const off = await setup({ files });
+    assert.equal((await off.find({ keywords: KW })).step, 'sources');
+    const config = `${fs.readFileSync(path.join(FIXTURES, 'clean', 'brain.config.yaml'), 'utf-8')}\nanonymization:\n  enabled: true\n`;
+    const on = await setup({ files: { ...files, 'brain.config.yaml': config } });
+    assert.equal((await on.find({ keywords: KW })).step, null);
+    assert.equal((await on.find({ keywords: SOURCE_KW })).step, 'sources', 'the sidecar still answers');
+  });
+});
+
+describe('live lookup — what a staged document\'s earlier jobs mean (R3, R4)', () => {
+  async function asked(t) {
+    const { client, close } = await connect(t.ctx, contributor);
+    const r = await call(client, 'ask', { question: 'How often does the quasar ledger rotate keys?', keywords: STAGED_KW });
+    await close();
+    return { ...r, text: r.text.split('\n').filter((l) => l.startsWith('From connector') || l.startsWith('Queued for review') || l.startsWith('Lookup note')).join('\n') };
+  }
+
+  it('a succeeded job with no proposal is neither waiting nor queued again', async () => {
+    const t = await setup();
+    const snap = stage(t.ctx, 'team-drive', 'doc9', STAGED_BODY);
+    t.jobs.push({ id: 'job_nothing', status: 'succeeded', source: { connector: 'team-drive', sha256: snap.sha256 } });
+    const r = await asked(t);
+    assert.match(r.text, /\(fetched earlier; ingest found nothing to add to the wiki\)/);
+    assert.doesNotMatch(r.text, /waiting for review/);
+    assert.equal(t.jobs.length, 1, 'nothing queued');
+  });
+
+  it('a failed job is retried once per sha256 per day, then labelled', async () => {
+    const t = await setup();
+    const snap = stage(t.ctx, 'team-drive', 'doc9', STAGED_BODY);
+    t.jobs.push({ id: 'job_failed', status: 'failed', source: { connector: 'team-drive', sha256: snap.sha256 } });
+    assert.match((await asked(t)).text, /\(staged, waiting for review\)/);
+    assert.equal(t.jobs.length, 2, 'one retry');
+    t.jobs[1].status = 'failed';
+    for (let i = 0; i < 3; i += 1) {
+      const r = await asked(t);
+      assert.match(r.text, /\(fetched earlier; the ingest job failed\)/);
+      assert.doesNotMatch(r.text, /waiting for review|Queued for review/);
+    }
+    assert.equal(t.jobs.length, 2, 'no second retry the same day');
+  });
+
+  it('a queued job that is not answered in time leaves the label "(staged)", queues nothing and says the lookup may be incomplete', async () => {
+    const t = await setup({ lookup: { timeout_ms: 300 } });
+    stage(t.ctx, 'team-drive', 'doc9', STAGED_BODY);
+    t.ctx.ingest.list = () => new Promise(() => {});
+    const r = await asked(t);
+    assert.match(r.text, /fetched [^\n]*\(staged\)(\n|$)/);
+    assert.doesNotMatch(r.text, /waiting for review|not yet queued|Queued for review/);
+    assert.match(r.text, /timed out, so it may be incomplete/);
+    assert.equal(t.jobs.length, 0);
+  });
+
+  it('asks the store for active and finished jobs by status, and caches the answer per sha256', async () => {
+    const t = await setup();
+    const snap = stage(t.ctx, 'team-drive', 'doc9', STAGED_BODY);
+    t.jobs.push({ id: 'job_live', status: 'queued', source: { connector: 'team-drive', sha256: snap.sha256 } });
+    const filters = [];
+    const real = t.ctx.ingest.list;
+    t.ctx.ingest.list = async (f) => { filters.push(f); return real(f); };
+    await asked(t);
+    assert.ok(filters.length > 0);
+    assert.ok(filters.every((f) => f && f.status), 'every query is filtered by status, never the full list');
+    const n = filters.length;
+    await asked(t);
+    assert.equal(filters.length, n, 'a second ask within the cache window does not query again');
+  });
+});
+
+describe('live lookup — the per-caller limit covers the staged step (R5)', () => {
+  it('is charged once per lookup that reaches staged or connectors, and never by sources', async () => {
+    const t = await setup({ docs: [CONNECTOR_DOC()], searchResult: () => [], lookup: { rate: { per_caller_per_minute: 2, per_connector_per_minute: 1000 } } });
+    stage(t.ctx, 'team-drive', 'doc9', STAGED_BODY);
+    for (let i = 0; i < 5; i += 1) assert.equal((await t.find({ keywords: SOURCE_KW })).step, 'sources');
+    assert.equal((await t.find({ keywords: STAGED_KW })).step, 'staged');
+    // one lookup that reaches staged and then the connectors is charged once, not twice
+    const miss = await t.find({ keywords: ['aaa'] });
+    assert.equal(miss.skipped.length, 0);
+    assert.equal(t.calls.search.length, 1);
+    const blocked = await t.find({ keywords: STAGED_KW });
+    assert.equal(blocked.step, null, 'staged is limited too');
+    assert.equal(blocked.skipped[0].step, 'all');
+    assert.match(blocked.skipped[0].reason, /rate limit/);
+  });
+});
+
+describe('live lookup — a fetched document\'s provider text is flattened before the ingest prompt (R8)', () => {
+  it('title, server and ref are one line without invisible or direction-changing characters; path and sha256 are untouched', async () => {
+    const t = await setup();
+    const ref = 'doc‮9';
+    const snap = buildSnapshot({ connector: 'team-drive', server: 'google‮drive​', ref, title: 'Q‮ed​ger\ttitle', body: STAGED_BODY });
+    const file = path.join(t.ctx.config.paths.state, 'connector-snapshots', 'team-drive', 'doc9.txt');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, snap.text);
+    const { client, close } = await connect(t.ctx, contributor);
+    await call(client, 'ask', { question: 'How often does the quasar ledger rotate keys?', keywords: STAGED_KW });
+    await close();
+    assert.equal(t.jobs.length, 1);
+    const s = t.jobs[0].source;
+    for (const k of ['title', 'server', 'ref']) assert.doesNotMatch(s[k], /[​-‏‪-‮⁦-⁩﻿\t\n]/, k);
+    assert.equal(s.ref, 'doc9');
+    assert.equal(s.server, 'googledrive');
+    assert.equal(s.title, 'Qedger title');
+    assert.equal(s.sha256, snap.sha256);
+    assert.equal(s.path, snapshotRelPath('brain', 'team-drive', ref));
+  });
+});
+
+describe('live lookup — invisible and direction-changing characters (R7)', () => {
+  it('oneLine strips them all; quoted strips the bidirectional controls only', () => {
+    assert.equal(oneLine('a​b‍c‮d⁦e⁩f﻿g‏h'), 'abcdefgh');
+    assert.equal(quoted('x‮y‏z⁧'), '> xyz');
+    assert.equal(quoted('a‍b'), '> a‍b', 'a zero-width joiner stays in passage text');
   });
 });

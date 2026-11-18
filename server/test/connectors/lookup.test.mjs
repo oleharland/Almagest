@@ -472,6 +472,51 @@ describe('review fixes: lookup marks (findings 2, 3, 4)', () => {
     assert.deepEqual(s.missing, [], 'one failure after a reset is not three in a row');
   });
 
+  it('a lookup-origin document that was reported missing and then comes back is marked again by the next lookup', async () => {
+    const t = await withLookedUp();
+    const [saved] = t.holder.current.docs.splice(2, 1);
+    for (let i = 0; i < 3; i++) await t.svc.syncDetailed('docs', { full: true });
+    assert.equal(await mark(t), null);
+    t.holder.current.docs.push(saved);
+    const [hit] = await t.svc.search('docs', { terms: ['roadmap'] });
+    await t.svc.fetchOne('docs', hit);
+    assert.ok(await mark(t), 'marked again');
+    const s = await t.svc.syncDetailed('docs', { full: true });
+    assert.deepEqual(s.missing, []);
+    assert.deepEqual(s.errors, []);
+  });
+
+  it('a document the sync owned, now outside select but still there, is re-checked by ref, not reported missing', async () => {
+    const t = await withLookedUp();
+    t.holder.current.unlisted = [];
+    await t.svc.syncDetailed('docs', { full: true });
+    assert.equal(await mark(t), null);
+    t.holder.current.unlisted = ['d3'];
+    const [hit] = await t.svc.search('docs', { terms: ['roadmap'] });
+    await t.svc.fetchOne('docs', hit);
+    assert.ok(await mark(t), 'marked');
+    const s = await t.svc.syncDetailed('docs', { full: true });
+    assert.deepEqual(s.missing, []);
+    assert.deepEqual(s.errors, []);
+    t.holder.current.docs.splice(2, 1);
+    for (let i = 0; i < 3; i++) await t.svc.syncDetailed('docs', { full: true });
+    assert.equal(await mark(t), null);
+    assert.deepEqual((await t.svc.syncDetailed('docs', { full: true })).missing.map((m) => m.ref), ['d3']);
+  });
+
+  it('a deleted document nobody fetches again is reported missing after three failed re-checks and not fetched after that', async () => {
+    const t = await withLookedUp();
+    t.holder.current.docs.splice(2, 1);
+    const run = () => t.svc.syncDetailed('docs', { full: true });
+    await run();
+    await run();
+    assert.deepEqual((await run()).missing.map((m) => m.ref), ['d3']);
+    t.calls.length = 0;
+    assert.deepEqual((await run()).missing.map((m) => m.ref), ['d3']);
+    assert.equal(t.calls.filter((c) => c.tool === 'get_doc').length, 0);
+    assert.equal(await mark(t), null);
+  });
+
   it('with more marks than max_items, the re-check goes oldest first and reaches every ref', async () => {
     const t = await setup({ lookup: true, max_items: 2 });
     t.holder.current.docs.push({ id: 'd4', title: 'Four', updatedAt: '2026-01-01T00:00:00Z', body: 'four' });
@@ -496,6 +541,37 @@ describe('review fixes: lookup marks (findings 2, 3, 4)', () => {
     assert.deepEqual(await checked(), ['d3', 'd5']);
     assert.deepEqual(await checked(), ['d2', 'd4']);
     assert.ok((await mark(t, 'd3')).checkedAt > '2026-02');
+  });
+});
+
+describe('raw titles survive a restart', () => {
+  it('fetchOne after a restart stages the same bytes a sync does, for a title flattening would change', async () => {
+    const title = '# Failover\n=== section: x ===\nplan';
+    const a = await setup({ lookup: true });
+    a.holder.current.docs[0].title = title;
+    const synced = (await a.svc.sync('docs')).find((r) => r.ref === 'd1');
+
+    const b = await setup({ lookup: true });
+    b.holder.current.docs[0].title = title;
+    const [hit] = await b.svc.search('docs', { terms: ['retry'] });
+    const restarted = createConnectors(b.ctx, { connect: memoryConnect(b.holder, b.calls) });
+    const got = await restarted.fetchOne('docs', hit);
+    assert.equal(got.sha256, synced.sha256);
+    assert.equal(got.ref.change, 'new');
+    const after = (await restarted.sync('docs')).find((r) => r.ref === 'd1');
+    assert.equal(after.sha256, got.sha256, 'the sync fingerprints the same bytes, so it is not ingested twice');
+  });
+
+  it('a title over the display cap is also kept whole', async () => {
+    const title = 'T'.repeat(400);
+    const b = await setup({ lookup: true });
+    b.holder.current.docs[0].title = title;
+    const a = await setup({ lookup: true });
+    a.holder.current.docs[0].title = title;
+    const synced = (await a.svc.sync('docs')).find((r) => r.ref === 'd1');
+    const [hit] = await b.svc.search('docs', { terms: ['retry'] });
+    const restarted = createConnectors(b.ctx, { connect: memoryConnect(b.holder, b.calls) });
+    assert.equal((await restarted.fetchOne('docs', hit)).sha256, synced.sha256);
   });
 });
 

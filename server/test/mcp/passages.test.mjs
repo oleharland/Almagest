@@ -140,7 +140,7 @@ describe('packPassages', () => {
     assert.ok(packed.tokens <= 300);
     const texts = packed.items.flatMap((i) => i.passages.map((p) => p.text));
     assert.ok(texts[0].endsWith(' […]'));
-    assert.equal(estimateTokens(texts[0]) + 12, packed.tokens);
+    assert.equal(estimateTokens(`> ${texts[0]}`) + 12, packed.tokens, 'counts the "> " the renderer prints');
   });
 
   it('skips a passage when almost no room is left and reports truncation', () => {
@@ -173,5 +173,20 @@ describe('packPassages', () => {
 
   it('returns nothing for no results', () => {
     assert.deepEqual(packPassages([], 100), { items: [], tokens: 0, truncated: false });
+  });
+});
+
+describe('packPassages counts what the renderer prints', () => {
+  it('a passage of many short lines stays within the budget once each line carries its "> " prefix', async () => {
+    const { quoted } = await import('../../src/mcp/tools.mjs');
+    const text = Array.from({ length: 600 }, (_, i) => `l${i % 10}`).join('\n');
+    const results = [{ doc: { key: 'd' }, passage: { marker: '', locator: '', text, part: 1, order: 0 }, score: 1, coverage: 1 }];
+    for (const budget of [900, 500, 300]) {
+      const packed = packPassages(results, budget);
+      const rendered = packed.items.flatMap((i) => i.passages).reduce((n, p) => n + estimateTokens(quoted(p.text)) + 12, 0);
+      assert.ok(packed.items.length, `something is packed at ${budget}`);
+      assert.ok(rendered <= budget, `${rendered} rendered tokens over a budget of ${budget}`);
+      assert.ok(packed.tokens <= budget);
+    }
   });
 });

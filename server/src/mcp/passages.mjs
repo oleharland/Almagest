@@ -209,6 +209,8 @@ export function searchPassages(index, query, { limit = 8, minScore = 0.2, minCov
 export const PACK_MIN_SHARE = 0.35;
 /** At most this many documents contribute passages to one packing. */
 export const PACK_MAX_DOCS = 4;
+/** `> ` in front of every printed line, as `quoted()` in tools.mjs writes it. */
+export const QUOTE_PREFIX_CHARS = 2;
 
 /**
  * Greedy by score inside a token budget (`estimateTokens`, plus 12 a passage
@@ -226,7 +228,10 @@ export const PACK_MAX_DOCS = 4;
  * @returns {{ items: Array<{ doc: object, passages: Array<{ marker: string, locator: string, text: string, part: number }> }>, tokens: number, truncated: boolean }}
  *   documents ordered by their best passage, passages in document order.
  */
-export function packPassages(results, budget, { minShare = PACK_MIN_SHARE, maxDocs = PACK_MAX_DOCS } = {}) {
+export function packPassages(results, budget, { minShare = PACK_MIN_SHARE, maxDocs = PACK_MAX_DOCS, linePrefix = QUOTE_PREFIX_CHARS } = {}) {
+  // What is printed is the text with `linePrefix` characters in front of every line, so that is what is counted.
+  const lineCount = (text) => text.split(/\r\n|[\r\n\u0085\u2028\u2029]/).length;
+  const cost = (text) => Math.ceil((text.length + lineCount(text) * linePrefix) / 4) + 12;
   const ranked = [...(results || [])]
     .map((r, i) => ({ r, i }))
     .sort((a, b) => b.r.score - a.r.score || a.i - b.i)
@@ -242,13 +247,19 @@ export function packPassages(results, budget, { minShare = PACK_MIN_SHARE, maxDo
     const key = r.doc.key ?? r.doc;
     if (!docKeys.has(key) && docKeys.size >= maxDocs) continue;
     let text = r.passage.text;
-    if (tokens + estimateTokens(text) + 12 > budget) {
-      const room = (budget - tokens - 12) * 4 - 8;
+    if (tokens + cost(text) > budget) {
+      let room = (budget - tokens - 12) * 4 - 8;
       truncated = true;
       if (room < 200) continue;
       text = text.slice(0, room).trimEnd() + ' […]';
+      // Many short lines cost more than their characters: cut again until the printed text fits.
+      while (tokens + cost(text) > budget && room >= 200) {
+        room = Math.floor(room * 0.9);
+        text = r.passage.text.slice(0, room).trimEnd() + ' […]';
+      }
+      if (tokens + cost(text) > budget) continue;
     }
-    tokens += estimateTokens(text) + 12;
+    tokens += cost(text);
     docKeys.add(key);
     chosen.push({ doc: r.doc, passage: { ...r.passage, text } });
   }
