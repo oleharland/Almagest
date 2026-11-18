@@ -19,11 +19,12 @@
  * existed. Nothing here depends on what the agent reported (`extends` is
  * information for the reviewer and decides nothing).
  *
- *   - With a common version, a section is merged line by line against the
- *     base's section with `git merge-file`, and accepted only when that is
- *     clean. A list in the frontmatter is merged three ways, so a removal
- *     approved on main stays removed. A scalar must be equal or changed on one
- *     side only.
+ *   - With a common version, a section changed on one side only is taken from
+ *     that side. A section changed on both sides is a clash unless the two
+ *     results are identical, even when `git merge-file` could splice the edits:
+ *     no reviewer saw those two statements together. A list in the frontmatter
+ *     is merged three ways, so a removal approved on main stays removed. A
+ *     scalar must be equal or changed on one side only.
  *   - With no common version, a section is kept when it is the same on both
  *     sides, or when one side's text is the other's with whole lines appended;
  *     lists are unions; any differing scalar is a clash.
@@ -40,16 +41,10 @@
  * never run) plus tools/lib/wiki-core.mjs, the same pair the audit and the
  * review builder use.
  */
-import { execFile } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-
 import matter from 'gray-matter';
 import YAML from 'yaml';
 
 import { asString, safeFrontmatter, sectionNames } from '../../../tools/lib/wiki-core.mjs';
-import { childEnv } from '../core/git.mjs';
 
 const parseFrontmatter = safeFrontmatter(matter);
 
@@ -266,23 +261,6 @@ const sameLines = (a, b) => a.length === b.length && a.every((l, i) => l === b[i
 /** `short` is `long` with more whole lines after it, line for line. */
 const isPrefix = (short, long) => short.length < long.length && short.every((l, i) => l === long[i]);
 
-/** Run `git merge-file -p` on three texts. The merged text when it is clean, null when there is any conflict or it failed. */
-function mergeFile(base, ours, theirs) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-section-'));
-  const [fo, fb, ft] = ['ours', 'base', 'theirs'].map((n) => path.join(dir, n));
-  fs.writeFileSync(fo, ours);
-  fs.writeFileSync(fb, base);
-  fs.writeFileSync(ft, theirs);
-  return new Promise((resolve) => {
-    execFile('git', ['merge-file', '-p', fo, fb, ft], { env: childEnv(), maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => {
-      fs.rmSync(dir, { recursive: true, force: true });
-      resolve(err ? null : String(stdout));
-    });
-  });
-}
-
-const toText = (lines) => (lines.length ? `${lines.join('\n')}\n` : '');
-
 async function mergeSection(b, o, t) {
   const [oc, tc] = [core(o.lines), core(t.lines)];
   const label = o.name || 'the start of the page';
@@ -291,9 +269,9 @@ async function mergeSection(b, o, t) {
     const bc = core(b.lines);
     if (sameLines(oc, bc)) return t.lines;
     if (sameLines(tc, bc)) return o.lines;
-    const text = await mergeFile(toText(bc), toText(oc), toText(tc));
-    if (text === null) clash(`section “${label}” was changed on both sides in a way that does not merge line by line`);
-    return text.split('\n').slice(0, -1);
+    // Both sides changed it. Git may be able to splice the two edits together, but no reviewer saw
+    // those two statements side by side (a negation on one side, a new recommendation on the other).
+    return clash(`section “${label}” was changed on both sides, so the two versions have to be reconciled by a person or the agent`);
   }
   // No common version: only a plain addition at the end is safe to take.
   if (isPrefix(oc, tc)) return t.lines;

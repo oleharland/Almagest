@@ -35,7 +35,7 @@ export function slugFromEntry(entry) {
 }
 
 /** The frontmatter block of a page's text, or null when it has none. */
-function frontmatterBlock(text) {
+export function frontmatterBlock(text) {
   const m = /^﻿?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(String(text ?? ''));
   return m ? m[1] : null;
 }

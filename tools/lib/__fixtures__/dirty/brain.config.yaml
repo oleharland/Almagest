@@ -37,6 +37,8 @@ audit:
       - SCHEMA-003
       - SCHEMA-004
       - SCHEMA-005
+      - SCHEMA-006
+      - SCHEMA-007
       - LINK-001
       - LINK-003
       - CITE-001

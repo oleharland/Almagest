@@ -40,3 +40,11 @@ The scheduler retries on a fixed 30-second backoff. [source: alpha-pdf, p.3]
 ## Open questions
 
 - What is the ceiling under load? [source: unknown]
+
+## Notes
+
+Quoted markers are plain text: R&D, 2*3, `<!--` in code, and a literal ``` inline. [source: alpha-pdf, p.1] <!-- A closed comment. -->
+
+```
+<!-- inside a fence -->
+```

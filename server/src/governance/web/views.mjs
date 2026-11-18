@@ -495,7 +495,7 @@ export function canonicalPage({ items, enabled = true, error = '', actor, csrf, 
               ${canCanonical
                 ? canonicalOnly({ slug: h.slug, title: h.title, csrf })
                 : html`<span class="faint">Only someone with the ${canonicalRole} role can make a page canonical.</span>`}
-              <form method="post" action="/inbox/canonical/${encodeURIComponent(h.slug)}/dismiss">${csrfField(csrf)}<button class="btn btn--small" type="submit">Dismiss</button></form>
+              ${canCanonical ? html`<form method="post" action="/inbox/canonical/${encodeURIComponent(h.slug)}/dismiss">${csrfField(csrf)}<button class="btn btn--small" type="submit">Dismiss</button></form>` : ''}
             </div>` : ''}
           </li>`)}</ul>`}
     <p class="faint"><a href="/inbox/pages">See every page and its tier</a></p>`;

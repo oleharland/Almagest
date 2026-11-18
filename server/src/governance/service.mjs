@@ -34,7 +34,7 @@ import { attachDemand, buildChanges } from './builder.mjs';
 import { canonicalAt } from './canonical.mjs';
 import { basisOf, createRejectedMemory, readPage } from './learnings.mjs';
 import { appendChallenge, challengeFrom, challengeRow } from './challenges.mjs';
-import { normalizeAudit, runAudit } from './merge.mjs';
+import { normalizeAudit, oneLine, runAudit } from './merge.mjs';
 import { listChanges, outsideFiles } from './paths.mjs';
 import * as policy from './policy.mjs';
 import { assertMayAct, vouchedAs } from './trust.mjs';
@@ -675,7 +675,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       }
 
       const tree = await merger.treeWith((await git.run(['rev-parse', `${p.headSha}^{tree}`])).trim(), [[file, next]]);
-      const sha = await merger.commitTree(tree, [p.headSha], `Set ${slug} to ${to} (${p.id})`, gitIdentity(actor));
+      const sha = await merger.commitTree(tree, [p.headSha], `Set ${oneLine(slug, 100)} to ${oneLine(to, 20)} (${oneLine(p.id, 60)})`, gitIdentity(actor));
       const audit = await merger.auditCommit(sha);
       if (audit.exit !== 0) {
         await record('page.tier_refused', actor, p.id, channel, { slug, to, reason: auditNote(audit) });
@@ -686,7 +686,10 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
 
       const blob = (await git.run(['rev-parse', `${sha}:${file}`])).trim();
       const edit = { from, to, by: actor.id, display: actor.display, at: nowIso(), headSha: sha, blob };
-      await store.proposals.update(p.id, { tierEdits: { ...(p.tierEdits || {}), [slug]: edit } });
+      // The person wrote part of this version, so they count as one who sent it in: separation of
+      // duties then keeps them from approving it alone, as it does for whoever proposed a tier.
+      const submitters = [...new Set([...policy.submittersOf(p), actor.id])];
+      await store.proposals.update(p.id, { tierEdits: { ...(p.tierEdits || {}), [slug]: edit }, submitters });
       const updated = await upsert({ id: p.jobId, kind: 'tier-edit', source: p.source, requestedBy: actor.id, runReport: { blocked: [], notes: p.notes, pages: p.reportPages } },
         { branch: p.branch, baseSha: p.baseSha, headSha: sha, audit, worktree: p.worktree });
       await record('page.tier', actor, p.id, channel, { slug, from, to, headSha: sha, previousHeadSha: p.headSha });
@@ -729,7 +732,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       const pageTitle = String(parseFrontmatter(text).data?.title || slug);
 
       const tree = await merger.treeWith((await git.run(['rev-parse', `${mainSha}^{tree}`])).trim(), [[file, next]]);
-      const sha = await merger.commitTree(tree, [mainSha], `Set ${slug} to ${to}`, gitIdentity(actor));
+      const sha = await merger.commitTree(tree, [mainSha], `Set ${oneLine(slug, 100)} to ${oneLine(to, 20)}`, gitIdentity(actor));
       const audit = await merger.auditCommit(sha);
       if (audit.exit !== 0) throw new HttpError(409, `That change was not made, because the automatic checks failed on the result (${auditNote(audit)}).`);
 
@@ -767,7 +770,8 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
 
   /** Turn a canonical suggestion down. It returns only when the page's documents have grown by half. */
   async function dismissHint(slug, actor, { channel = 'web' } = {}) {
-    assertMayChangeTier(actor, channel);
+    // A dismissal hides the suggestion from everyone, so it takes the role that makes a page canonical.
+    assertMayChangeTier(actor, channel, { canonical: true });
     if (!hints) throw new HttpError(404, 'Suggestions are not available.');
     const record_ = await hints.dismiss(String(slug), actor);
     if (!record_) throw new HttpError(404, 'That page is not on the list of suggestions.');
@@ -787,7 +791,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, appendChallenge(before, row));
     const sha = await git.commitAll(wt, {
-      message: `Record a canonical challenge to ${d.slug || 'a canonical page'} (${p.id})`,
+      message: `Record a canonical challenge to ${oneLine(d.slug, 100) || 'a canonical page'} (${oneLine(p.id, 60)})`,
       author: gitIdentity(actor),
       committer: gitIdentity(svc),
     });

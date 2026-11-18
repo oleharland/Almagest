@@ -34,7 +34,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { canonicalOrUnsure, canonicalSet, differOnlyInTier, tierOfText } from '../../../tools/lib/canonical.mjs';
+import { canonicalOrUnsure, canonicalSet, differOnlyInTier, tierOfText, tierReadings } from '../../../tools/lib/canonical.mjs';
 import { authorizeMainMove } from '../../../tools/lib/git-hooks.mjs';
 import { serviceActor } from '../core/auth.mjs';
 import { childEnv, gitIdentity } from '../core/git.mjs';
@@ -116,6 +116,17 @@ Chronological record of all ingest, audit, and maintenance actions.
 | Date | Action | Details |
 |------|--------|---------|
 `;
+
+/**
+ * Free text as one short line, for a commit message: control characters,
+ * line breaks and runs of spaces become single spaces, and the length is
+ * capped. A title or a name must not be able to add a line to a message that
+ * carries `Approved by:` and `Reviewed head:` trailers.
+ */
+export function oneLine(value, max = 200) {
+  const text = String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\s]+/g, ' ').trim();
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
 
 const cell = (s) => String(s ?? '').replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').trim();
 
@@ -232,7 +243,7 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
 
   async function commitTree(tree, parents, message, author) {
     const env = {
-      GIT_AUTHOR_NAME: author.name, GIT_AUTHOR_EMAIL: author.email,
+      GIT_AUTHOR_NAME: oneLine(author.name, 100), GIT_AUTHOR_EMAIL: oneLine(author.email, 100).replace(/[<>\s]/g, ''),
       GIT_COMMITTER_NAME: committer.name, GIT_COMMITTER_EMAIL: committer.email,
     };
     return (await git.run(['commit-tree', tree, ...parents.flatMap((p) => ['-p', p]), '-m', message], { env })).trim();
@@ -459,9 +470,61 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
     if (!differOnlyInTier(before, after)) return bad('it changes more than the tier line');
     if (tierOfText(after) !== t.to) return bad(`the page does not end up at tier ${t.to}`);
     if (tierOfText(before) !== t.from) return bad(`the page was not at tier ${t.from} when this was proposed`);
+    // A person chose a tier for these words. If the page has changed since, they never saw the new ones.
+    if (now !== before) return bad('the page changed since this was proposed, so the tier change has to be proposed again');
     if (tierOfText(now) !== t.from) return bad(`the page is no longer at tier ${t.from} on the knowledge base`);
     if (configLocked.has(t.slug) && t.to !== 'canonical') return bad('the page is locked in brain.config.yaml, which only a person edits by hand');
     return [];
+  }
+
+  /**
+   * The tier of every page the merge changes on main, read from what main
+   * would become. canonicalProblems() reads only the reviewed head, and two
+   * heads that each read as evidence can merge cleanly into a page that reads
+   * canonical (a YAML anchor in one, an alias in the other). A page whose
+   * result is canonical, or whose tier the two parsers read differently, is
+   * refused, except:
+   *
+   *   - a page that is canonical on main by the same definition and is
+   *     byte-identical to main's version (it is not a change at all);
+   *   - a tier choice a person recorded in the inbox: this proposal is that
+   *     page's tier proposal, or it holds a `setPageTier` edit of it, and the
+   *     page in the result is byte-identical to the one that choice produced
+   *     (the blob in the reviewed head, which the recorded blob also names),
+   *     and both parsers read plain `canonical`.
+   *
+   * An external merge accepts no such choice (it never has: see canonicalProblems).
+   *
+   * @returns {Promise<Array<{ path: string, reason: string }>>}
+   */
+  async function resultTierProblems(proposal, commit, mainSha, head, { external = false } = {}) {
+    const out = [];
+    const own = proposal?.kind === 'tier' ? proposal.tier : null;
+    for (const f of await listChanges(git, mainSha, commit)) {
+      const m = pageFile.exec(f.path);
+      if (!m || f.status === 'D') continue;
+      const slug = m[1];
+      const text = await git.show(commit, f.path);
+      if (text === null || !canonicalOrUnsure(text)) continue;
+      const blob = (await git.tryRun(['rev-parse', `${commit}:${f.path}`]))?.trim();
+      const onMain = await git.show(mainSha, f.path);
+      const mainBlob = onMain === null ? null : (await git.tryRun(['rev-parse', `${mainSha}:${f.path}`]))?.trim();
+      if (onMain !== null && canonicalOrUnsure(onMain) && blob === mainBlob) continue;
+      const r = tierReadings(text);
+      const plain = r.yaml === 'canonical' && r.matter === 'canonical';
+      const headBlob = (await git.tryRun(['rev-parse', `${head}:${f.path}`]))?.trim();
+      const edit = proposal?.tierEdits?.[slug];
+      const chosen = !external && plain && blob === headBlob && (
+        (own?.slug === slug && own.to === 'canonical')
+        || (edit?.to === 'canonical' && edit.blob && edit.blob === blob)
+      );
+      if (!chosen) {
+        out.push({ path: f.path, reason: r.yaml === 'canonical' || r.matter === 'canonical'
+          ? 'the merged page reads as canonical, and no person chose that in the review inbox'
+          : 'the merged page\'s tier cannot be read the same way by both parsers, so it might be canonical' });
+      }
+    }
+    return out;
   }
 
   /** What main would become: for a tier proposal, nothing beyond the page, the log and the derived index. */
@@ -585,17 +648,20 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
       replacements.set(logPath, appendLogRow(logText, logRow({ date, proposal, approvers, combined })));
       const mergedTree = await treeWith(tree, replacements);
 
-      const names = approvers.map((a) => `${a.display || a.actorId}${a.email ? ` <${a.email}>` : ''} (${a.channel})`);
+      // Every free-text value is one line, so none of them can add a trailer of its own.
+      const names = approvers.map((a) => `${oneLine(a.display || a.actorId, 100)}${a.email ? ` <${oneLine(a.email, 100).replace(/[<>\s]/g, '')}>` : ''} (${oneLine(a.channel, 30)})`);
       const message = [
-        `Merge proposal ${proposal.id}: ${proposal.title}`,
+        `Merge proposal ${oneLine(proposal.id, 60)}: ${oneLine(proposal.title)}`,
         '',
         `Approved by: ${names.join(', ')}`,
-        `Reviewed head: ${head}`,
-        `Proposal: ${proposal.id}`,
-        `Branch: ${proposal.branch}`,
+        `Reviewed head: ${oneLine(head, 80)}`,
+        `Proposal: ${oneLine(proposal.id, 60)}`,
+        `Branch: ${oneLine(proposal.branch, 200)}`,
       ].join('\n');
       const parents = [mainSha, head];
       const candidate = await commitTree(mergedTree, parents, message, author);
+      const unchosen = await resultTierProblems(proposal, candidate, mainSha, head);
+      if (unchosen.length) return canonicalRefusal(unchosen, proposal.id);
       const checked = await verifyCandidate(candidate, { mainSha, base, head, parents, message, author, proposalId: proposal.id, locked });
       if (!checked.ok) {
         return checked.reason === 'audit' ? { ...checked, message: `${checked.message} The agent has been asked to fix it.` } : checked;
@@ -678,6 +744,9 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
           : `The merge on GitHub contains changes that were not in the reviewed version: ${list}.`,
       };
     }
+    // What main would become, not only what the reviewed head holds: two clean heads can merge into a canonical page.
+    const unchosen = await resultTierProblems(proposal, commit, mainSha, proposal.headSha, { external: true });
+    if (unchosen.length) return canonicalRefusal(unchosen, proposal.id);
     const checked = await verifyCandidate(commit, candidate);
     if (!checked.ok) return checked;
     const moved = await moveMain(mainSha, commit, `almagest: accept merged pull request for ${proposal.id}`);
@@ -686,5 +755,5 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
     return { ok: true, sha: commit, audit: checked.audit, method: moved.method };
   }
 
-  return { merge, acceptExternal, verifyCandidate, moveMain, mergeTree, treeWith, commitTree, auditCommit, canonicalProblems, tierProposalProblems };
+  return { merge, acceptExternal, verifyCandidate, moveMain, mergeTree, treeWith, commitTree, auditCommit, canonicalProblems, tierProposalProblems, resultTierProblems };
 }

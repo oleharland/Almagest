@@ -321,8 +321,9 @@ It is free to read. [source: alpha-pdf, p.1]
 It was sold in 2020. [source: alpha-pdf, p.1]` });
   // Main's reviewer approved taking out the 2020 sale and the alias.
   const REMOVES = BASE.replace('\nIt was sold in 2020. [source: alpha-pdf, p.1]', '').replace('aliases: ["Brew"]', 'aliases: []');
-  // The other proposal started from the same page, still has both, and adds a line and an alias.
-  const ADDS = BASE.replace('founded in 2015. [source: alpha-pdf, p.1]', 'founded in 2015. [source: alpha-pdf, p.1]\nIt has 50 staff. [source: alpha-pdf, p.1]').replace('aliases: ["Brew"]', 'aliases: ["Brew", "MB"]');
+  // The other proposal started from the same page, still has both, and adds an alias and a section of its own.
+  // (Not a line in Details: a section changed on both sides is a clash, whether or not git could splice the edits.)
+  const ADDS = `${BASE}\n\n## Staff\n\nIt has 50 staff. [source: alpha-pdf, p.1]`.replace('aliases: ["Brew"]', 'aliases: ["Brew", "MB"]');
 
   async function both(head) {
     const r = repo({ files: { 'brain/manifest.yaml': MANIFEST, 'brain/index.md': INDEX, 'brain/raw/extracted/beta.pdf.txt': SIDECAR_B, 'brain/wiki/morningbrew.md': BASE } });

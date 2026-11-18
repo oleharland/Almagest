@@ -254,6 +254,8 @@ audit:
       - SCHEMA-003       # missing type_fields entry required for this type
       - SCHEMA-004       # owner missing or not in owner_teams while require_owner
       - SCHEMA-005       # type carries a type_fields vocabulary value
+      - SCHEMA-006       # front matter uses a YAML anchor, alias or merge key
+      - SCHEMA-007       # a page body ends inside an HTML comment or a code fence
       - LINK-001         # [[wikilink]] to a page that does not exist
       - LINK-003         # relations target does not exist
       - CITE-001         # citation does not parse against the frozen grammar

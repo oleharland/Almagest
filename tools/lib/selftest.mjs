@@ -85,6 +85,8 @@ const EXPECTED = {
   'SCHEMA-003': 'error',
   'SCHEMA-004': 'error',
   'SCHEMA-005': 'error',
+  'SCHEMA-006': 'error',
+  'SCHEMA-007': 'error',
   'LINK-001': 'error',
   'LINK-002': 'warning',
   'LINK-003': 'error',
@@ -148,6 +150,11 @@ console.log('\ndirty fixture — every check ID fires at its documented severity
     json.findings.some((f) => f.id === 'BASIS-001' && f.slug === 'basis-moved' && f.message.includes('`orphan`')));
   check('BASIS-001 stays quiet for a Basis page not modified after last_verified',
     !json.findings.some((f) => f.id === 'BASIS-001' && f.slug === 'bad-basis'));
+
+  // SCHEMA-006 and SCHEMA-007 name the page that has the problem, and only that one.
+  const where = (id) => json.findings.filter((f) => f.id === id).map((f) => f.slug);
+  check('SCHEMA-006 names only the page with the anchor and alias', JSON.stringify(where('SCHEMA-006')) === '["bad-anchor"]', JSON.stringify(where('SCHEMA-006')));
+  check('SCHEMA-007 names only the page that ends inside a fence', JSON.stringify(where('SCHEMA-007')) === '["bad-unclosed"]', JSON.stringify(where('SCHEMA-007')));
 
   // The finding shape docs/audit.md documents.
   const sample = json.findings[0];

@@ -23,8 +23,14 @@ export function lookupSentence(proposal) {
   return 'Fetched by live lookup: someone asked a question the brain could not answer.';
 }
 
+/** Free text as one line: line breaks and control characters become single spaces, the length is capped. A title ends up in commit messages and notifications. */
+const oneLine = (v, max = 300) => {
+  const t = String(v ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\s]+/g, ' ').trim();
+  return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
+};
+
 export function sourceName(source) {
-  return source?.title || source?.path?.split('/').pop() || source?.ref || source?.id || 'an unnamed source';
+  return oneLine(source?.title) || oneLine(source?.path?.split('/').pop()) || oneLine(source?.ref) || oneLine(source?.id) || 'an unnamed source';
 }
 
 export function counts(changes = []) {
@@ -56,7 +62,7 @@ export function titleFor(source) {
 
 /** The title of a tier proposal: "Ole wants to make “Glossary” canonical." */
 export function tierTitle(who, pageTitle, to) {
-  return `${who} wants to make “${pageTitle}” ${to}.`;
+  return `${oneLine(who, 100)} wants to make “${oneLine(pageTitle, 200)}” ${oneLine(to, 20)}.`;
 }
 
 /** The title of a learnings proposal: "5 things the brain concluded from what it holds". */

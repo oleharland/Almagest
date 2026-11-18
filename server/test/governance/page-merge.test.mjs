@@ -254,20 +254,26 @@ describe('page merge: body sections', () => {
   describe('with a common version, a section is merged line by line against the base', () => {
     const base = pg({ body: '## Facts\n\nA line. [source: src-a, p.1]\nKeep one.\nKeep two.\nB line. [source: src-b, p.2]\n\n## Other\n\nUnrelated.\n' });
 
-    it('changes to different lines on the two sides are both kept', async () => {
+    it('changes to different lines of one section on the two sides are a clash (git could splice them; nobody saw them together)', async () => {
       const ours = pg({ body: base.split('---\n\n')[1].replace('A line.', 'A line, main.') });
       const theirs = pg({ body: base.split('---\n\n')[1].replace('B line.', 'B line, head.') });
-      const m = await merged({ base, ours, theirs });
-      assert.match(m.body, /A line, main\./);
-      assert.match(m.body, /B line, head\./);
+      await clashes({ base, ours, theirs }, /Facts.*changed on both sides/);
     });
 
-    it('a line main removed does not come back when the head still has it and adds another', async () => {
+    it('changes to different sections on the two sides are both kept', async () => {
+      const ours = pg({ body: base.split('---\n\n')[1].replace('A line.', 'A line, main.') });
+      const theirs = pg({ body: base.split('---\n\n')[1].replace('Unrelated.', 'Unrelated, head.') });
+      const m = await merged({ base, ours, theirs });
+      assert.match(m.body, /A line, main\./);
+      assert.match(m.body, /Unrelated, head\./);
+    });
+
+    it('a line main removed does not come back when the head leaves that section alone and changes another', async () => {
       const text = base.split('---\n\n')[1];
       const ours = pg({ body: text.replace('B line. [source: src-b, p.2]\n', '') });
-      const theirs = pg({ body: text.replace('A line. [source: src-a, p.1]\n', 'A line. [source: src-a, p.1]\nAdded line. [source: src-a, p.3]\n') });
+      const theirs = pg({ body: text.replace('Unrelated.', 'Unrelated, head.') });
       const m = await merged({ base, ours, theirs });
-      assert.match(m.body, /Added line\./);
+      assert.match(m.body, /Unrelated, head\./);
       assert.doesNotMatch(m.body, /B line\./);
     });
 
@@ -294,6 +300,22 @@ describe('page merge: body sections', () => {
       const longer = pg({ body: `${text}\n## New\n\nOne.\nTwo.\n` });
       assert.match((await merged({ base, ours, theirs: longer })).body, /Two\./);
       await clashes({ base, ours, theirs: pg({ body: `${text}\n## New\n\nOther.\n` }) }, /New/);
+    });
+
+    it('a section both sides changed is a clash even when git would merge the two edits cleanly', async () => {
+      const text = base.split('---\n\n')[1];
+      const ours = pg({ body: text.replace('A line. [source: src-a, p.1]', 'A line is no longer true. [source: src-a, p.4]') });
+      const theirs = pg({ body: text.replace('B line. [source: src-b, p.2]', 'B line. [source: src-b, p.2]\nSo use it for new work. [source: src-b, p.5]') });
+      await clashes({ base, ours, theirs }, /Facts.*changed on both sides/);
+    });
+
+    it('a section changed on one side only is still taken from that side, and two identical changes are not a clash', async () => {
+      const text = base.split('---\n\n')[1];
+      const edited = text.replace('Keep one.', 'Keep one, edited.');
+      const m = await merged({ base, ours: pg({ body: text }), theirs: pg({ body: edited }) });
+      assert.match(m.body, /Keep one, edited\./);
+      const same = await merged({ base, ours: pg({ body: edited }), theirs: pg({ body: edited }) });
+      assert.match(same.body, /Keep one, edited\./);
     });
 
     it('a section added on one side only is kept', async () => {
@@ -377,9 +399,10 @@ describe('page merge: the invariant, order and removals', () => {
     const base = pg({ body: '## Summary\n\nA.\nK1.\nK2.\nK3.\nC.\n' });
     const o = pg({ body: '## Summary\n\nA.\nO1.\nK1.\nK2.\nK3.\nC.\n' });
     const t = pg({ body: '## Summary\n\nA.\nK1.\nK2.\nK3.\nT1.\nC.\n' });
-    const m = await merged({ base, ours: o, theirs: t });
-    assert.match(m.body, /A\.\nO1\.\nK1\.\nK2\.\nK3\.\nT1\.\nC\./);
-    assert.equal(pageProvenance(m.text, o, t, base), null);
+    // The two sides changed one section, so mergePages makes it a clash; the invariant is still the check on a result made some other way.
+    await clashes({ base, ours: o, theirs: t }, /Summary/);
+    const result = pg({ body: '## Summary\n\nA.\nO1.\nK1.\nK2.\nK3.\nT1.\nC.\n' });
+    assert.equal(pageProvenance(result, o, t, base), null);
   });
 
   it('with the common version, rejects a list item that a side removed', async () => {

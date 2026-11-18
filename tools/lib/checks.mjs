@@ -23,7 +23,8 @@ import {
   sectionLines,
   sectionNames,
 } from './wiki-core.mjs';
-import { canonicalSetOfPages } from './canonical.mjs';
+import YAML from 'yaml';
+import { canonicalSetOfPages, frontmatterBlock } from './canonical.mjs';
 
 /** Categories drive the report layout and the emoji key in agent/rules/wiki.md. */
 export const CATEGORIES = [
@@ -116,6 +117,133 @@ class Findings {
 }
 
 // ── SCHEMA ───────────────────────────────────────────────────────────────────
+
+// ── front matter indirection (SCHEMA-006) and an open body (SCHEMA-007) ───────
+
+const BLOCK_SCALAR = /(?:^|[\s:-])[|>][1-9+-]{0,2}\s*$/;
+
+/**
+ * Anchors (`&name`), aliases (`*name`) and merge keys (`<<:`) in a page's front
+ * matter, as short descriptions. A page header has no need for them, and they
+ * let a value depend on another line (`tier: *t` reads whatever `&t` marked).
+ *
+ * Found two ways, so neither hides what the other sees: a scan of the raw text
+ * (quoted strings, comments and block scalars are skipped, so a literal `&` or
+ * `*` inside one is not a finding), and the parsed YAML document (an anchor, an
+ * alias node, a plain `<<` key). Returns [] for a page with no front matter.
+ */
+export function frontmatterIndirection(text) {
+  const block = frontmatterBlock(text);
+  if (block === null) return [];
+  const found = [];
+  const note = (what, line) => {
+    const msg = line ? `${what} on line ${line + 1} of the front matter` : `${what} in the front matter`;
+    if (!found.includes(msg)) found.push(msg);
+  };
+
+  // 1. The raw text.
+  let quote = null;          // '"' | "'" | null, carried across lines
+  let blockIndent = null;    // indent of the line that opened a block scalar
+  block.split('\n').forEach((raw, n) => {
+    const line = raw.replace(/\r$/, '');
+    const indent = line.length - line.trimStart().length;
+    if (blockIndent !== null) {
+      if (line.trim() === '' || indent > blockIndent) return;
+      blockIndent = null;
+    }
+    let sig = '';            // the last non-space character seen on this line outside quotes
+    let gap = true;          // whitespace since `sig` (true at the start of a line)
+    let token = '';          // the whitespace-delimited token being read
+    let prevToken = '';
+    let content = '';
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (quote) {
+        if (quote === '"' && c === '\\') { i++; continue; }
+        if (c === quote) {
+          if (quote === "'" && line[i + 1] === "'") { i++; continue; }
+          quote = null;
+        }
+        continue;
+      }
+      if (c === '#' && (i === 0 || /\s/.test(line[i - 1]))) break;
+      if (/\s/.test(c)) { if (token) prevToken = token; token = ''; gap = true; continue; }
+      const start = sig === '' || (gap && (sig === '-' || sig === ':' || sig === '?')) || sig === '[' || sig === '{' || sig === ','
+        || (gap && prevToken.startsWith('!') && token === '');
+      if (start && (c === '&' || c === '*') && /[^\s,[\]{}]/.test(line[i + 1] || '')) {
+        note(c === '&' ? `an anchor (${line.slice(i).match(/^&[^\s,[\]{}]*/)[0]})` : `an alias (${line.slice(i).match(/^\*[^\s,[\]{}]*/)[0]})`, n + 1);
+      }
+      if (start && c === '<' && /^<<\s*:(\s|$)/.test(line.slice(i))) note('a merge key (<<)', n + 1);
+      if ((c === '"' || c === "'") && (start || sig === '')) quote = c;
+      else if ((c === '"' || c === "'") && token === '') quote = c;
+      token += c;
+      sig = c;
+      gap = false;
+      content += c;
+    }
+    if (!quote && BLOCK_SCALAR.test(content)) blockIndent = indent;
+  });
+
+  // 2. The parsed document.
+  try {
+    const doc = YAML.parseDocument(block, { merge: false });
+    YAML.visit(doc, {
+      Alias() { note('an alias'); },
+      Node(_key, node) { if (node.anchor) note(`an anchor (&${node.anchor})`); },
+      Pair(_key, pair) { if (YAML.isScalar(pair.key) && pair.key.value === '<<' && pair.key.type === 'PLAIN') note('a merge key (<<)'); },
+    });
+  } catch { /* a header that does not parse is reported elsewhere; the scan above still ran */ }
+  return found;
+}
+
+const CODE_SPAN = /(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g;
+
+/**
+ * Does a page body end inside an HTML comment (`<!--` with no `-->` after it)
+ * or inside a fenced code block? Returns 'comment', 'fence' or null. Either one
+ * would swallow whatever is added below the page's last section later.
+ *
+ * Fences follow CommonMark: three or more backticks or tildes, indented up to
+ * three spaces, a backtick fence's info string holding no backtick; one closes
+ * only with the same character, at least as long, up to three spaces of indent,
+ * and nothing after it but spaces. Indented code and inline code are not fences,
+ * and a comment marker inside a fence (or a fence marker inside a comment) means
+ * nothing.
+ */
+export function bodyEndsOpen(body) {
+  let fence = null;
+  let comment = false;
+  for (const line of String(body ?? '').replace(/\r/g, '').split('\n')) {
+    let rest = line;
+    if (fence) {
+      const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+      if (close && close[1][0] === fence.ch && close[1].length >= fence.len) fence = null;
+      continue;
+    }
+    if (comment) {
+      const end = line.indexOf('-->');
+      if (end === -1) continue;
+      comment = false;
+      rest = line.slice(end + 3);
+    } else {
+      const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+      if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
+        fence = { ch: open[1][0], len: open[1].length };
+        continue;
+      }
+    }
+    const masked = rest.replace(CODE_SPAN, (m) => ' '.repeat(m.length));
+    let pos = 0;
+    for (;;) {
+      const s = masked.indexOf('<!--', pos);
+      if (s === -1) break;
+      const e = rest.indexOf('-->', s + 2);
+      if (e === -1) { comment = true; break; }
+      pos = e + 3;
+    }
+  }
+  return fence ? 'fence' : comment ? 'comment' : null;
+}
 
 function buildTypeVocabulary(pages, config) {
   const vocab = new Set(config.typeVocabulary);
@@ -231,6 +359,30 @@ function checkSchema(pages, config, out) {
         if (!headings.includes(section.toLowerCase())) {
           out.add('SCHEMA-003', `\`type: ${type}\` requires a \`## ${section}\` section`, where);
         }
+      }
+    }
+
+    // SCHEMA-006 — no anchors, aliases or merge keys in the front matter.
+    if (page.file) {
+      let source = null;
+      try { source = fs.readFileSync(page.file, 'utf-8'); } catch { /* unreadable: nothing to scan */ }
+      const found = source === null ? [] : frontmatterIndirection(source);
+      if (found.length) {
+        out.add('SCHEMA-006', `the front matter uses YAML anchors, aliases or merge keys (${found.slice(0, 3).join('; ')}${found.length > 3 ? `; and ${found.length - 3} more` : ''}) — a header has no need for them, and they let a value depend on another line`, {
+          ...where,
+          hint: 'write each value out in full',
+        });
+      }
+    }
+
+    // SCHEMA-007 — the body must not end inside an HTML comment or a code fence.
+    {
+      const open = bodyEndsOpen(page.body);
+      if (open) {
+        out.add('SCHEMA-007', `the page ends inside ${open === 'comment' ? 'an HTML comment that is never closed (`<!--` with no `-->`)' : 'a fenced code block that is never closed'} — it would swallow whatever is added below it later`, {
+          ...where,
+          hint: open === 'comment' ? 'close the comment with `-->`' : 'close the fence with a line of the same character, at least as long',
+        });
       }
     }
 

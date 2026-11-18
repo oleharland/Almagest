@@ -90,8 +90,14 @@ Check IDs are **frozen**. `agent/rules/wiki.md`, `brain.config.yaml`, and the re
 | `SCHEMA-003` | Missing `type_fields` entry required for this `type` | error |
 | `SCHEMA-004` | `owner` missing or not in `owner_teams` while `require_owner: true` | error |
 | `SCHEMA-005` | `type` carries a `type_fields` vocabulary value (e.g. `type: organisation`) | error |
+| `SCHEMA-006` | The front matter uses a YAML anchor (`&name`), alias (`*name`) or merge key (`<<:`) | error |
+| `SCHEMA-007` | The page body ends inside an HTML comment (`<!--` with no `-->`) or a fenced code block | error |
 
 `SCHEMA-005` catches the single most common authoring mistake: `page_types` and the `type_fields` vocabularies are separate lists, and an organisation is `type: entity` with `entity_type: organisation`.
+
+`SCHEMA-006` keeps a page header plain. With an anchor and an alias, `tier: *t` takes its value from a `&t` on another line, so two edits that each look harmless can combine into a page that reads `canonical`. The check reads the raw header and the parsed YAML, and ignores a literal `&` or `*` inside a quoted string, a comment or a block scalar.
+
+`SCHEMA-007` catches a body that ends inside an HTML comment or a fenced code block. Whatever is added below that point later would be hidden or shown as code. A fence closes only with a fence of the same character and at least the same length, as in CommonMark. Indented code and inline code are not fences.
 
 ### Links — does the graph resolve?
 

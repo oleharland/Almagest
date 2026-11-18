@@ -304,7 +304,10 @@ These are code, not config. No rule, profile or flag changes them.
 4. **Open questions block the merge.**
 5. **The automatic checks gate twice**: the runner's audit must have exit 0,
    and the service re-runs its *own* `tools/audit.mjs` on the merge result in a
-   throwaway worktree; anything but exit 0 means main does not move.
+   throwaway worktree; anything but exit 0 means main does not move. Two of
+   those checks guard what a reviewer cannot see: `SCHEMA-006` refuses YAML
+   anchors, aliases and merge keys in a page's front matter, and `SCHEMA-007`
+   refuses a page body that ends inside an HTML comment or a code fence.
 6. **A proposal that modifies a canonical page never merges.** (The canonical set
    is the config list plus every page whose frontmatter on `main` says
    `tier: canonical`. The one exception is a tier proposal's own `tier:` line,
@@ -407,7 +410,7 @@ merge (one at a time, under a lock):
    | `title`, `type`, `tier`, `origin`, `status`, `confidence`, `owner`, any other key | Equal, or changed on one side only since the base (a key removed on one side and unchanged on the other stays removed). Changed differently on both sides is a clash. With no base, any difference is a clash, including a key only one side has |
    | `date_created`, `last_verified` | The earlier. A page one side never verified has no `last_verified` |
    | `date_modified` | The later |
-   | A section, with a base that has it | A three-way merge of the section's lines against the base's section (`git merge-file`), accepted only when it is clean, with no conflict hunk. A section removed on one side and unchanged on the other stays removed. Removed on one side and changed on the other is a clash |
+   | A section, with a base that has it | Changed on one side only: taken from that side. Changed the same way on both sides: kept once. Changed on both sides and the two results differ: a clash, even if `git merge-file` could splice the edits, because no reviewer saw those two statements together. A section removed on one side and unchanged on the other stays removed. Removed on one side and changed on the other is a clash |
    | A section, with no base, or that the base does not have, on both sides | Identical text is kept once. If one side's text is the other's text with whole lines added after it (the shorter is an exact prefix of the longer, line for line), the longer is taken. Anything else is a clash. There is no set-based "superset" rule |
    | A section on one side only that the base does not have | Kept |
    | Order | Main's sections in main's order, then the proposal's new sections in theirs |
@@ -614,8 +617,11 @@ author and the service is the committer, and no checkout is touched. The
 service runs its own audit on the new head first. If the audit fails, the
 branch stays where it was and the person is told why. The reviewed version
 moves to the new head the way it does for a revision, so earlier approvals are
-kept in the record and no longer count. The control is not shown for a page
-that is already canonical on `main`, or for a tier proposal.
+kept in the record and no longer count. The person who made the edit joins
+the proposal's `submitters`, so with separation of duties on they cannot
+approve it alone, the same rule as for whoever proposed a tier. The control is
+not shown for a page that is already canonical on `main`, or for a tier
+proposal.
 
 **The tier proposal.** For a page already on `main`, the page's entry in the
 inbox (`/inbox/pages/<slug>`) offers "Make canonical", "Make curated" and "Make
@@ -634,9 +640,12 @@ refused, and a clash with a newer `main` means turning it down and trying again.
 The merge checks a tier proposal in code. What the reviewer saw (the merge base
 to the head) must be one modified file, the page, whose text differs from the
 base only in the `tier:` line, going from the recorded tier to the recorded
-one. `main`'s copy must still hold the tier it is leaving, and the merge result
-may change only that page, the log and the derived index. Any other difference
-is refused with the reason `tier`. A page listed in `canonical_pages` cannot be
+one. `main`'s copy of the page must be byte-identical to the base's: if the page
+changed since the tier was proposed, the person approved a tier for words that
+are no longer there, so the change is refused and has to be proposed again.
+There is no automatic rebase. The merge result may change only that page, the
+log and the derived index. Any other difference is refused with the reason
+`tier`. A page listed in `canonical_pages` cannot be
 lowered here. Open challenges against a demoted page stay in the ledger.
 
 **Who may.** Changing a page to or from canonical needs the role in
@@ -654,6 +663,26 @@ token, can do it. Agents, API and MCP tokens, the chat confirmation, Slack,
 email and GitHub cannot. Before the first confirm for canonical, the inbox says:
 "The agent can no longer change this page. New material that contradicts it is
 logged as a challenge and is not merged. Only a person can edit it."
+
+**The result is checked, not only the head.** Two heads that each read as
+evidence can merge cleanly into a page that reads canonical, for example when
+one defines a YAML anchor and the other reads it back. So for every wiki page
+that differs between `main` and the commit that is about to become `main`, the
+merge reads the tier of the result with `canonicalOrUnsure`. It refuses the
+merge with the reason `canonical` when the result is canonical or unsure, with
+two exceptions. A page that is canonical on `main` by the same definition and
+byte-identical to `main`'s version is not a change. A tier choice a person
+recorded is allowed: this proposal is that page's tier proposal, or it holds a
+`setPageTier` edit of it, and the page in the result is byte-identical to the
+page in the reviewed head that the choice produced, with both parsers reading
+plain `canonical`. A merge made on GitHub has no such exception.
+
+**Free text in a commit message.** A proposal title, a page title, a display
+name or a source name can hold line breaks. Everywhere such text goes into a
+commit message (the merge commit, the tier commits, the challenge commit and
+the author name) control characters and line breaks become single spaces and
+the length is capped, so a title cannot add an `Approved by:` line of its own.
+The log row flattens its cells the same way.
 
 **Agents and outside merges.** An agent never sets `tier: canonical`. The
 runner refuses a branch that does, on a new page or an existing one, and the
@@ -680,7 +709,9 @@ in `brain/manifest.yaml` whose `pages` include it (superseded and skipped
 sources do not count), the other pages that link to it, and whether it is among
 the most read pages. A page is suggested when its documents reach `min_sources`
 or its backlinks reach `min_backlinks`. For a hot page both are multiplied by
-`hot_factor` and rounded up. Each row has "Make canonical" and "Dismiss". A
+`hot_factor` and rounded up. Each row has "Make canonical" and "Dismiss". Dismissing hides the
+suggestion for everyone, so it needs the same role as making a page canonical,
+and the button is shown only to people who hold it. A
 dismissal is stored with the document count at the time, and the page comes
 back only when that count has grown to at least 1.5 times as many. The most
 documents come first, then the most backlinks.
