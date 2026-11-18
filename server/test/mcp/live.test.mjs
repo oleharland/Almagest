@@ -321,6 +321,19 @@ describe('live pass: the same gates as the connectors step', () => {
   });
 });
 
+describe('live pass: a deadline that is already spent', () => {
+  it('skips the live connector, calls no provider, and still says the lookup is incomplete', async () => {
+    const t = await setup({ lookup: { timeout_ms: 1 } });
+    // The connector list answers after the deadline has passed, so the live pass starts with no time left.
+    const list = t.ctx.connectors.list;
+    t.ctx.connectors.list = async () => { await new Promise((r) => setTimeout(r, 40)); return list(); };
+    const r = await t.find();
+    assert.equal(r.incomplete, true);
+    assert.equal(r.live.items.length, 0);
+    assert.equal(t.calls.search.length, 0);
+  });
+});
+
 describe('live pass: the budget', () => {
   const pageWith = (i) => `=== page ${i + 1} ===\nThe zephyr gateway drains connections for ninety seconds before restart ${i}. ${'Operators watch the drain counters closely. '.repeat(14)}`;
   const filler = (i) => `=== page ${i + 20} ===\nQuarterly notes about the cafeteria rota, number ${i}. ${'Soup is served on Tuesdays. '.repeat(10)}`;

@@ -563,10 +563,14 @@ export function createLookup(ctx, cfg, brain) {
         rejected = await rejectedShas();
       }
 
-      if (!found && allowed && privileged && steps.includes('staged') && deadline.left() > 0) {
-        out.stats.steps.push('staged');
-        const r = searchPassages(await stagedIndex(b, connectors, rejected), question, opts);
-        if (r.answered) found = { step: 'staged', kind: 'unreviewed', results: r.results };
+      if (!found && allowed && privileged && steps.includes('staged')) {
+        // A step skipped because the time is used up leaves the lookup incomplete, and says so.
+        if (deadline.left() <= 0) out.incomplete = true;
+        else {
+          out.stats.steps.push('staged');
+          const r = searchPassages(await stagedIndex(b, connectors, rejected), question, opts);
+          if (r.answered) found = { step: 'staged', kind: 'unreviewed', results: r.results };
+        }
       }
 
       if (!found && allowed && privileged && reachesConnectors) {
@@ -582,7 +586,8 @@ export function createLookup(ctx, cfg, brain) {
       if (steps.includes('live') && privileged && lc.send_query && transport !== 'stdio') {
         await listConnectors();
         const candidates = connectors.filter((c) => liveCandidate(c, terms));
-        if (candidates.length && deadline.left() > 0 && charge()) {
+        if (candidates.length && deadline.left() <= 0) out.incomplete = true;
+        else if (candidates.length && charge()) {
           out.stats.steps.push('live');
           const liveDocs = [];
           try { await liveDocsFor({ candidates, raw, deadline, out, docs: liveDocs }); }
