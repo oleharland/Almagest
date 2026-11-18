@@ -95,12 +95,19 @@ Already present in `.mcp.json`:
   "type": "http",
   "url": "https://api.githubcopilot.com/mcp/",
   "headers": {
-    "Authorization": "Bearer ${GITHUB_TOKEN:-}"
+    "Authorization": "Bearer ${GITHUB_TOKEN:-}",
+    "X-MCP-Toolsets": "repos,git",
+    "X-MCP-Readonly": "true"
   }
 }
 ```
 
 This is GitHub's official hosted MCP server. Nothing runs locally.
+
+The two `X-MCP-*` headers matter:
+
+- `X-MCP-Toolsets: repos,git` asks for the `git` toolset, which the hosted server leaves off by default. It holds `get_repository_tree`, the tool the `github` recipe lists files with. Without it a service sync fails with `unknown tool "get_repository_tree"`.
+- `X-MCP-Readonly: true` hides every tool that writes. Ingest only reads, so the server is not offered anything else. Remove it if you use the same entry for other work in your agent sessions.
 
 ## GitLab
 

@@ -331,7 +331,7 @@ matches.
 | Recipe | Server | Item | Verified |
 |---|---|---|---|
 | `mcp-resources` | **any** server exposing resources | one resource | yes — tests |
-| `github` | GitHub's official MCP server | one file at the branch head; `version` = blob sha, `commit` = commit sha | no |
+| `github` | GitHub's official MCP server | one file at the branch head; `version` = blob sha, `commit` = commit sha | yes — `connectors test --fetch` against the hosted server. Needs the `git` toolset, which the shipped `.mcp.json` entry requests |
 | `gitlab` | community `@zereight/mcp-gitlab`-style tools | one file at the branch head | no |
 | `google-drive` | hosted Google Drive MCP (`search_files`, `read_file_content`) | one file as text | partial |
 | `granola` | hosted Granola MCP (`list_meetings`, `get_meetings`) | one meeting's notes | partial |
