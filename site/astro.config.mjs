@@ -41,8 +41,27 @@ function reloadOnWikiChange() {
   };
 }
 
+/**
+ * The component gallery (src/dev/gallery.astro) is a route only the dev server
+ * has. It lives outside src/pages so a production build never sees it.
+ */
+function devGallery() {
+  return {
+    name: 'almagest:dev-gallery',
+    hooks: {
+      'astro:config:setup': ({ command, injectRoute }) => {
+        if (command !== 'dev') return;
+        injectRoute({ pattern: '/gallery', entrypoint: './src/dev/gallery.astro' });
+      },
+    },
+  };
+}
+
 export default defineConfig({
+  integrations: [devGallery()],
   vite: {
+    // The shared UI library (ui/, at the repo root) is imported by src/styles/base.css.
+    server: { fs: { allow: [REPO_ROOT] } },
     define: { __ALMAGEST_REPO_ROOT__: JSON.stringify(REPO_ROOT) },
     plugins: [reloadOnWikiChange()],
   },

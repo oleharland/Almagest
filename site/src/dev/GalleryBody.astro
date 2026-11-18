@@ -1,0 +1,200 @@
+---
+/**
+ * Every component in every state, with Almagest content. Rendered once per
+ * theme by gallery.astro. Dev only.
+ */
+---
+<div class="al-stack al-stack--lg g-body">
+
+  <section class="al-stack" aria-labelledby={`g-type-${Astro.props.id}`}>
+    <h2 class="g-h" id={`g-type-${Astro.props.id}`}>Type</h2>
+    <h1>Retry policy for the scheduler</h1>
+    <h2>Claims and where they come from</h2>
+    <h3>Backoff</h3>
+    <p>Body text is 15px Geist with a 1.6 line height. The scheduler retries a failed job after a fixed backoff, and a <a href="#">link in running text</a> is ink with a quiet underline. Identifiers use mono: <code>ingest/q3-board-deck-abcdef1</code>. Press <kbd class="al-kbd">j</kbd> then <kbd class="al-kbd">k</kbd> to move.</p>
+    <p class="al-text-secondary">Secondary text, for explanations and lede lines.</p>
+    <p class="al-text-tertiary">Tertiary text, for timestamps and counts only.</p>
+    <p><a class="al-link-arrow" href="#">Open the review inbox</a> &nbsp; <a class="al-link-arrow al-link-arrow--back" href="#">All pages</a></p>
+  </section>
+
+  <section class="al-stack">
+    <h2 class="g-h">App bar</h2>
+    <div class="al-appbar g-static"><div class="al-appbar__inner">
+      <a class="al-appbar__brand" href="#">Almagest<span class="al-appbar__brand-sub">Review</span></a>
+      <nav class="al-appbar__nav" aria-label="Example"><a class="al-appbar__link" href="#" aria-current="page">To review <span class="al-appbar__count">3</span></a><a class="al-appbar__link" href="#">Re-check</a><a class="al-appbar__link" href="#">Canonical <span class="al-appbar__count">1</span></a></nav>
+      <div class="al-appbar__end"><span class="al-appbar__name">Ada Reviewer</span><button class="al-btn al-btn--sm" type="button">Sign out</button></div>
+    </div></div>
+  </section>
+
+  <section class="al-stack">
+    <h2 class="g-h">Buttons</h2>
+    <div class="al-cluster">
+      <button class="al-btn al-btn--primary" type="button">Approve all</button>
+      <button class="al-btn" type="button">Ask for changes</button>
+      <button class="al-btn al-btn--quiet" type="button">Dismiss</button>
+      <button class="al-btn al-btn--danger" type="button">Turn down</button>
+      <a class="al-btn" href="#">As a link</a>
+    </div>
+    <div class="al-cluster">
+      <button class="al-btn al-btn--primary al-btn--sm" type="button">Small</button>
+      <button class="al-btn al-btn--sm" type="button">Small</button>
+      <button class="al-btn al-btn--lg" type="button">Large</button>
+      <button class="al-btn al-btn--primary" type="button" disabled>Disabled</button>
+      <button class="al-btn" type="button" disabled>Disabled</button>
+      <a class="al-btn" href="#" aria-disabled="true">Disabled link</a>
+    </div>
+  </section>
+
+  <section class="al-stack">
+    <h2 class="g-h">Badges, tiers, chips</h2>
+    <div class="al-cluster">
+      <span class="al-tier al-tier--canonical">canonical</span>
+      <span class="al-tier al-tier--curated">curated</span>
+      <span class="al-tier al-tier--evidence">evidence</span>
+      <span class="al-badge">claim</span>
+      <span class="al-badge al-badge--quiet">stub</span>
+    </div>
+    <div class="al-cluster">
+      <span class="al-chip">Waiting for review</span>
+      <span class="al-chip al-chip--success">Ready</span>
+      <span class="al-chip al-chip--warning">2 questions for you</span>
+      <span class="al-chip al-chip--danger">Taken out</span>
+      <span class="al-chip al-chip--info">Frequently read page</span>
+    </div>
+  </section>
+
+  <section class="al-stack">
+    <h2 class="g-h">Callouts</h2>
+    <div class="al-callout al-callout--info"><span class="al-callout__title">Note</span>New material shows up here when the agent finishes reading a source.</div>
+    <div class="al-callout al-callout--success"><span class="al-callout__title">Added</span>This is now part of the knowledge base.</div>
+    <div class="al-callout al-callout--warning"><span class="al-callout__title">Check this</span>This page cites no sources. Treat its contents as unverified.</div>
+    <div class="al-callout al-callout--danger"><span class="al-callout__title">Broken links</span>These wikilinks point at pages that don't exist: [[retry-budget]].</div>
+  </section>
+
+  <section class="al-stack">
+    <h2 class="g-h">Card, panel, list rows</h2>
+    <div class="al-card al-card--flush">
+      <div class="al-card__head"><span class="al-card__title">Job scheduler</span><span class="al-tier al-tier--curated">curated</span><span class="al-chip">Changed</span></div>
+      <div class="al-card__body">
+        <div class="al-claim al-claim--change">
+          <div class="al-claim__op">Updated fact</div>
+          <div class="al-claim__was">Was: <del>The scheduler retries on a fixed 30-second backoff.</del></div>
+          <p class="al-claim__text">The scheduler retries on an exponential backoff starting at 30 seconds.</p>
+          <div class="al-claim__source">Source: <strong>Alpha System Overview</strong>, page 3 · 2026-10-02</div>
+          <blockquote class="al-quote">Failed jobs are retried with exponential backoff, starting at 30 seconds and doubling up to 10 minutes.</blockquote>
+        </div>
+        <div class="al-claim al-claim--add">
+          <div class="al-claim__op">New fact</div>
+          <p class="al-claim__text">Jobs are retried at most five times.</p>
+          <div class="al-claim__missing">No source given for this.</div>
+        </div>
+        <div class="al-claim al-claim--remove">
+          <div class="al-claim__op">Removed fact</div>
+          <p class="al-claim__text">Retries never exceed 30 seconds.</p>
+        </div>
+      </div>
+    </div>
+    <a class="al-card al-card--interactive" href="#"><strong>New material from “Q3 board deck”</strong><div class="al-text-secondary">3 pages change, 12 facts, 2 questions</div></a>
+    <div class="al-panel">A panel groups quiet information on the secondary surface, with no border.</div>
+    <ul class="al-list">
+      <li class="al-list__item"><a class="al-row" href="#"><span class="al-row__title">Job scheduler</span><span class="al-row__summary">The scheduler decides when a queued job runs and how often it retries.</span><span class="al-row__meta"><span class="al-tier al-tier--curated">curated</span></span></a></li>
+      <li class="al-list__item"><a class="al-row" href="#"><span class="al-row__title">Retry budget</span><span class="al-row__summary">A stub page waiting for a source.</span><span class="al-row__meta"><span class="al-badge al-badge--quiet">stub</span><span class="al-tier al-tier--evidence">evidence</span></span></a></li>
+      <li class="al-list__item"><a class="al-row" href="#"><span class="al-row__title">Approval policy</span><span class="al-row__summary">Who may approve what, and when two approvals are needed.</span><span class="al-row__meta"><span class="al-tier al-tier--canonical">canonical</span></span></a></li>
+    </ul>
+  </section>
+
+  <section class="al-stack">
+    <h2 class="g-h">Table</h2>
+    <div class="al-table-wrap">
+      <table class="al-table">
+        <thead><tr><th>Page</th><th>Last checked</th><th class="al-table__num">Overdue</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Job scheduler</strong><div class="al-text-tertiary">job-scheduler</div></td><td>2026-07-01</td><td class="al-table__num">140 days</td></tr>
+          <tr><td><strong>Approval policy</strong><div class="al-text-tertiary">approval-policy</div></td><td>never</td><td class="al-table__num">12 days</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="al-stack">
+    <h2 class="g-h">Form controls</h2>
+    <div class="al-field"><label class="al-label" for={`g-a-${Astro.props.id}`}>Search</label><input class="al-input" id={`g-a-${Astro.props.id}`} type="search" placeholder="Search by source or page" /></div>
+    <div class="al-field"><label class="al-label" for={`g-b-${Astro.props.id}`}>Reason</label><input class="al-input" id={`g-b-${Astro.props.id}`} type="text" value="Too vague" aria-invalid="true" aria-describedby={`g-be-${Astro.props.id}`} /><span class="al-error" id={`g-be-${Astro.props.id}`}>Give a reason of at least ten characters.</span></div>
+    <div class="al-field"><label class="al-label" for={`g-c-${Astro.props.id}`}>Tier</label><select class="al-select" id={`g-c-${Astro.props.id}`}><option>Evidence</option><option>Curated</option><option>Canonical</option></select><span class="al-hint">Canonical pages are locked.</span></div>
+    <div class="al-field"><label class="al-label" for={`g-d-${Astro.props.id}`}>Tell the agent what to change</label><textarea class="al-textarea" id={`g-d-${Astro.props.id}`}></textarea></div>
+    <div class="al-field"><label class="al-label" for={`g-e-${Astro.props.id}`}>Disabled</label><input class="al-input" id={`g-e-${Astro.props.id}`} disabled value="Not editable" /></div>
+    <div class="al-stack al-stack--sm">
+      <label class="al-check"><input type="checkbox" checked /> Notify me by email</label>
+      <label class="al-check"><input type="checkbox" /> Include done proposals</label>
+      <label class="al-check"><input type="radio" name={`g-r-${Astro.props.id}`} checked /> Evidence</label>
+      <label class="al-check"><input type="radio" name={`g-r-${Astro.props.id}`} /> Curated</label>
+      <label class="al-check"><input type="checkbox" disabled /> Disabled option</label>
+    </div>
+  </section>
+
+  <section class="al-stack">
+    <h2 class="g-h">Tabs, segmented, breadcrumb, pagination, key hints</h2>
+    <nav class="al-tabs" aria-label="Example tabs"><a class="al-tabs__tab" href="#" aria-current="page">Overview</a><a class="al-tabs__tab" href="#">Sources</a><a class="al-tabs__tab" href="#">History</a></nav>
+    <div><div class="al-segmented"><a class="al-segmented__item" href="#" aria-current="true">To review</a><a class="al-segmented__item" href="#">Done</a><a class="al-segmented__item" href="#">All</a></div></div>
+    <ol class="al-breadcrumb"><li><a href="#">All pages</a></li><li><a href="#">Systems</a></li><li aria-current="page">Job scheduler</li></ol>
+    <ul class="al-pagination"><li><a class="al-pagination__link" href="#" aria-disabled="true">Previous</a></li><li><a class="al-pagination__link" href="#" aria-current="page">1</a></li><li><a class="al-pagination__link" href="#">2</a></li><li><a class="al-pagination__link" href="#">3</a></li><li class="al-pagination__gap">…</li><li><a class="al-pagination__link" href="#">9</a></li><li><a class="al-pagination__link" href="#">Next</a></li></ul>
+    <p>Shortcuts: <kbd class="al-kbd">⌘</kbd> <kbd class="al-kbd">K</kbd> search, <kbd class="al-kbd">a</kbd> approve, <kbd class="al-kbd">Esc</kbd> close.</p>
+  </section>
+
+  <section class="al-stack">
+    <h2 class="g-h">Definition list, code, empty, skeleton</h2>
+    <dl class="al-dl al-dl--mono"><dt>Proposal</dt><dd>prp_01HZX9K</dd><dt>Branch</dt><dd>ingest/q3-board-deck-abcdef1</dd><dt>Reviewed version</dt><dd>3f9a1c7d2e40</dd></dl>
+    <pre class="al-pre"><code>node tools/audit.mjs --check-index</code></pre>
+    <pre class="al-pre al-pre--wrap al-pre--preview">## Retries
+
+The scheduler retries on an exponential backoff. [source: alpha-pdf, p.3]</pre>
+    <div class="al-empty"><p class="al-empty__title">Nothing to review</p><p>New material shows up here when the agent finishes reading a source.</p><a class="al-btn al-btn--sm" href="#">Open the pages list</a></div>
+    <div class="al-stack al-stack--sm" aria-hidden="true"><span class="al-skeleton al-skeleton--line"></span><span class="al-skeleton al-skeleton--line"></span><span class="al-skeleton al-skeleton--line al-skeleton--short"></span><span class="al-skeleton al-skeleton--block"></span></div>
+  </section>
+
+  <section class="al-stack">
+    <h2 class="g-h">Decision</h2>
+    <div class="al-decision">
+      <h3>These two facts disagree</h3>
+      <p>The knowledge base and the new material give different backoffs.</p>
+      <div class="al-decision__vs">
+        <div class="al-decision__side"><div class="al-text-tertiary">The knowledge base says</div>Fixed 30-second backoff.<div class="al-claim__source">Source: Alpha System Overview, page 3</div></div>
+        <div class="al-decision__side"><div class="al-text-tertiary">The new material says</div>Exponential backoff from 30 seconds.<div class="al-claim__source">Source: Q3 board deck, page 12</div></div>
+      </div>
+      <div class="al-decision__options"><button class="al-btn al-btn--block" type="button">Keep what the knowledge base says</button><button class="al-btn al-btn--block" type="button">Use the new material</button></div>
+    </div>
+  </section>
+
+  <section class="al-stack">
+    <h2 class="g-h">Diff, unified</h2>
+    <div class="al-diff" role="table" aria-label="Unified diff">
+      <div class="al-diff__hunk">@@ -12,5 +12,6 @@ ## Retries</div>
+      <div class="al-diff__line al-diff__line--ctx"><span class="al-diff__ln">12</span><span class="al-diff__ln">12</span><span class="al-diff__code">The scheduler runs queued jobs in order.</span></div>
+      <div class="al-diff__line al-diff__line--del"><span class="al-diff__ln">13</span><span class="al-diff__ln"></span><span class="al-diff__code">A failed job is retried on a <del class="al-diff__rem">fixed 30-second</del> backoff. [source: alpha-pdf, p.3]</span></div>
+      <div class="al-diff__line al-diff__line--add"><span class="al-diff__ln"></span><span class="al-diff__ln">13</span><span class="al-diff__code">A failed job is retried on an <ins class="al-diff__ins">exponential</ins> backoff. [source: q3-deck, p.12]</span></div>
+      <div class="al-diff__line al-diff__line--add"><span class="al-diff__ln"></span><span class="al-diff__ln">14</span><span class="al-diff__code">Jobs are retried at most five times. [source: unknown]</span></div>
+      <div class="al-diff__line al-diff__line--ctx"><span class="al-diff__ln">14</span><span class="al-diff__ln">15</span><span class="al-diff__code">Retries are logged in the activity feed.</span></div>
+    </div>
+    <h2 class="g-h">Diff, split</h2>
+    <div class="al-diff al-diff--split" role="table" aria-label="Split diff">
+      <div class="al-diff__hunk">@@ -12,5 +12,6 @@ ## Retries</div>
+      <div class="al-diff__row">
+        <div class="al-diff__line al-diff__line--ctx"><span class="al-diff__ln">12</span><span class="al-diff__code">The scheduler runs queued jobs in order.</span></div>
+        <div class="al-diff__line al-diff__line--ctx"><span class="al-diff__ln">12</span><span class="al-diff__code">The scheduler runs queued jobs in order.</span></div>
+      </div>
+      <div class="al-diff__row">
+        <div class="al-diff__line al-diff__line--del"><span class="al-diff__ln">13</span><span class="al-diff__code">A failed job is retried on a <del class="al-diff__rem">fixed 30-second</del> backoff.</span></div>
+        <div class="al-diff__line al-diff__line--add"><span class="al-diff__ln">13</span><span class="al-diff__code">A failed job is retried on an <ins class="al-diff__ins">exponential</ins> backoff.</span></div>
+      </div>
+      <div class="al-diff__row">
+        <div class="al-diff__line al-diff__line--empty"><span class="al-diff__ln"></span><span class="al-diff__code"></span></div>
+        <div class="al-diff__line al-diff__line--add"><span class="al-diff__ln">14</span><span class="al-diff__code">Jobs are retried at most five times.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="al-stack">
+    <h2 class="g-h">Two-pane and action bar</h2>
+    <p class="al-text-secondary">The two-pane layout and the sticky action bar are shown at the bottom of this page, below both themes.</p>
+  </section>
+</div>

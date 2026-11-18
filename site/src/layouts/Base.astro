@@ -6,9 +6,11 @@ import '../styles/theme.css';
 interface Props {
   title?: string;
   description?: string;
+  /** Which nav link is current: 'pages' for the index and wiki pages, 'gallery' for the dev gallery. */
+  current?: string;
 }
 
-const { title, description = siteConfig.description } = Astro.props;
+const { title, description = siteConfig.description, current = '' } = Astro.props;
 const fullTitle = title ? `${title} · ${siteConfig.title}` : siteConfig.title;
 const frameworkUrl = siteConfig.frameworkUrl;
 ---
@@ -33,26 +35,31 @@ const frameworkUrl = siteConfig.frameworkUrl;
     </script>
   </head>
   <body>
-    <header class="site-header">
-      <div class="shell">
-        <a class="site-title" href="/">{siteConfig.title}</a>
-        <nav class="site-nav">
-          {siteConfig.repoUrl && <a href={siteConfig.repoUrl} rel="noopener">Source</a>}
+    <a class="al-skip-link" href="#main">Skip to content</a>
+    <header class="al-appbar">
+      <div class="al-page al-appbar__inner">
+        <a class="al-appbar__brand" href="/">{siteConfig.title}</a>
+        <nav class="al-appbar__nav" aria-label="Site">
+          <a class="al-appbar__link" href="/" aria-current={current === 'pages' ? 'page' : undefined}>Pages</a>
+          {import.meta.env.DEV && <a class="al-appbar__link" href="/gallery/" aria-current={current === 'gallery' ? 'page' : undefined}>Gallery</a>}
+          {siteConfig.repoUrl && <a class="al-appbar__link" href={siteConfig.repoUrl} rel="noopener">Source</a>}
+        </nav>
+        <div class="al-appbar__end">
           <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle colour theme">
             <span aria-hidden="true">◐</span>
           </button>
-        </nav>
+        </div>
       </div>
     </header>
 
-    <main class="shell">
+    <main id="main" class="al-main al-page">
       <slot />
     </main>
 
     <footer class="site-footer">
-      <div class="shell">
+      <div class="al-page">
         Built with {frameworkUrl ? <a href={frameworkUrl} rel="noopener">Almagest</a> : 'Almagest'}.
-        Every claim on this site should cite its source — if one doesn't, that's a bug.
+        Every claim on this site should cite its source. If one doesn't, that's a bug.
       </div>
     </footer>
 
@@ -63,8 +70,11 @@ const frameworkUrl = siteConfig.frameworkUrl;
           root.dataset.theme ||
           (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         const next = current === 'dark' ? 'light' : 'dark';
+        // Stop every transition for one frame so the switch does not smear.
+        root.setAttribute('data-theme-switching', '');
         root.dataset.theme = next;
         try { localStorage.setItem('almagest-theme', next); } catch (e) {}
+        requestAnimationFrame(() => requestAnimationFrame(() => root.removeAttribute('data-theme-switching')));
       });
     </script>
   </body>

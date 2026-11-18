@@ -5,6 +5,7 @@ import { createMemoryStore } from '../../src/core/store/memory.mjs';
 import { createConfirmations } from '../../src/governance/confirmations.mjs';
 import { html, raw, safeNext, safeUrl } from '../../src/governance/html.mjs';
 import { sign, verify } from '../../src/governance/signing.mjs';
+import { buildCss, fontRoutes, safeStyleText, securityHeaders } from '../../src/governance/web/layout.mjs';
 import { ALPHA_V2, CLEAN_AUDIT, cleanup, client, DELTA, govApp, job, page, proposalBranch, repo } from './fixtures.mjs';
 
 const TOKENS = 'ada:owner:ada-secret-1;bob:reviewer:bob-secret-2;vic:viewer:vic-secret-3';
@@ -148,7 +149,7 @@ describe('inbox: sign-in, CSRF, rendering', () => {
     // Review surface: changed fact with old wording and the passage from the sidecar.
     assert.match(res.text, /Updated fact/);
     assert.match(res.text, /Was: <del>The scheduler retries on a fixed 30-second backoff\.<\/del>/);
-    assert.match(res.text, /<blockquote class="excerpt"[^>]*>The scheduler retries on a fixed 30-second backoff\.<\/blockquote>/);
+    assert.match(res.text, /<blockquote class="al-quote"[^>]*>The scheduler retries on a fixed 30-second backoff\.<\/blockquote>/);
     assert.match(res.text, /Source: <strong>Alpha System Overview<\/strong>, page 3/);
     await app.stop();
   });
@@ -275,5 +276,58 @@ describe('chat confirmations', () => {
     const [entry] = await app.ctx.store.audit.list({ action: 'proposal.reject' });
     assert.equal(entry.channel, 'mcp');
     await app.stop();
+  });
+});
+
+describe('inbox look: shared library, fonts, theme', () => {
+  it('the CSP allows fonts from the service itself and nothing else new', () => {
+    const csp = securityHeaders('abc')['content-security-policy'];
+    assert.equal(csp, "default-src 'none'; style-src 'nonce-abc'; script-src 'nonce-abc'; img-src 'self' data:; font-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+  });
+
+  it('the page inlines the library under the nonce and asks for fonts only from its own origin', async () => {
+    const { app, base } = await serve();
+    const { c } = await login(base);
+    const res = await c.get('/inbox');
+    const nonce = res.headers.get('content-security-policy').match(/style-src 'nonce-([^']+)'/)[1];
+    assert.equal((res.text.match(/<style/g) || []).length, 1);
+    assert.ok(res.text.includes(`<style nonce="${nonce}">`));
+    assert.ok(!/<link[^>]+stylesheet/i.test(res.text), 'no external stylesheet');
+    assert.ok(!/ style="/.test(res.text), 'no style attributes');
+    assert.match(res.text, /--color-brand-blue:\s*#4469fc/);
+    const urls = [...res.text.matchAll(/url\("([^"]+)"\)/g)].map((m) => m[1]);
+    assert.ok(urls.length >= 2);
+    for (const u of urls) assert.match(u, /^\/inbox\/fonts\/[0-9a-f]{10}\/Geist(Mono)?Variable\.woff2$/);
+    await app.stop();
+  });
+
+  it('serves the two font files by fixed path, with a long cache and an ETag', async () => {
+    const { app, base } = await serve();
+    assert.equal(fontRoutes.length, 2);
+    for (const f of fontRoutes) {
+      const res = await fetch(base + f.path);
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('content-type'), 'font/woff2');
+      assert.match(res.headers.get('cache-control'), /max-age=31536000/);
+      assert.equal(res.headers.get('etag'), f.etag);
+      assert.equal(Buffer.from(await res.arrayBuffer()).length, f.body.length);
+      const again = await fetch(base + f.path, { headers: { 'if-none-match': f.etag } });
+      assert.equal(again.status, 304);
+    }
+    const version = fontRoutes[0].path.split('/')[3];
+    for (const bad of [`/inbox/fonts/${version}/../../../package.json`, `/inbox/fonts/${version}/`, '/inbox/fonts/', `/inbox/fonts/${version}/Other.woff2`, `/inbox/fonts/0000000000/GeistVariable.woff2`]) {
+      const res = await fetch(base + bad);
+      assert.notEqual(res.status, 200, bad);
+    }
+    await app.stop();
+  });
+
+  it('a theme file can never end the style element', () => {
+    const hostile = ':root{--accent:red}</style><script>alert(1)</script>';
+    assert.ok(!/<\/style/i.test(safeStyleText(hostile)));
+    const css = buildCss(`${hostile}</STYLE>`);
+    assert.ok(!/<\/style/i.test(css));
+    assert.ok(css.endsWith('</STYLE>'.replace('</', '<\\/')), 'the text is kept, only the tag is broken');
+    assert.ok(css.indexOf('--accent:red') > css.indexOf('--accent-hover'), 'the theme comes after the library');
   });
 });

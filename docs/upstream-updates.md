@@ -33,7 +33,8 @@ git merge upstream/main
 | `site/package.json` | Framework owns the dependency set |
 | `site/src/layouts/*` | Same — framework-owned |
 | `site/src/pages/*` | New pages add cleanly, existing pages update |
-| `site/src/styles/base.css` | Framework design system — your overrides are in `theme.css` |
+| `site/src/styles/base.css` | A thin file that imports the shared design library and adds wiki-only styles. Your overrides are in `theme.css` |
+| `ui/*` | The shared design library (tokens, base, components, fonts) used by the site and the review inbox. Framework-owned; your overrides are in `site/src/styles/theme.css` |
 
 ## What never conflicts
 

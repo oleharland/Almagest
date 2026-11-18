@@ -125,7 +125,7 @@ The Astro site reads directly from `brain/wiki/` at build time: no separate cont
 Customise it in two places, both of which survive `git merge upstream/main`:
 
 - `site/site.config.ts`: title, description, how the index groups pages
-- `site/src/styles/theme.css`: colours and typography, as CSS custom property overrides
+- `site/src/styles/theme.css`: colours and typography, as CSS custom property overrides. It themes the review inbox too, because the inbox reads the same file after the shared `ui/` library. Redefine tokens such as `--accent` and `--surface`, and repeat them for dark (see `ui/README.md`)
 
 `site/dist/` is plain static HTML. Deploy it anywhere that serves files.
 

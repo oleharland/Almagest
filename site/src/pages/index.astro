@@ -11,20 +11,23 @@ const sourceCount = new Set(pages.flatMap((p) => p.sourcePaths)).size;
 const needsAttention = pages.filter((p) => p.status === 'stub' || p.brokenLinks.length > 0).length;
 ---
 
-<Base>
-  <p class="lede">{siteConfig.description}</p>
-
-  <div class="stats">
-    <div><strong>{pages.length}</strong> pages</div>
-    <div><strong>{groups.length}</strong> {siteConfig.groupBy === 'type' ? 'types' : 'tiers'}</div>
-    <div><strong>{sourceCount}</strong> sources</div>
-    <div><strong>{tags.length}</strong> tags</div>
-    {needsAttention > 0 && <div><strong>{needsAttention}</strong> need attention</div>}
+<Base current="pages">
+  <div class="al-pagehead">
+    <h1>{siteConfig.title}</h1>
+    <p class="al-lede">{siteConfig.description}</p>
   </div>
 
+  <ul class="al-stats" role="list">
+    <li class="al-stat"><strong class="al-stat__value">{pages.length}</strong> pages</li>
+    <li class="al-stat"><strong class="al-stat__value">{groups.length}</strong> {siteConfig.groupBy === 'type' ? 'types' : 'tiers'}</li>
+    <li class="al-stat"><strong class="al-stat__value">{sourceCount}</strong> sources</li>
+    <li class="al-stat"><strong class="al-stat__value">{tags.length}</strong> tags</li>
+    {needsAttention > 0 && <li class="al-stat"><strong class="al-stat__value">{needsAttention}</strong> need attention</li>}
+  </ul>
+
   {pages.length === 0 ? (
-    <div class="empty">
-      <p><strong>No pages yet.</strong></p>
+    <div class="al-empty index-group">
+      <p class="al-empty__title">No pages yet.</p>
       <p>
         Drop a file into <code>brain/raw/</code> and start your coding agent in the repo root.
         It will propose your first wiki pages.
@@ -32,9 +35,9 @@ const needsAttention = pages.filter((p) => p.status === 'stub' || p.brokenLinks.
     </div>
   ) : (
     <>
-      <label class="visually-hidden" for="filter">Filter pages</label>
+      <label class="al-visually-hidden" for="filter">Filter pages</label>
       <input
-        class="filter"
+        class="al-input index-filter"
         id="filter"
         type="search"
         placeholder="Filter pages by title, tag, or type…"
@@ -42,13 +45,13 @@ const needsAttention = pages.filter((p) => p.status === 'stub' || p.brokenLinks.
       />
 
       {groups.map((group) => (
-        <section class="group" data-group>
-          <h2>{group.name}<span>{group.pages.length}</span></h2>
+        <section class="al-section" data-group>
+          <h2 class="al-section__title">{group.name}<span class="al-section__count">{group.pages.length}</span></h2>
           <PageList pages={group.pages} />
         </section>
       ))}
 
-      <p class="empty" data-no-results hidden>No pages match that filter.</p>
+      <p class="al-empty index-group" data-no-results hidden>No pages match that filter.</p>
     </>
   )}
 

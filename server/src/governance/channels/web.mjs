@@ -32,7 +32,7 @@ import { safeNext } from '../html.mjs';
 import { describe } from '../summary.mjs';
 import { redirect } from '../sessions.mjs';
 import { vouchedAs } from '../trust.mjs';
-import { newNonce, securityHeaders } from '../web/layout.mjs';
+import { fontRoutes, newNonce, securityHeaders } from '../web/layout.mjs';
 import * as views from '../web/views.mjs';
 
 const ACTIVE = ['open', 'approved', 'conflicted', 'changes_requested'];
@@ -187,6 +187,17 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
   const mergedOr = (key) => (p) => (p?.status === 'merged' ? 'merged' : key);
 
   function routes(http) {
+    // The two Geist font files, by exact path. The version in the path changes with the
+    // files, so they cache for a year; no request value reaches the file system.
+    for (const f of fontRoutes) {
+      http.route('GET', f.path, (req, res) => {
+        const headers = { 'content-type': f.contentType, 'cache-control': 'public, max-age=31536000, immutable', etag: f.etag, 'x-content-type-options': 'nosniff', 'content-length': f.body.length };
+        if (req.headers['if-none-match'] === f.etag) { res.writeHead(304, { etag: f.etag, 'cache-control': headers['cache-control'] }); res.end(); return undefined; }
+        res.writeHead(200, headers);
+        res.end(f.body);
+        return undefined;
+      });
+    }
     http.route('GET', '/inbox', async (req, res, { actor, query, url }) => {
       if (!requireHuman(req, res, actor, url)) return undefined;
       const filters = {

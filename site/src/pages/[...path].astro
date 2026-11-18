@@ -37,20 +37,20 @@ const brokenRelations = relationGroups.flatMap((g) => g.targets.filter((t) => !e
 const extraEntries = Object.entries(page.extra).filter(([, v]) => v != null && v !== '');
 ---
 
-<Base title={page.title}>
-  <a class="back" href="/">← All pages</a>
+<Base title={page.title} current="pages">
+  <p class="page-back"><a class="al-link-arrow al-link-arrow--back" href="/">All pages</a></p>
 
-  <div class="with-aside">
-    <article class="article">
+  <div class="al-twopane al-twopane--side-first">
+    <article class="article al-twopane__main">
       <header class="page-head">
-        <div class="meta">
+        <div class="al-cluster">
           <Badge label={page.tier} kind={page.tier} />
           <Badge label={page.type} />
           {page.status && <Badge label={page.status} kind={page.status === 'stub' ? 'stub' : undefined} />}
-          {page.tags.map((tag) => <span class="tag">{tag}</span>)}
+          {page.tags.map((tag) => <span class="al-chip">{tag}</span>)}
         </div>
         <h1>{page.title}</h1>
-        <p class="dates">
+        <p class="page-dates">
           {page.dateModified && <>Updated {page.dateModified}</>}
           {page.lastVerified && <> · Verified {page.lastVerified}</>}
           {!page.lastVerified && page.dateModified && <> · Never human-verified</>}
@@ -59,14 +59,14 @@ const extraEntries = Object.entries(page.extra).filter(([, v]) => v != null && v
       </header>
 
       {page.sources.length === 0 && (
-        <p class="notice">
+        <p class="al-callout al-callout--warning page-notice">
           This page cites no sources. Under the Almagest rules every claim must be
           traceable — treat its contents as unverified.
         </p>
       )}
 
       {page.brokenLinks.length > 0 && (
-        <p class="notice">
+        <p class="al-callout al-callout--danger page-notice">
           <strong>Broken links [LINK-001].</strong> These wikilinks point at pages that
           don't exist: {page.brokenLinks.map((t) => `[[${t}]]`).join(', ')}. A production
           build fails on this — see <code>tools/audit.mjs</code>.
@@ -74,21 +74,23 @@ const extraEntries = Object.entries(page.extra).filter(([, v]) => v != null && v
       )}
 
       {brokenRelations.length > 0 && (
-        <p class="notice">
+        <p class="al-callout al-callout--danger page-notice">
           <strong>Dangling relations [LINK-003].</strong> {brokenRelations.map((t) => `[[${t}]]`).join(', ')}.
         </p>
       )}
 
-      <Fragment set:html={page.html} />
+      <div class="al-prose">
+        <Fragment set:html={page.html} />
+      </div>
     </article>
 
-    <aside class="aside">
+    <aside class="al-twopane__side" aria-label="About this page">
       {page.sources.length > 0 && (
         <section>
           <h2>Sources</h2>
-          <ul>
+          <ul class="al-list">
             {page.sources.map((s) => (
-              <li class="src">
+              <li class="al-list__item side-source">
                 {s.id && <code>{s.id}</code>}
                 {s.title ? ` ${s.title}` : ''}
                 <span class="src-path">{s.path}</span>
@@ -102,7 +104,7 @@ const extraEntries = Object.entries(page.extra).filter(([, v]) => v != null && v
       {relationGroups.length > 0 && (
         <section>
           <h2>Relations</h2>
-          <dl>
+          <dl class="al-dl">
             {relationGroups.map((group) => (
               <>
                 <dt>{group.label}</dt>
@@ -125,7 +127,7 @@ const extraEntries = Object.entries(page.extra).filter(([, v]) => v != null && v
       {relatedExisting.length > 0 && (
         <section>
           <h2>Related</h2>
-          <ul>
+          <ul class="al-stack al-stack--sm" role="list">
             {relatedExisting.map((id) => <li><a href={hrefFor(id)}>{titleOf(id)}</a></li>)}
           </ul>
         </section>
@@ -134,7 +136,7 @@ const extraEntries = Object.entries(page.extra).filter(([, v]) => v != null && v
       {page.backlinks.length > 0 && (
         <section>
           <h2>Linked from</h2>
-          <ul>
+          <ul class="al-stack al-stack--sm" role="list">
             {page.backlinks.map((b) => <li><a href={hrefFor(b.id)}>{b.title}</a></li>)}
           </ul>
         </section>
@@ -143,7 +145,7 @@ const extraEntries = Object.entries(page.extra).filter(([, v]) => v != null && v
       {(page.owner || extraEntries.length > 0) && (
         <section>
           <h2>Metadata</h2>
-          <dl>
+          <dl class="al-dl">
             {page.owner && (<><dt>Owner</dt><dd>{page.owner}</dd></>)}
             {extraEntries.map(([k, v]) => (
               <><dt>{k.replace(/_/g, ' ')}</dt><dd>{Array.isArray(v) ? v.join(', ') : String(v)}</dd></>
@@ -156,10 +158,10 @@ const extraEntries = Object.entries(page.extra).filter(([, v]) => v != null && v
 
   <script is:inline>
     // Tables in markdown can overflow narrow screens — give each its own scroller.
-    for (const table of document.querySelectorAll('.article table')) {
-      if (table.parentElement?.classList.contains('table-scroll')) continue;
+    for (const table of document.querySelectorAll(".al-prose table")) {
+      if (table.parentElement?.classList.contains('al-table-wrap')) continue;
       const wrap = document.createElement('div');
-      wrap.className = 'table-scroll';
+      wrap.className = 'al-table-wrap';
       table.replaceWith(wrap);
       wrap.appendChild(table);
     }

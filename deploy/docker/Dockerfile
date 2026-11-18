@@ -23,6 +23,9 @@ COPY server/package.json server/
 RUN npm ci --omit=dev
 COPY tools tools
 COPY server server
+# The inbox takes its look from the shared library and the instance theme.
+COPY ui ui
+COPY site/src/styles/theme.css site/src/styles/theme.css
 COPY deploy/docker/entrypoint.sh /usr/local/bin/almagest-entrypoint
 
 RUN useradd --create-home --uid 10001 almagest && mkdir -p /data && chown almagest /data
