@@ -107,7 +107,9 @@ not change how the connector syncs. Lookup searches with the connector's
 alone, so a wider scope for lookup is a choice you make on purpose. A connector
 without `lookup: true` is never searched, whatever its recipe has. One whose
 recipe has no `search` block is not searched either, but its staged snapshots
-still count.
+still count. The `search` results are filtered by `list.where`, so lookup stays
+inside the connector's scope, unless the `search` block has a `where` of its
+own.
 
 `mcp` accepts three shapes:
 
@@ -163,12 +165,15 @@ missing`; pages and snapshots stay.
 
 **A document that lookup fetched outside the listing is not missing.** Live
 lookup can fetch a document the connector's `select` does not list. It records
-that ref in the `connector-lookup` store namespace. On a complete listing the
-sync leaves such an entry out of `missing` and fetches it again by ref, up to
-`max_items` of them, with the title the search gave. A changed document comes
-back as a `changed` SourceRef like any other. A fetch that fails goes to
-`errors`. This needs a recipe whose `fetch` calls a tool or method. Without the
-record, the same entry is reported missing.
+that ref in the `connector-lookup` store namespace, as `{ at, title, failures,
+checkedAt }`, but only when no sync has tracked the document. On a complete
+listing the sync leaves such an entry out of `missing` and fetches it again by
+ref, up to `max_items` of them, oldest check first, with the title the search
+gave. A changed document comes back as a `changed` SourceRef like any other. A
+fetch that fails goes to `errors`. After three failed re-checks in a row the ref
+is reported in `missing` and the record is removed. A complete listing that
+includes the ref clears the record. This needs a recipe whose `fetch` calls a
+tool or method. Without the record, the same entry is reported missing.
 
 **Unchanged with respect to what?** To `main`. An item whose proposal is still
 open is returned again on the next sync, with the same sha256; the runner's job
@@ -323,9 +328,12 @@ fetch:
 page, at most `limit` items (10 by default, 50 at most). It is checked like
 `list`: `ref` is required, `static` is not allowed. A connector can set `search:`
 inline to merge over the recipe's. `{{select.*}}` inside it holds `lookup_select`
-when set, else `select`. Terms come from a chat, so they are sanitised before
-they are rendered: only letters, digits, spaces, hyphens, underscores and dots
-survive, with at most 8 terms, 64 characters each and 200 in all. A recipe
+when set, else `select`. `ctx.connectors.search` and `fetchOne` return one-line
+strings with caps (a title is cut at 200 characters). Terms come from a chat, so
+they are sanitised before they are rendered: only letters, digits, spaces,
+hyphens, underscores and dots survive, a word loses a leading `-` or `.`, and a
+word with no letter or digit is dropped. At most 8 terms, 64 characters each and
+200 in all go out. A recipe
 without `search` still validates, and its connector takes no part in the search
 step.
 
@@ -379,12 +387,15 @@ matches.
 | `slack` | the reference Slack MCP server | one channel's history, a row per message | no |
 | `web-fetch` | the reference `fetch` server (`uvx mcp-server-fetch`, tool `fetch`) | one URL from `select.urls` (no lister), converted to markdown; no `version`, so every sync re-fetches and the snapshot's sha256 decides whether it changed | no |
 
-`google-drive` and `notion` also ship a `search` block for live lookup. Both
-are unverified: they have not been run against the real server. Drive reuses
-`search_files` with a `fullText contains` condition, which is an assumption.
-Notion calls `notion-search`. Check one with `almagest connectors search <id>
-<words>` before you set `lookup: true`. No other shipped recipe has a `search`
-block.
+`google-drive` also ships a `search` block for live lookup. It is unverified: it
+has not been run against the real server. It reuses `search_files` with a
+`fullText contains` condition, which is an assumption. Check it with `almagest
+connectors search <id> <words>` before you set `lookup: true`. No other shipped
+recipe has a `search` block. The `notion` recipe has none on purpose:
+`notion-search` would reach every page the service's Notion token can see, and
+neither its arguments nor its result fields are verified, so it cannot be held
+to `select`. To use lookup on Notion, add an inline `search:` block with a
+`where` that scopes it, after you have checked the tool against your workspace.
 
 Overriding part of a shipped recipe needs no fork: `list:`, `fetch:` and
 `resolve:` on the connector merge over the recipe. Two common ones:

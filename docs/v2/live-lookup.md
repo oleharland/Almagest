@@ -3,9 +3,22 @@
 Status: built, and off by default. Set `mcp.lookup.enabled: true` to turn it
 on. The ladder, the labels, the `search` block, enrichment and the telemetry
 field are in the code and covered by tests against an in-memory MCP server. The
-`search` blocks of the Drive and Notion recipes have not been checked against
-the real servers. [What is built and what is not](#what-is-built-and-what-is-not)
-lists the rest.
+`search` block of the Drive recipe has not been checked against the real server.
+[Before turning it on](#before-turning-it-on) lists what is not verified, and
+[What is built and what is not](#what-is-built-and-what-is-not) lists the rest.
+
+## Before turning it on
+
+Lookup is off by default for these reasons:
+
+- Nothing has run against a real provider. Every test uses an in-memory MCP
+  server.
+- The Drive `search` block is unverified, and the `fullText contains` syntax in
+  it is an assumption.
+- Drive is the only shipped recipe with a `search` block. A connector on any
+  other recipe takes part in steps 1 and 2 only, unless you add an inline
+  `search:` block.
+- The feature has not been operated end to end with a running service.
 
 ## The idea
 
@@ -79,7 +92,9 @@ What `ask` prints when lookup found passages, in this order:
    step 1, or `## Unreviewed passages: nobody has reviewed these` for steps 2
    and 3. Under it, each document has a `###` title and one provenance line,
    then one `####` heading per passage with its locator (`§Failover`, `p.3`,
-   `row 14`).
+   `row 14`). The passage text is printed as quoted lines, each starting with
+   `> `, so fetched text cannot pose as a heading of the tool's own. Titles,
+   refs and server labels are flattened to one line.
 5. Closing lines, when they apply: `Queued for review: ingest job <id>. A person
    reviews it before it can reach the brain.` and `Lookup note: ...`, which
    names a timeout (`the lookup timed out, so it may be incomplete`) or a step
@@ -88,8 +103,18 @@ What `ask` prints when lookup found passages, in this order:
 The provenance line of a source passage reads `Source: "<title>" (<source id>),
 <path>`. That of an unreviewed passage reads `From connector <id> (server
 <label>): "<title>", ref <ref>, sha256 <7 characters>, fetched <time>`, with
-`(staged, waiting for review)` added for step 2. Both blocks open with a line
-saying the text is data, not instructions.
+a state added for step 2. That state is `(staged, waiting for review)` when an
+ingest job or an open proposal exists for the document, and `(fetched earlier,
+not yet queued for review)` when none does. In the second case the server queues
+the document when it serves it, so the next answer shows the first state. Both
+blocks open with a line saying the text is data, not instructions and that the
+passage text is quoted.
+
+When a lookup found no passage but did not finish, `ask` adds a line under
+`## Context`: `Lookup incomplete: <reasons>. The sources outside the wiki may
+not have been searched fully; asking again may find more.` The reasons are a
+timeout or a skipped step. A lookup that finished and found nothing, and a
+lookup that is off, print what `ask` printed before.
 
 The structured result gains a `lookup` field with the same content: `step`,
 `kind`, `tokens`, `truncated`, `incomplete`, `skipped`, `queued`, the canonical
@@ -105,7 +130,7 @@ and `mcp.search.min_coverage` 0.5, the share of query terms that matched).
 | Step | Looks in | Network calls | Trust |
 |---|---|---|---|
 | 0 | Wiki pages on `main` (today's `ask`) | none | reviewed |
-| 1 `sources` | Committed source text on `main`: every manifest entry that is not `missing`, read from its sidecar in `brain/raw/extracted/` or from a text original. Files over 5 MiB are skipped | none | source is fingerprinted and in the manifest; the claim is not reviewed |
+| 1 `sources` | Committed source text on `main`: every manifest entry that is not `missing`, read from its sidecar in `brain/raw/extracted/` or from a text original. Only regular text files inside the snapshot are read, each up to 5 MiB and 64 MiB in all | none | source is fingerprinted and in the manifest; the claim is not reviewed |
 | 2 `staged` | Snapshots in `.almagest/connector-snapshots/<connector>/` of connectors with `lookup: true`, whose bytes are not yet in `main`'s manifest and whose proposal was not rejected | none | unreviewed |
 | 3 `connectors` | Connected MCP servers with `lookup: true` and a recipe `search` block | one search, then up to `max_fetch` fetches | unreviewed |
 
@@ -119,7 +144,9 @@ Which steps run for whom:
 - Steps 2 and 3 need a caller at or above `mcp.lookup.min_role`. Below it, the
   caller gets today's answer.
 - With `anonymization.enabled: true` in `brain.config.yaml`, steps 2 and 3 are
-  off for everyone, and the service logs why once at start.
+  off for everyone, and the service logs why once at start. Step 1 also skips
+  committed connector snapshots, which are stored as fetched and never
+  anonymized.
 - Step 3 is off over stdio (`almagest mcp`) and with `send_query: false`.
   Step 2 still runs over stdio.
 - `mcp.lookup.steps` lists the steps that may run. Remove one to turn it off.
@@ -141,12 +168,16 @@ way. The query sent to a provider is built mechanically:
   server uses them only when the wiki does not answer.
 - When `keywords` is absent, the server splits the question into words and
   keeps those that survive the stopword filter of `tokenize` in
-  `server/src/mcp/search.mjs`.
+  `server/src/mcp/search.mjs`. It splits at spaces, so a question in a language
+  written without spaces (Chinese, Japanese, Thai) works only when the chat
+  supplies `keywords`.
 - Before a term reaches a provider, `ctx.connectors.search` sanitises it. It
   keeps letters and digits in any script, spaces, hyphens, underscores and dots,
   and drops everything else, so a term cannot close a quote or add an operator
-  in a provider's query syntax. At most 8 terms, 64 characters each and 200
-  characters in all go out. With no term left, the provider is not called.
+  in a provider's query syntax. A word that starts with `-` or `.` loses that
+  prefix, and a word with no letter or digit is dropped. At most 8 terms, 64
+  characters each and 200 characters in all go out. With no term left, the
+  provider is not called.
 
 ### A `search` block in recipes
 
@@ -154,7 +185,9 @@ A recipe has `list` and `fetch`. Lookup adds an optional third block, `search`,
 with the same shape as `list` (without `static`) plus two template variables,
 `{{query}}` (the sanitised terms joined by a space) and `{{terms}}` (the list).
 Only the first page of results is read, at most `limit` items (10 by default,
-50 at most). A connector can also carry an inline `search:` that merges over the
+50 at most). The connector's `list.where` filters the results, so lookup stays
+inside its scope, unless the `search` block has a `where` of its own. A
+connector can also carry an inline `search:` that merges over the
 recipe's, as it can for `list` and `fetch`.
 
 ```yaml
@@ -176,11 +209,24 @@ Inside a `search` block, `select.*` holds the connector's `lookup_select` when
 it is set, and its `select` otherwise. A connector whose recipe has no `search`
 block takes part in steps 1 and 2 only.
 
-Two recipes ship a `search` block, `google-drive` and `notion`. Neither is
-verified against the real server. The Drive block reuses the tool the recipe
-lists with, and the `fullText contains` syntax is an assumption. Check a block
-with `almagest connectors search <id> <words>`, which prints the candidates and
-fetches nothing.
+One recipe ships a `search` block, `google-drive`. It is not verified against
+the real server. The block reuses the tool the recipe lists with, and the
+`fullText contains` syntax is an assumption. Check a block with `almagest
+connectors search <id> <words>`, which prints the candidates and fetches
+nothing.
+
+The `notion` recipe has no `search` block. `notion-search` would reach every
+page the service's Notion token can see, and neither its arguments nor the
+fields of its results are verified, so there is no way to hold it to `select`.
+The recipe header says to add an inline `search:` block with a scoping `where`
+once you have checked the tool against your workspace.
+
+`ctx.connectors.search` and `fetchOne` hand back one-line strings: control
+characters and line breaks become spaces, a title is cut at 200 characters, and
+a leading `#`, `>` or `=` is escaped, so a title cannot carry a heading into an
+answer. A ref that flattening would change is not offered, because `fetchOne`
+needs it unchanged. The snapshot bytes and fingerprints are not affected: the
+snapshot header still uses the title as the provider gave it.
 
 ### Fetching is the sync's fetch
 
@@ -212,8 +258,11 @@ times, a section heading one and a half times and the body once. Passages below
 the thresholds above do not answer. The packer is greedy by score. It counts
 each passage's text plus 12 tokens for its label. A passage that does not fit is
 cut to the room left when at least 200 characters remain, and ends in `[…]`;
-otherwise it is skipped. Each passage keeps its marker, so the attribution
-names a page or section.
+otherwise it is skipped. Two limits keep marginal text out. After the best
+passage, one is packed only when its score is at least `PACK_MIN_SHARE` (0.35)
+of the best score, and passages come from at most `PACK_MAX_DOCS` (4)
+documents. Both constants are in `server/src/mcp/passages.mjs`. Each passage
+keeps its marker, so the attribution names a page or section.
 
 The step 1 index is built from the committed text when `main` moves. The step 2
 index is rebuilt when the set of staged files or their bytes change. The step 3
@@ -222,7 +271,9 @@ index holds only the documents fetched for that question.
 ### Enrichment
 
 Every document fetched in step 3 that contributed a passage to the answer and
-whose `change` is not `unchanged` is queued:
+whose `change` is not `unchanged` is queued. So is a step 2 document that
+contributed a passage and has no ingest job and no open proposal; it is queued
+when it is next served. Both go through this call:
 
 ```js
 ctx.ingest.enqueue({
@@ -231,33 +282,52 @@ ctx.ingest.enqueue({
   source: ref,                             // the SourceRef fetchOne returned
   requestedBy: 'svc:lookup',
   onBehalfOf: '<human id>',
-  instructions: 'Asked: "<question>". Fetched by live lookup.',
+  instructions: 'Fetched by live lookup to answer a question asked in a chat.',
+  lookupQuestion: '<question>',            // only when telemetry.store_queries is plain
 });
 ```
 
-With `telemetry.store_queries` set to `hashed` or `none`, the instructions say
-only `Fetched by live lookup to answer a question asked in a chat.`, and the
-question is not written down. Under `plain` the question is cut at 500
-characters. Staged documents and source passages are not queued: the first
-already has a job or a sync behind it, and the second is already ingested.
+The `instructions` are always that fixed sentence. The ingest agent follows its
+instructions, and a chat wrote the question, so the question is never part of
+them. Under `telemetry.store_queries: plain` the job carries it in its own
+`lookupQuestion` field, cut at 500 characters, which only the proposal page
+shows. The ingest prompt never includes it. With `hashed` or `none` the question
+is not written down. Source passages are not queued, because the source is
+already ingested.
+
+Queueing never holds an answer past `timeout_ms`. If it runs long, the answer is
+sent and the job is still queued in the background. The answer says so, unless
+it already says the lookup is incomplete.
 
 The job follows the normal path: agent job on an `ingest/` branch, audit,
 proposal, a person approves, merge. Nothing about review changes. `lookup` is
 one of the automatic triggers, so it shares their dedup: bytes whose proposal is
 still under review, or that a run found unchanged, do not start a second job.
+`ctx.ingest.enqueue` marks such a returned job with `deduplicated: true`.
 `mcp.lookup.ingest: off` queues nothing.
 
 A sync that lists a connector completely treats any manifest entry it did not
 list as `missing`. A document found by lookup can sit outside the connector's
 `select` scope, so `fetchOne` records it in the `connector-lookup` store
-namespace (key `<connector id>:<ref>`, value `{ at, title }`). The sync's
-missing check skips such an entry and fetches it again by ref, with the title the
-search gave, so a changed document comes back as a `changed` SourceRef. Without
-that record the same entry is reported missing. A fetch that fails is reported
-in `errors`. Re-checking applies to a complete listing only, is capped by the
-connector's `max_items`, and needs a recipe whose `fetch` makes a tool or method
-call. The design had this as a `via: lookup` marker in the manifest. The
-manifest is untouched.
+namespace (key `<connector id>:<ref>`, value `{ at, title, failures,
+checkedAt }`). It marks only a document that no sync has tracked; a document the
+manifest or the sync's item cache already knows stays subject to the missing
+check. The sync's missing check skips a marked entry and fetches it again by
+ref, with the title the search gave, so a changed document comes back as a
+`changed` SourceRef. Without the mark the same entry is reported missing.
+
+- A complete listing that includes a marked ref clears the mark, because the
+  sync tracks that document now.
+- Re-checks go oldest first, by `checkedAt`, so a cap smaller than the number of
+  marks still reaches every one over time.
+- A fetch that fails is reported in `errors` and adds one to `failures`. At
+  `LOOKUP_MAX_FAILURES` (3) failed re-checks in a row, the ref is reported as
+  missing and its mark is removed.
+
+Re-checking applies to a complete listing only, is capped by the connector's
+`max_items`, and needs a recipe whose `fetch` makes a tool or method call. The
+design had this as a `via: lookup` marker in the manifest. The manifest is
+untouched.
 
 ### Telemetry and gaps
 
@@ -265,10 +335,10 @@ A looked-up answer is still a miss for the brain: the event keeps
 `answered: false`, so the gap stays open until a reviewed page answers it. The
 `ask` tool hands the event a `lookup` summary whenever lookup ran, even when it
 found nothing. It holds `step` (`sources`, `staged`, `connectors` or `null`),
-`steps` (the steps tried), `connectorsAsked`, `fetched`, `cacheHits`,
-`latencyMs`, `incomplete`, `skipped` (the names of the steps that were skipped)
-and `queued` (ingest job ids). It carries counts and ids only: no passage text,
-no document titles and no connector names. The gap list shows when lookup served
+`steps` (the steps tried), `connectorsAsked`, `connectors` (the ids of the
+connectors asked), `fetched`, `cacheHits`, `latencyMs`, `incomplete`, `skipped`
+(the names of the steps that were skipped) and `queued` (ingest job ids). It
+carries counts and ids only: no passage text and no document titles. The gap list shows when lookup served
 a gap and whether an ingest job is queued, and a proposal queued by lookup says
 so.
 
@@ -294,8 +364,10 @@ unreviewed text and tell the chat which one wins.
 more local search over canonical pages only, using the question and the query
 terms, at a lower threshold than a normal answer: a score of at least 0.1 and a
 term coverage of at least 0.25, against 0.2 and 0.5. Up to 3 canonical pages
-are packed, and they may use up to 40% of the token budget. The passages get the
-rest. Any canonical page that matches is placed above the passages and marked
+are packed. The whole `ask` context fits the call's token budget, which
+`LOOKUP_BUDGET_SPLIT` in `server/src/mcp/config.mjs` divides: canonical sections
+may use up to 25%, weak page matches up to 15%, and the passages get the rest,
+at least 60%. Any canonical page that matches is placed above the passages and marked
 as the brain's position, under the heading `The brain's position: canonical
 pages`. The answer rules then say: state the canonical position as the
 answer, and if an unreviewed passage disagrees, report that as a disagreement
@@ -306,7 +378,8 @@ is in memory. The pass runs only when lookup found a passage.
 
 **Reviewed text outranks unreviewed text.** `ask` already returns weak matches
 from curated and evidence pages under "Weak matches (may not be relevant)".
-Those stay, above anything lookup found. A result lists them in this order:
+Those stay, above anything lookup found, except that a page already shown as
+canonical is not repeated there. A result lists them in this order:
 
 | Order | Kind | Standing |
 |---|---|---|
@@ -323,7 +396,8 @@ pick the newer one because it is newer.
 **Anonymization.** With `anonymization.enabled: true` in `brain.config.yaml`,
 steps 2 and 3 are off. Staged snapshots and freshly fetched documents are raw
 text, and the server cannot remove personal names mechanically. Step 1 stays
-available, because a sidecar is anonymized before it is committed. The
+available for sidecars, because a sidecar is anonymized before it is committed.
+Committed connector snapshots are skipped, because they are not. The
 switch is read from the instance config, and the service logs one line saying
 why the steps are off.
 
@@ -386,7 +460,9 @@ may be allowed to. Three limits, all on by default:
 **Privacy.** Step 3 sends the sanitised keywords to a provider. `send_query:
 false` turns step 3 off, so nothing derived from a question leaves the server.
 Under `telemetry.store_queries: hashed` or `none`, the question text is not
-written into the ingest job's instructions either.
+written into the ingest job either. Under `plain` it goes only into the job's
+`lookupQuestion` field. When lookup logs a provider failure, it logs the error's
+class or code and never its message, which can echo the query.
 
 **Fetched text is data.** It is neutralised and headed like every snapshot, and
 the tool result repeats that it is content and not instruction. It has not been
@@ -399,16 +475,18 @@ read by a person, so it can be wrong or planted. The label tells the reader.
 - A negative cache remembers "asked this connector, found nothing" for the same
   set of terms for `negative_ttl_minutes`. It lives in the process's memory.
 - Two rate limits over a sliding minute, also in memory: `per_caller_per_minute`
-  counts each lookup a caller starts, and `per_connector_per_minute` counts each
-  search and each fetch. A value of 0 turns a limit off.
+  counts a lookup only when a provider search is about to go out, so an answer
+  from steps 1 and 2 or from the negative cache costs the caller nothing, and
+  `per_connector_per_minute` counts each search and each fetch. A value of 0
+  turns a limit off.
 - `max_fetch` documents per question, across all connectors, and one overall
   `timeout_ms`. On timeout the passages fetched so far are still ranked, and the
   answer says the lookup may be incomplete.
 - Ingest jobs from lookup join the existing dedup for automatic triggers (same
   bytes under review means no new job). A daily cap, `max_ingest_per_day`,
-  counts every job `enqueue` returns for a lookup, whether it is new or an
-  existing job it was deduplicated to, per UTC day, in the `lookup-ingest-count`
-  store namespace. Past the cap the document is still answered from and the
+  counts new jobs only, per UTC day, in the `lookup-ingest-count` store
+  namespace. A job `enqueue` returns with `deduplicated: true` was counted when
+  it was made. Past the cap the document is still answered from and the
   answer notes that it was not queued.
 
 ## Configuration
@@ -444,7 +522,8 @@ sources:
 `viewer`, `contributor`, `reviewer`, `owner`, `admin`. With a value that is none
 of these, the two unreviewed steps are off and the service logs a warning. The
 token budget is the call's `max_tokens`, `mcp.ask.token_budget` by default.
-Lookup has no budget of its own. Every key is listed with its default in
+Lookup has no budget of its own: canonical sections, weak page matches and
+passages share it as described under "When the answer is given". Every key is listed with its default in
 [mcp.md](mcp.md#configuration).
 
 ## Where the code is
@@ -454,11 +533,12 @@ Lookup has no budget of its own. Every key is listed with its default in
 | `server/src/mcp/lookup.mjs` | The ladder, the role and transport gates, the negative cache, rate limits and deadline, the canonical pass, enrichment and the rejected-source list |
 | `server/src/mcp/passages.mjs` | Splitting on locator markers, passage scoring and packing |
 | `server/src/mcp/tools.mjs` | `ask`: the `keywords` input, the call to lookup on a miss, the labelled blocks and the telemetry summary |
-| `server/src/mcp/config.mjs` | The `lookup` defaults (`MCP_DEFAULTS`) |
+| `server/src/mcp/config.mjs` | The `lookup` defaults (`MCP_DEFAULTS`) and `LOOKUP_BUDGET_SPLIT` |
 | `server/src/mcp/rules.mjs`, `agent/rules/read.md` | `lookupRules` and the section "Answering from source and unreviewed passages" |
 | `server/src/connectors/index.mjs` | `search`, `fetchOne`, `stageItem`, `sanitiseTerms`, the `connector-lookup` namespace, the missing check and the `connectors search` command |
+| `server/src/connectors/render.mjs` | `flattenField`, the one-line form of provider strings |
 | `server/src/connectors/execute.mjs`, `recipes.mjs` | `searchItems`; validation of the `search` block |
-| `server/src/connectors/recipes/google-drive.yaml`, `notion.yaml` | The two shipped `search` blocks |
+| `server/src/connectors/recipes/google-drive.yaml` | The one shipped `search` block (`notion.yaml` has none) |
 | `server/src/core/schemas.mjs`, `server/src/ingest/queue.mjs` | The `lookup` job trigger and its dedup |
 | `server/test/mcp/lookup.test.mjs`, `server/test/connectors/lookup.test.mjs` | The intended behaviour, against an in-memory MCP server |
 
@@ -473,8 +553,8 @@ proposal page show where lookup was involved.
 
 Not built:
 
-- A live check of the Drive and Notion `search` blocks, and `search` blocks for
-  the other shipped recipes. Only the in-memory test server has run them.
+- A live check of the Drive `search` block, and `search` blocks for the other
+  shipped recipes. Only the in-memory test server has run it.
 - The three benchmark arms in [How to measure it](#how-to-measure-it), and so
   no measured token saving.
 - A default of lookup on for the `solo` profile.
@@ -483,8 +563,17 @@ Not built:
 
 ## How to measure it
 
-The benchmark harness in `benchmarks/` already records cost and latency per
-arm. Add three arms over the same questions and the same connector fixture:
+`benchmarks/lookup-context.mjs` measures context size with and without lookup on
+the fixture corpus, with no model calls and no cost. For each fixture question
+that has expected sources it compares the tokens in the whole source documents
+with the tokens `ask` would pack as passages, and checks mechanically that the
+expected literals are in the packed text. It measures context size only, on a
+small fictional corpus with a characters-per-four estimate. It does not
+measure answer quality, dollars, or the full lookup path. Its method and limits
+are in [benchmarks/README.md](../../benchmarks/README.md#live-lookup-context-size).
+
+The model-run measurement has not been done. The benchmark harness in
+`benchmarks/` already records cost and latency per arm. Add three arms over the same questions and the same connector fixture:
 
 | Arm | Setup |
 |---|---|

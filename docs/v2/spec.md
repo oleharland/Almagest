@@ -174,6 +174,8 @@ optionally `commit` and `supersedes` (a v1 `kind: remote` manifest id). See
   slug?: '<page slug>',                   // reverify: the page to re-check (telemetry enqueues with trigger 'demand')
                                           // drop-page: the page to drop (required); `slugs?: [...]` for several
   instructions?: 'free text for the agent (decision resolution, reviewer feedback)',
+  lookupQuestion?: '<question a chat asked>',   // trigger 'lookup' only, and only when telemetry.store_queries is plain;
+                                                // up to 500 characters, shown on the proposal page, never in the agent prompt
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked' | 'cancelled',
   attempts: 0, maxAttempts: 2, lastError?, workerId?,
   branch?: 'ingest/<source-slug>-<sha7>', worktree?: '<abs path>', baseSha?, headSha?,
@@ -187,7 +189,8 @@ or no diff and no decisions) succeeds with no proposal, and an empty branch it
 created is deleted.
 
 Dedup: enqueueing a job whose `(kind, source.id, source.sha256)` matches a
-`queued` or `running` job returns the existing job. Refinements (ingest):
+`queued` or `running` job returns the existing job, with `deduplicated: true`
+set on it so a caller that counts new jobs can tell. Refinements (ingest):
 - a source-less `reverify` dedups on `(kind, slug)`;
 - `drop-page` dedups on `(proposalId, slug)`;
 - a `revise` still **queued** for the same proposal absorbs the new
@@ -331,7 +334,7 @@ What each module promises on `ctx`. The signatures are the contract; internals
 are the module's own business.
 
 ```
-ctx.ingest      .enqueue({ kind, source, trigger, requestedBy, onBehalfOf?, proposalId?, instructions?, slug?, slugs? }) → Job
+ctx.ingest      .enqueue({ kind, source, trigger, requestedBy, onBehalfOf?, proposalId?, instructions?, lookupQuestion?, slug?, slugs? }) → Job   // a deduplicated Job carries deduplicated: true
                 .get(id) .list(filter) .start() .stop() .cancel(id)
                 // requestedBy: an Actor.id or an Actor; a local source without sha256 is fingerprinted here.
                 // Local sources must live under sources.local.path or .almagest/submissions/.
@@ -339,7 +342,7 @@ ctx.ingest      .enqueue({ kind, source, trigger, requestedBy, onBehalfOf?, prop
 ctx.connectors  .list() → [{ id, mcp, recipe, schedule, lastSync }]
                 .sync(id, { since?, full?, dryRun? }) → [SourceRef]   // fetch + snapshot + fingerprint
                 .syncDetailed(id, opts) → { refs, unchanged, missing, errors, … }
-                .search(id, { terms, limit }) → [{ ref, title, version, mime }]   // live lookup; needs `lookup: true` and a recipe `search` block; terms are sanitised
+                .search(id, { terms, limit }) → [{ ref, title, version, mime }]   // live lookup; needs `lookup: true` and a recipe `search` block; terms are sanitised; strings come back as one line, with caps
                 .fetchOne(id, item) → { ref, text, sha256, title, truncated, reused }   // one document from search(), staged like a sync does; ref.via = 'lookup'
                 .snapshotPath(sourceRef) → 'brain/raw/extracted/<connector>/<file>.txt'
                 .stagedPath(sourceRef) → '<abs>/.almagest/connector-snapshots/<connector>/<file>.txt'

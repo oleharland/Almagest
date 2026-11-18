@@ -42,9 +42,9 @@ the web inbox, the site and the CLI:
 
 `lookup` holds `step` (the step that answered: `sources`, `staged`,
 `connectors`, or `null`), `steps` (the steps tried), `connectorsAsked`,
-`fetched`, `cacheHits`, `latencyMs`, `incomplete`, `skipped` (the names of the
-steps that were skipped) and `queued` (the ids of the ingest jobs it queued). It
-holds no passage text and no document titles. The event is present whenever
+`connectors` (the ids of the connectors asked), `fetched`, `cacheHits`,
+`latencyMs`, `incomplete`, `skipped` (the names of the steps that were skipped)
+and `queued` (the ids of the ingest jobs it queued). It holds no passage text and no document titles. The event is present whenever
 lookup ran, including when it found nothing.
 
 Recording is fire-and-forget: `ctx.telemetry.record(partial)` builds the event,

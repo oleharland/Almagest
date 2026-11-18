@@ -48,19 +48,28 @@ hold:
   `mcp.lookup.min_role` (default `contributor`). Committed source text is
   already on `main` and is open to every caller.
 - With `anonymization.enabled: true` the staged and connector steps are off,
-  because fetched text cannot be anonymized mechanically.
+  because fetched text cannot be anonymized mechanically. The committed-source
+  step also skips committed connector snapshots, and reads only regular text
+  files inside the snapshot, with a per-file and a total size cap.
 - `send_query: false` turns the connector step off, and so does stdio. Terms
   sent to a provider are sanitised first, so a term cannot add an operator to
   the provider's query.
 - Every passage that is not on a reviewed page is labelled as a source passage
   or as unreviewed. Canonical pages are printed first and are never overridden.
   A passage carries no `[source: <id>, <locator>]` citation, and fetched text is
-  declared data, not instructions.
+  declared data, not instructions. Passage text is printed as quoted lines
+  starting with `> `, and titles, refs and labels are flattened to one line, so
+  fetched text cannot pose as a heading of the result.
 - Lookup writes nothing to `brain/wiki/` and nothing to `main`. A fetched
   document is queued as an ordinary ingest job, capped per day, and reaches
-  `main` only by the approval described above. A source whose proposal was
+  `main` only by the approval described above. The job's `instructions` are a
+  fixed sentence. The question a chat asked is never in them: under
+  `telemetry.store_queries: plain` it sits in a separate job field the ingest
+  prompt never shows. A source whose proposal was
   rejected is not served again until its content changes.
 - A looked-up question is still a miss in telemetry, so its gap stays open.
+- A provider failure is logged as its class or code only, never its message,
+  which can echo the query.
 
 What this does not cover: a chat with the role floor can read, through lookup,
 whatever the connector's credentials can find in that scope. Set `select`,

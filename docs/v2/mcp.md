@@ -32,7 +32,7 @@ approve.
 |---|---|---|
 | `search` | read | BM25F over title (×3), aliases (×3), tags (×2), section headings (×1.5) and body. An alias, title or slug equal to the whole query ranks first; an alias named inside the query next. Returns `{ slug, title, type, tier, confidence, score, snippet, match }` per result, and `answered: false` when the best match is too weak (a gap signal). |
 | `get_page` | read | One page by slug, alias or exact title: frontmatter, body, sources, outbound links, backlinks, and every `[source: id, locator]` citation resolved — source title, the committed text to verify it in (the sidecar for binaries), the marker to look for (`=== page 3 ===`), the passage itself, and a CITE-005 staleness flag. |
-| `ask` | read | Search + the most relevant sections, packed into a token budget (`max_tokens`, default 2500), together with the answer rules from `agent/rules/read.md` (citation format, `origin: self` handling, citation rules). The server does not call an LLM — the chat writes the answer, in Almagest's citation format. Optional `keywords` (up to 12 short strings) are the words a document answering the question would contain. They are used only when `mcp.lookup.enabled` is true and no page answers: `ask` then looks in source text, staged snapshots and connectors, and returns the matching passages labelled as source or unreviewed, with any matching canonical pages first. With lookup off, or when it finds nothing, the result is the same as before. See [live-lookup.md](live-lookup.md). |
+| `ask` | read | Search + the most relevant sections, packed into a token budget (`max_tokens`, default 2500), together with the answer rules from `agent/rules/read.md` (citation format, `origin: self` handling, citation rules). The server does not call an LLM — the chat writes the answer, in Almagest's citation format. Optional `keywords` (up to 12 short strings) are the words a document answering the question would contain. They are used only when `mcp.lookup.enabled` is true and no page answers: `ask` then looks in source text, staged snapshots and connectors, and returns the matching passages labelled as source or unreviewed, with any matching canonical pages first. Passage text is printed as quoted lines, each starting with `> `. A lookup that was cut short and found nothing adds a `Lookup incomplete: …` line. With lookup off, or when a complete lookup finds nothing, the result is the same as before. A question in a language written without spaces works only when the chat supplies `keywords`. See [live-lookup.md](live-lookup.md). |
 | `list_sources` | read | `brain/manifest.yaml` on main, filterable by substring, kind, status. |
 | `report_gap` | read | Records a question the brain could not answer (telemetry only). |
 | `feedback` | read | Helpful / not helpful for the slugs an answer used — an explicit demand signal. |
@@ -297,8 +297,10 @@ every merge the service performs.
   an unreviewed passage in the `[source: <id>, <locator>]` form. Passages from
   staged snapshots and connectors go only to callers at or above
   `mcp.lookup.min_role` and are off when `anonymization.enabled` is true.
-  Lookup never writes to the wiki or to main. What it fetches from a connector
-  is queued as an ordinary ingest job. See [security.md](security.md) and
+  Passage text is printed as quoted lines, and every title and label is
+  flattened to one line, so fetched text cannot pose as a section of the
+  result. Lookup never writes to the wiki or to main. What it fetches from a
+  connector is queued as an ordinary ingest job. See [security.md](security.md) and
   [live-lookup.md](live-lookup.md).
 - **The MCP never writes to main.** `submit_source` creates a file under
   `.almagest/submissions/` and a job; the job runs on its own branch, gated by
