@@ -243,6 +243,7 @@ Full walkthrough in [Getting Started](docs/getting-started.md).
 - [Upstream Updates](docs/upstream-updates.md): pulling framework improvements
 - [v2 service](docs/v2/spec.md): [ingest](docs/v2/ingest.md) · [connectors](docs/v2/connectors.md) · [governance](docs/v2/governance.md) · [MCP](docs/v2/mcp.md) · [telemetry](docs/v2/telemetry.md) · [security](docs/v2/security.md)
 - [Live lookup](docs/v2/live-lookup.md): when no page answers, `ask` searches source text, staged snapshots and connectors, and labels what it finds
+- [Curation](docs/v2/curation-design.md): people set a page's tier in the inbox, with suggestions for what to make canonical, and the brain proposes learnings from what it holds
 - [Contributing](CONTRIBUTING.md): setup, the checks CI runs, and the invariants to keep
 - [Security](SECURITY.md): how to report a vulnerability, and what is already known
 
