@@ -367,8 +367,8 @@
 .al-twopane { display: grid; grid-template-columns: minmax(0, 1fr) var(--pane-width); gap: var(--space-7); align-items: start; }
 .al-twopane__main { min-width: 0; }
 .al-twopane__side {
-  position: sticky; top: calc(var(--appbar-height) + var(--space-5));
-  max-height: calc(100vh - var(--appbar-height) - var(--space-6));
+  position: sticky; top: var(--pane-top, calc(var(--appbar-height) + var(--space-5)));
+  max-height: calc(100vh - var(--pane-top, calc(var(--appbar-height) + var(--space-5))) - var(--space-4));
   overflow-y: auto; overscroll-behavior: contain;
   font-size: var(--text-sm); min-width: 0;
 }
@@ -443,3 +443,264 @@
 .al-stats { display: flex; flex-wrap: wrap; gap: var(--space-5) var(--space-6); list-style: none; margin: 0; padding: 0; }
 .al-stat { font-size: var(--text-sm); color: var(--content-secondary); }
 .al-stat__value { display: block; font-size: var(--text-xl); font-weight: var(--weight-semibold); letter-spacing: var(--tracking-title); color: var(--content); font-variant-numeric: tabular-nums; }
+
+/* ── Diff additions: folds, tools, notes ───────────────────────────────── */
+
+.al-diff__fold { border-block: 1px solid var(--border-subtle); }
+.al-diff__fold > summary { list-style: none; }
+.al-diff__fold > summary::-webkit-details-marker { display: none; }
+.al-diff__fold > summary::before { content: "\25B8"; display: inline-block; width: 1.2em; }
+.al-diff__fold[open] > summary::before { content: "\25BE"; }
+.al-diff__fold > summary, .al-diff__fold--static {
+  display: block; padding: var(--space-1) var(--space-3);
+  font-family: var(--font-sans); font-size: var(--text-xs); color: var(--content-secondary);
+  background: var(--surface-secondary); cursor: pointer;
+}
+.al-diff__fold--static { cursor: default; }
+@media (hover: hover) { .al-diff__fold > summary:hover { color: var(--content); } }
+.al-diff__fold[open] > summary { border-bottom: 1px solid var(--border-subtle); }
+.al-diff__eol { font-family: var(--font-sans); font-size: var(--text-xs); color: var(--content-tertiary); }
+.al-diff__hunk { font-family: var(--font-sans); font-size: var(--text-xs); }
+/* Narrow: side by side falls back to one column. The empty and repeated sides are dropped. */
+@media (max-width: 720px) {
+  .al-diff--split .al-diff__line--empty, .al-diff--split .al-diff__line--twin { display: none; }
+}
+.al-difftools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); margin-bottom: var(--space-2); }
+.al-difftools__counts { font-family: var(--font-mono); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+
+/* Counts of facts: +added ~changed -removed. The signs carry the meaning, colour only helps. */
+.al-delta { display: inline-flex; flex-wrap: wrap; gap: 0 0.45em; font-family: var(--font-mono); font-size: var(--text-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.al-delta__add { color: var(--diff-add-content); }
+.al-delta__chg { color: var(--warning); }
+.al-delta__del { color: var(--diff-del-content); }
+
+/* ── Marked words ──────────────────────────────────────────────────────── */
+
+mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1px; box-decoration-break: clone; -webkit-box-decoration-break: clone; transition: background-color var(--duration) var(--ease); }
+mark { box-shadow: inset 0 -1px 0 var(--mark-line); }
+@media (forced-colors: active) { mark { background: Mark; color: MarkText; } }
+
+/* ── Menu: a button that opens a small panel. Works without script. ────── */
+
+.al-menu { position: relative; }
+.al-menu > summary { list-style: none; cursor: pointer; }
+.al-menu > summary::-webkit-details-marker { display: none; }
+.al-menu__panel {
+  position: absolute; left: 0; top: calc(100% + var(--space-1)); z-index: 30;
+  min-width: 15rem; max-width: min(26rem, calc(100vw - 2 * var(--gutter)));
+  max-height: 70vh; overflow-y: auto; overscroll-behavior: contain;
+  padding: var(--space-3); font-size: var(--text-sm);
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-pop);
+}
+.al-menu--end .al-menu__panel { left: auto; right: 0; }
+.al-menu__panel a { display: block; padding: var(--space-1) 0; color: var(--content); text-decoration: none; }
+@media (hover: hover) { .al-menu__panel a:hover { text-decoration: underline; } }
+
+/* ── Dialog ────────────────────────────────────────────────────────────── */
+
+.al-dialog { background: var(--surface); color: var(--content); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); padding: var(--space-5); width: min(28rem, calc(100vw - 2rem)); box-shadow: var(--shadow-pop); }
+.al-dialog::backdrop { background: color-mix(in srgb, #000 45%, transparent); }
+.al-dialog h2 { font-size: var(--text-md); margin-bottom: var(--space-3); }
+.al-dialog form { margin-top: var(--space-4); }
+
+/* ── Progress ──────────────────────────────────────────────────────────── */
+
+.al-progress { appearance: none; -webkit-appearance: none; display: block; width: 100%; height: 6px; border: 0; border-radius: var(--radius-full); background: var(--surface-tertiary); overflow: hidden; }
+.al-progress::-webkit-progress-bar { background: var(--surface-tertiary); }
+.al-progress::-webkit-progress-value { background: var(--success); }
+.al-progress::-moz-progress-bar { background: var(--success); }
+
+/* ── Review page ───────────────────────────────────────────────────────── */
+/*
+ * al-review
+ *   al-reviewhead                 sticky header: name, summary, status, approve
+ *   al-twopane--left              contents (al-rail) beside the main column
+ *   al-pagesec (__head sticky)    one page of the proposal
+ *     al-compare                  facts on the left, the passage they cite on the right
+ *     al-doc, al-diff             the whole page: its text, or its diff
+ *   al-filecard                   a file outside the wiki, folded
+ * Sticky offsets stack: app bar, then the header, then a page's own header.
+ */
+
+.al-review {
+  --reviewhead-height: 5.25rem;
+  --pagehead-height: 3.25rem;
+  --sticky-1: calc(var(--appbar-height) + var(--reviewhead-height));
+  --sticky-2: calc(var(--sticky-1) + var(--pagehead-height));
+  --pane-width: 260px;
+}
+:root:has(.al-review) { scroll-padding-top: var(--sticky-1); }
+@media (prefers-reduced-motion: no-preference) { :root:has(.al-review) { scroll-behavior: smooth; } }
+
+.al-reviewhead {
+  position: sticky; top: var(--appbar-height); z-index: 18;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2) var(--space-5);
+  min-height: var(--reviewhead-height); padding: var(--space-2) 0;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-5);
+}
+.al-reviewhead__main { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; column-gap: var(--space-3); min-width: 0; }
+.al-reviewhead__back { font-size: var(--text-sm); color: var(--content-tertiary); white-space: nowrap; }
+.al-reviewhead h1 { font-size: var(--text-lg); letter-spacing: var(--tracking-title); line-height: var(--leading-snug); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.al-reviewhead__meta, .al-reviewhead__ref { grid-column: 1 / -1; margin: 0; font-size: var(--text-sm); color: var(--content-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.al-reviewhead__ref { color: var(--content-tertiary); font-size: var(--text-xs); }
+.al-reviewhead__side { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); min-width: 0; }
+.al-reviewhead__side form { margin: 0; }
+.al-reviewhead__needs { font-size: var(--text-sm); color: var(--content-secondary); max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.al-review__grid { --pane-top: calc(var(--sticky-1) + var(--space-3)); }
+.al-review .al-twopane__side { padding-right: var(--space-2); }
+.al-review__main { min-width: 0; }
+.al-review__main > h2 { font-size: var(--text-md); }
+.al-pagesec, #questions, #answered, #other-files, #needs, .al-filecard, .al-review__main > h2 { scroll-margin-top: var(--sticky-1); }
+
+/* Contents */
+.al-rail__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.al-rail__link {
+  display: grid; grid-template-columns: 1.1rem minmax(0, 1fr); gap: 2px var(--space-2); align-items: start;
+  padding: var(--space-2); border-radius: var(--radius); color: var(--content); text-decoration: none;
+  transition: background-color var(--duration) var(--ease);
+}
+@media (hover: hover) { .al-rail__link:hover { background: var(--surface-secondary); } }
+.al-rail__link[aria-current="location"] { background: var(--surface-tertiary); }
+.al-rail__link[aria-current="location"] .al-rail__name { font-weight: var(--weight-medium); }
+.al-rail__name { grid-column: 2; min-width: 0; overflow-wrap: anywhere; line-height: var(--leading-snug); }
+.al-rail__state { grid-column: 1; display: inline-flex; padding-top: 2px; color: var(--content-tertiary); }
+.al-rail__state--accepted { color: var(--success); }
+.al-rail__state--out { color: var(--danger); }
+.al-rail__link--ask { color: var(--warning); font-weight: var(--weight-medium); }
+.al-rail__link--ask .al-rail__state { color: var(--warning); }
+.al-rail__meta { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); font-size: var(--text-xs); color: var(--content-secondary); }
+.al-rail__meta .al-tier { font-size: 0.6875rem; }
+.al-rail__progress { display: flex; flex-direction: column; gap: var(--space-1); margin: 0 0 var(--space-2) var(--space-2); font-size: var(--text-xs); color: var(--content-secondary); }
+.al-rail__group { margin: var(--space-3) 0 0; }
+.al-rail__group > summary { display: flex; align-items: center; min-height: var(--control-height-sm); padding-left: var(--space-2); color: var(--content-secondary); cursor: pointer; font-size: var(--text-xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-label); text-transform: uppercase; }
+.al-rail__group[open] > summary { margin-bottom: var(--space-1); }
+
+/* One page of the proposal */
+.al-pagesec { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); min-width: 0; }
+.al-pagesec + .al-pagesec { margin-top: var(--space-5); }
+.al-pagesec--out { opacity: 0.65; }
+.al-pagesec__head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4);
+  min-height: var(--pagehead-height); padding: var(--space-2) var(--space-4);
+  background: var(--surface-secondary); border-bottom: 1px solid var(--border); border-radius: calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0;
+}
+.al-pagesec__title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; flex: 1 1 18rem; }
+.al-pagesec__title h3 { font-size: var(--text-base); min-width: 0; overflow-wrap: anywhere; }
+.al-pagesec__tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.al-pagesec__tools form { margin: 0; }
+.al-pagesec__state { display: inline-flex; color: var(--content-tertiary); }
+.al-pagesec__state--accepted { color: var(--success); }
+.al-pagesec__state--out { color: var(--danger); }
+.al-pagesec__body { padding: var(--space-4); min-width: 0; }
+.al-icon { flex: none; }
+
+@media (min-width: 1200px) {
+  .al-pagesec__head { position: sticky; top: var(--sticky-1); z-index: 10; }
+}
+
+/* Compare: what gets written, and where it comes from */
+.al-compare { border: 1px solid var(--border); border-radius: var(--radius); min-width: 0; }
+.al-compare__head, .al-compare__group { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--space-5); }
+.al-compare__head { padding: var(--space-2) var(--space-4); background: var(--surface-secondary); border-bottom: 1px solid var(--border); border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0; font-size: var(--text-xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--content-secondary); }
+.al-compare__group { display: block; padding: var(--space-4); }
+.al-compare__group + .al-compare__group { border-top: 1px solid var(--border); }
+.al-compare__src { margin-bottom: var(--space-2); }
+.al-compare__src .al-source { margin: 0; }
+.al-compare__row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--space-5); align-items: start; padding-block: var(--space-2); }
+.al-compare__row + .al-compare__row { border-top: 1px solid var(--border-subtle); }
+.al-compare__facts, .al-compare__source { min-width: 0; }
+.al-compare__facts > .al-claim { margin: 0; }
+.al-compare__passage { min-width: 0; }
+.al-compare__support { margin: 0; padding-left: var(--space-3); border-left: 2px solid var(--border-strong); font-size: var(--text-sm); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.al-compare__support--none { color: var(--content-secondary); }
+.al-compare__whole { margin: var(--space-2) 0 0; }
+.al-compare__label { display: none; margin: 0 0 var(--space-1); font-size: var(--text-xs); font-weight: var(--weight-medium); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--content-tertiary); }
+.al-compare [data-fact]:focus-visible { outline-offset: 4px; }
+@media (min-width: 1200px) {
+  .al-compare [data-fact] { scroll-margin-top: calc(var(--sticky-2) + var(--space-3)); }
+  .al-pagesec .al-diff__hunk { scroll-margin-top: calc(var(--sticky-2) + var(--space-3)); }
+}
+@media (max-width: 960px) {
+  .al-compare__head { display: none; }
+  .al-compare__row { grid-template-columns: minmax(0, 1fr); row-gap: var(--space-2); }
+  .al-compare__label { display: block; }
+}
+
+/* The whole page as text */
+.al-doc { max-width: var(--width-measure); font-size: var(--text-base); line-height: var(--leading-prose); color: var(--content); overflow-wrap: anywhere; }
+.al-doc__p { margin: 0 0 var(--space-3); }
+.al-doc__h { margin: var(--space-5) 0 var(--space-2); font-weight: var(--weight-semibold); letter-spacing: var(--tracking-heading); line-height: var(--leading-snug); }
+.al-doc__h:first-child { margin-top: 0; }
+.al-doc__h--1 { font-size: var(--text-xl); }
+.al-doc__h--2 { font-size: var(--text-lg); padding-bottom: var(--space-1); border-bottom: 1px solid var(--border); }
+.al-doc__h--3 { font-size: var(--text-md); }
+.al-doc__h--4 { font-size: var(--text-base); color: var(--content-secondary); }
+.al-doc__li { --depth: 0; display: grid; grid-template-columns: 1.6em minmax(0, 1fr); margin: 0 0 var(--space-1) calc(var(--depth) * 1.4em); }
+.al-doc__li--1 { --depth: 1; } .al-doc__li--2 { --depth: 2; } .al-doc__li--3 { --depth: 3; } .al-doc__li--4 { --depth: 4; }
+.al-doc__bullet { color: var(--content-tertiary); font-variant-numeric: tabular-nums; }
+.al-doc__code, .al-doc__row { font-family: var(--font-mono); font-size: var(--text-sm); line-height: var(--leading-snug); white-space: pre-wrap; background: var(--surface-secondary); padding: 0 var(--space-3); }
+.al-doc--removed { padding-left: var(--space-4); border-left: 2px solid var(--danger); color: var(--content-secondary); }
+.al-cite { display: inline-block; vertical-align: 0.05em; padding: 0 0.5em; font-family: var(--font-mono); font-size: 0.75rem; line-height: 1.6; color: var(--content-secondary); background: var(--surface-secondary); border: 1px solid var(--border); border-radius: var(--radius-full); overflow-wrap: anywhere; }
+.al-docmeta { margin-bottom: var(--space-4); padding: var(--space-3) var(--space-4); background: var(--surface-secondary); border-radius: var(--radius); }
+.al-docmeta__sources { list-style: none; margin: 0; padding: 0; }
+
+/* A file outside the wiki, folded */
+.al-filecard { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); margin-top: var(--space-3); min-width: 0; }
+.al-filecard__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); padding: var(--space-3) var(--space-4); cursor: pointer; list-style-position: inside; }
+.al-filecard__path { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.al-filecard[open] > .al-filecard__head { border-bottom: 1px solid var(--border); }
+.al-filecard__body { padding: var(--space-3) var(--space-4); min-width: 0; }
+
+/* A row of the queue */
+.al-queuerow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto 6.5rem; align-items: center; gap: var(--space-2) var(--space-5); }
+.al-queuerow__main { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.al-queuerow__main .al-card__title { overflow-wrap: anywhere; }
+.al-queuerow__ref { font-size: var(--text-xs); color: var(--content-tertiary); overflow-wrap: anywhere; }
+.al-queuerow__counts { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); font-size: var(--text-sm); color: var(--content-secondary); white-space: nowrap; }
+.al-queuerow__age { text-align: right; }
+@media (max-width: 860px) {
+  .al-queuerow { grid-template-columns: minmax(0, 1fr); }
+  .al-queuerow__counts, .al-queuerow__age { align-items: flex-start; text-align: left; flex-direction: row; gap: var(--space-3); }
+}
+
+/* Narrow: the header scrolls away, nothing sticks except the app bar. */
+@media (max-width: 960px) {
+  .al-review { --reviewhead-height: 0px; --pagehead-height: 0px; --sticky-1: var(--appbar-height); --sticky-2: var(--appbar-height); }
+  .al-reviewhead { position: static; grid-template-columns: minmax(0, 1fr); }
+  .al-reviewhead h1 { white-space: normal; }
+  .al-reviewhead__meta, .al-reviewhead__ref { white-space: normal; }
+  .al-reviewhead__side { align-items: flex-start; }
+  .al-reviewhead__actions { flex-wrap: wrap; justify-content: flex-start; }
+  .al-reviewhead__decide { text-align: left; }
+  .al-review__grid { --pane-top: 0px; }
+}
+
+/* Page text: tables, wiki links */
+.al-wikilink { color: var(--content); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 0.15em; }
+.al-doc__tablewrap { max-width: 100%; overflow-x: auto; margin: 0 0 var(--space-3); }
+.al-doctable { width: 100%; font-size: var(--text-sm); line-height: var(--leading-snug); border-collapse: collapse; }
+.al-doctable th, .al-doctable td { padding: var(--space-2) var(--space-3); text-align: left; vertical-align: top; border: 1px solid var(--border); overflow-wrap: anywhere; }
+.al-doctable th { background: var(--surface-secondary); font-weight: var(--weight-semibold); }
+
+/* What changed in a page's details */
+.al-detailchanges { margin-bottom: var(--space-4); padding: var(--space-3) var(--space-4); background: var(--surface-secondary); border-radius: var(--radius); }
+.al-detailchanges h4, .al-pagesec__body > h4 { font-size: var(--text-sm); font-weight: var(--weight-semibold); margin: 0 0 var(--space-2); }
+.al-detailchanges__list { margin: 0; padding-left: 1.2em; }
+.al-detailchanges__list li + li { margin-top: var(--space-1); }
+.al-pagesec__body > h4 { margin-top: var(--space-3); }
+
+/* The strip under the review header: checks and what is still needed */
+.al-strip { padding: var(--space-2) var(--space-4); background: var(--surface-secondary); border-radius: var(--radius); font-size: var(--text-sm); }
+.al-strip__line { margin: 0; }
+.al-strip__line + .al-strip__line { margin-top: var(--space-1); }
+.al-strip__line > strong + .al-strip__list { display: inline; }
+.al-strip__list { display: inline; list-style: none; margin: 0; padding: 0; }
+.al-strip__list li { display: inline; }
+.al-strip__list li + li::before { content: " · "; color: var(--content-tertiary); }
+.al-strip__notes { margin: var(--space-1) 0 0; }
+.al-strip--fail { background: var(--danger-soft); border: 1px solid var(--danger); border-left-width: 4px; padding: var(--space-3) var(--space-4); font-size: var(--text-base); }
+.al-strip__fail { color: var(--danger); font-weight: var(--weight-semibold); }
+.al-reviewhead__actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-3); }
+.al-reviewhead__decide { margin: 0; max-width: 24rem; text-align: right; font-size: var(--text-xs); line-height: var(--leading-snug); color: var(--content-secondary); }

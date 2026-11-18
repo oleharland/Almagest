@@ -22,20 +22,76 @@ proposal, the agent's work on one source:
 Entries with a question for you come first, then ones touching frequently-read
 pages, then the oldest.
 
-Open one and you see, page by page, every **fact** that would be added, changed
-or removed. Next to each fact is the **passage from the source** it claims to
-come from: "Source: Q3 board deck, page 3", followed by what page 3 actually
-says. You are checking one thing: *does the source say this?* You never need
-to read a diff.
+Each row shows the document's own name (the source's title, not a file path),
+its path or reference in small type underneath, how many pages and facts change
+(`+12 ~1 -0` is twelve facts added, one changed, none removed), what it is
+waiting for, and how long ago it was sent.
 
-If the passage can't be found, the card says so ("We couldn't find that spot
-in the source. Check it by hand before you approve."). Treat that as a reason
-to look closer.
+Open one and you see three things.
+
+**The header** stays at the top as you scroll. It has the document's name, the
+path or reference under it, and one line saying how many pages are new and
+changed, how many facts are added, changed and removed, and when it was sent.
+On the right are the status, what is still needed in a few words, the
+**Approve all** button, and a **More** menu with "Ask for changes" and "Turn
+down".
+
+**The contents** list sits on the left and stays in view. It starts with the
+questions you must answer first, when there are any. Then come the pages, new
+ones first, then changed ones, then renamed and removed ones. Each shows
+whether it is new, changed or removed, its tier, how many facts it adds,
+changes and removes, and whether you have accepted it ("2 of 3 pages
+accepted"). Other files (the index, the log, the manifest, source copies) are
+one folded group at the bottom. Choosing an entry jumps to it, and the entry
+for the part you are reading is highlighted. On a narrow screen the contents
+move above the page.
+
+**The pages** come next, each with its own header that stays in view while you
+read it: the title, the tier (change it from there), the view choice, and
+**Accept page** and **Take this page out**.
+
+Each page has two views. Choose with the switch in its header. The choice is
+kept in the address (`?view=compare` or `?view=page`) so you can share the link,
+and it stays when you accept, take out or answer something.
+
+- **Compare** (the default) answers *is each thing we are about to write
+  supported by the source?* On the left is each fact exactly as it will be
+  written: new, changed (with the old wording struck through above it) or
+  removed. On the right is the passage from the source that it cites, with the
+  source's name and the spot written once above it. Facts in a row that cite the
+  same spot share one passage, which stays in view while those facts scroll.
+  The words in the passage that also appear in the fact are marked, so you can
+  see what supports it. You are checking one thing: *does the source say
+  this?*
+- **Whole page** answers *what will the wiki say?* A new page shows its details
+  (title, type, tier, confidence, tags, aliases, sources) and then its whole
+  text, with each `[source: …]` shown as a small tag. A changed page shows what
+  changed between the version the agent started from and the version you are
+  reviewing, one column by default or side by side (`?diff=split`), with the
+  changed words inside a line highlighted. Stretches that did not change are
+  folded ("14 unchanged lines"), and one click opens them. A removed page shows
+  the text that would go. Any fact without a checked source is listed above the
+  text with its warning, so switching view never hides one.
+
+A page longer than 200 KB is cut: you see the first part, and a note says how
+large it is and that the rest is not shown. Approving still adds all of it.
+
+If the passage can't be found, the right column says so ("We couldn't find that
+spot in the source. Check it by hand before you approve."). A fact with no
+source shows its warning there too, so an unsupported fact is a visible gap,
+not a missing block. Treat any of these as a reason to look closer.
 
 Below the pages, **Other files** lists everything else the proposal adds or
 changes (the index, the manifest, the log, sidecars under `brain/raw/`) with
 its size and what it says: the first 40 lines of a new file, the added lines
-of a changed one. Approving the proposal approves these too.
+of a changed one. Approving the proposal approves these too. Each file is
+folded; a new file that is not one of the usual bookkeeping files starts open.
+
+**Keys** (only when scripts run; everything works without them). `j` and `k`
+move to the next and previous fact, `n` and `p` to the next and previous page,
+`v` switches the view of the page you are on, and `?` lists them. No key accepts,
+takes out, approves or turns anything down. Those are always a click. Keys are
+left alone while you type in a field.
 
 ### What you can do
 
@@ -526,10 +582,25 @@ strict Content-Security-Policy (no external resources; only the page's own
 nonce'd style and script, plus fonts from the service itself via `font-src 'self'`),
 `X-Frame-Options: DENY` and `no-referrer`. The full policy is `default-src 'none'; style-src 'nonce-…'; script-src 'nonce-…'; img-src 'self' data:; font-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`.
 
+**The review page** (`GET /inbox/p/:id`) takes `view=compare|page` and
+`diff=unified|split`; anything else means the default. The whole-page view reads
+each page from git (`governance.pageTexts`: the text at the reviewed version, the
+text being removed for a removed page, and `git diff -M -U3` between the base and
+that version), only when that view is asked for, capped at 200 KB per page and per
+diff. Front matter is read only through `safeFrontmatter`. Every form on the
+page also carries `view` and `diff` as hidden fields when they are not the
+default, and the redirect after a post puts them back in the address. The
+stored proposal title is never changed; the page and the queue show the
+source's own name.
+
 **Look.** The inbox takes its look from the shared `ui/` library at the repo
 root (tokens, base, components), the same files the site uses. They are read
-once at start and inlined in the one nonce'd `<style>`, followed by
-`site/src/styles/theme.css`, so one override file themes both frontends. The two
+once at start and inlined in the one nonce'd `<style>`, followed by the
+instance's `site/src/styles/theme.css`, so one override file themes both
+frontends. The theme is read from the service's configured repository root (the
+brain's clone, which in a container is not where the code is) and, if that has
+none, from the one next to the code. The sign-in pages use the same library
+classes. The two
 Geist font files are served by the service at `/inbox/fonts/<version>/<name>.woff2`
 (fixed names, long cache, ETag, no directory listing); if they fail to load the
 system font stack is used. A deployment image must contain the `ui/` folder.

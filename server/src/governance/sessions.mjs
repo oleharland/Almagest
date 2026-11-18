@@ -265,25 +265,25 @@ export function createSessions(ctx, { secret, identities = null, ttlHours = 12, 
     const csrf = csrfToken(req, res);
     const unset = mode !== 'oidc' && currentLogins().length === 0;
     const body = mode === 'oidc'
-      ? html`<div class="login card">
+      ? html`<div class="al-narrow al-card al-stack">
           <h1>Sign in to review</h1>
-          <p class="lede">Use your company account. You'll come straight back here.</p>
-          ${error ? html`<div class="flash flash--err" role="alert">${error}</div>` : ''}
-          ${notice ? html`<div class="flash flash--ok">${notice}</div>` : ''}
-          <a class="btn btn--primary" href="/inbox/login/sso?next=${encodeURIComponent(next)}">Sign in with single sign-on</a>
+          <p class="al-lede">Use your company account. You'll come straight back here.</p>
+          ${error ? html`<div class="al-callout al-callout--danger" role="alert">${error}</div>` : ''}
+          ${notice ? html`<div class="al-callout al-callout--success">${notice}</div>` : ''}
+          <a class="al-btn al-btn--primary" href="/inbox/login/sso?next=${encodeURIComponent(next)}">Sign in with single sign-on</a>
         </div>`
-      : html`<div class="login card">
+      : html`<div class="al-narrow al-card al-stack">
           <h1>Sign in to review</h1>
-          <p class="lede">Enter your sign-in secret. Whoever runs this knowledge base can give you one, or a one-time sign-in link. An API token — the one a chat uses — doesn't work here.</p>
-          ${error ? html`<div class="flash flash--err" role="alert">${error}</div>` : ''}
-          ${notice ? html`<div class="flash flash--ok">${notice}</div>` : ''}
-          ${unset ? html`<div class="flash" role="note">Sign-in isn't set up yet. On the machine that runs Almagest, run <code>almagest login</code> for a one-time link, or set ${loginsEnv}.</div>` : ''}
-          <form method="post" action="/inbox/login">
+          <p class="al-lede">Enter your sign-in secret. Whoever runs this knowledge base can give you one, or a one-time sign-in link. An API token — the one a chat uses — doesn't work here.</p>
+          ${error ? html`<div class="al-callout al-callout--danger" role="alert">${error}</div>` : ''}
+          ${notice ? html`<div class="al-callout al-callout--success">${notice}</div>` : ''}
+          ${unset ? html`<div class="al-callout" role="note">Sign-in isn't set up yet. On the machine that runs Almagest, run <code>almagest login</code> for a one-time link, or set ${loginsEnv}.</div>` : ''}
+          <form class="al-stack al-stack--sm" method="post" action="/inbox/login">
             <input type="hidden" name="csrf" value="${csrf}">
             <input type="hidden" name="next" value="${safeNext(next)}">
-            <label for="secret" class="faint">Sign-in secret</label>
-            <input id="secret" name="secret" type="password" autocomplete="current-password" required autofocus>
-            <p><button class="btn btn--primary" type="submit">Sign in</button></p>
+            <label for="secret" class="al-label">Sign-in secret</label>
+            <input class="al-input" id="secret" name="secret" type="password" autocomplete="current-password" required autofocus>
+            <p><button class="al-btn al-btn--primary" type="submit">Sign in</button></p>
           </form>
         </div>`;
     return page(req, res, { status: status ?? (error ? 401 : 200), body });
@@ -291,12 +291,12 @@ export function createSessions(ctx, { secret, identities = null, ttlHours = 12, 
 
   function continuePage(req, res, { display, token }) {
     const csrf = csrfToken(req, res);
-    const body = html`<div class="login card">
+    const body = html`<div class="al-narrow al-card al-stack">
       <h1>Continue as ${display}?</h1>
-      <p class="lede">This sign-in link works once, for a few minutes.</p>
-      <form method="post" action="/inbox/login/link/${encodeURIComponent(token)}">
+      <p class="al-lede">This sign-in link works once, for a few minutes.</p>
+      <form class="al-stack al-stack--sm" method="post" action="/inbox/login/link/${encodeURIComponent(token)}">
         <input type="hidden" name="csrf" value="${csrf}">
-        <p><button class="btn btn--primary" type="submit">Continue</button></p>
+        <p><button class="al-btn al-btn--primary" type="submit">Continue</button></p>
       </form>
     </div>`;
     return page(req, res, { body, title: 'Continue' });

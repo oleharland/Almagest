@@ -65,30 +65,31 @@ export function safeStyleText(css) {
 }
 
 /**
- * Pages the service renders that are not written with library classes: the
- * sign-in pages in sessions.mjs. Kept to the few classes they use, built from
- * the same tokens, so they look like the rest.
+ * The whole stylesheet: the library, then the instance's theme.css last, so a
+ * token redefined there wins.
  */
-const SIGN_IN_CSS = `
-.login{max-width:26rem;margin:var(--space-7) auto 0}
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-4)}
-.lede{color:var(--content-secondary);font-size:var(--text-md);margin:var(--space-2) 0 var(--space-4)}
-.faint{color:var(--content-tertiary);font-size:var(--text-sm)}
-.flash{border:1px solid var(--border);border-left:3px solid var(--content-secondary);border-radius:var(--radius);background:var(--surface-secondary);padding:var(--space-3) var(--space-4);margin:0 0 var(--space-4)}
-.flash--ok{border-left-color:var(--success);background:var(--success-soft)}
-.flash--err{border-left-color:var(--danger);background:var(--danger-soft)}
-input[type=password]{display:block;width:100%;min-height:var(--control-height);margin-top:var(--space-1);padding:0 var(--space-3);background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius)}
-input[type=password]:focus-visible{outline:2px solid var(--focus-ring);border-color:var(--focus-ring)}
-.btn{display:inline-flex;align-items:center;justify-content:center;min-height:var(--control-height);padding:0 var(--space-4);font-weight:var(--weight-medium);color:var(--content);background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius);text-decoration:none;cursor:pointer}
-.btn--primary{background:var(--accent);border-color:var(--accent);color:var(--accent-content)}
-`;
-
-/** The whole stylesheet: library, sign-in pages, then the instance's theme.css last, so a token redefined there wins. */
 export function buildCss(theme = readOr(THEME_FILE)) {
-  return safeStyleText(`${libraryCss()}\n${SIGN_IN_CSS}\n${theme}`);
+  return safeStyleText(`${libraryCss()}\n${theme}`);
 }
 
-export const CSS = buildCss();
+/**
+ * The instance theme lives in the brain's repository. In a Docker deployment
+ * that is a separate clone from this code, so the service tells the layout its
+ * repository root once, at start; the theme is read there, once. A root with no
+ * theme file falls back to the one next to this code.
+ */
+const themed = new Map();
+let currentCss = buildCss();
+export function useThemeFrom(repoRoot) {
+  if (!repoRoot) return currentCss;
+  const root = path.resolve(String(repoRoot));
+  if (!themed.has(root)) {
+    const file = path.join(root, 'site', 'src', 'styles', 'theme.css');
+    themed.set(root, fs.existsSync(file) ? buildCss(readOr(file)) : buildCss());
+  }
+  currentCss = themed.get(root);
+  return currentCss;
+}
 
 /** Headers every inbox response carries. `nonce` lets exactly our own <style>/<script> run. */
 export function securityHeaders(nonce) {
@@ -120,12 +121,98 @@ const NAV = [
   ['/inbox/activity', 'Activity', 'activity'],
 ];
 
+/**
+ * The one script. The pages work without it; this adds comfort only:
+ * confirm and double-submit guards on forms (every page), and on the review
+ * page keys for moving between facts and pages, and the current rail entry.
+ * No key here ever accepts, takes out, approves or turns down anything.
+ */
 const SCRIPT = `
-document.addEventListener('submit', function (e) {
-  var f = e.target; var q = f.getAttribute('data-confirm');
-  if (q && !window.confirm(q)) { e.preventDefault(); return; }
-  var b = f.querySelector('button[type=submit],button:not([type])'); if (b) { setTimeout(function () { b.disabled = true; }, 0); }
-});
+(function () {
+  var doc = document;
+  doc.addEventListener('submit', function (e) {
+    var f = e.target;
+    if (f.getAttribute('method') === 'dialog') { return; }
+    var q = f.getAttribute('data-confirm');
+    if (q && !window.confirm(q)) { e.preventDefault(); return; }
+    var b = f.querySelector('button[type=submit],button:not([type])'); if (b) { setTimeout(function () { b.disabled = true; }, 0); }
+  });
+
+  var review = doc.querySelector('.al-review');
+  if (!review) { return; }
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var list = function (sel) { return Array.prototype.slice.call(doc.querySelectorAll(sel)); };
+
+  // A link to a folded file opens it.
+  function openTarget(id) {
+    var t = id && doc.getElementById(id);
+    if (t && t.tagName === 'DETAILS') { t.open = true; }
+  }
+  doc.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('a[href^="#"]');
+    if (a) { openTarget(a.getAttribute('href').slice(1)); }
+  });
+  openTarget(decodeURIComponent(location.hash.slice(1)));
+
+  // Menus close on Escape and on a click anywhere else.
+  function closeMenus(except) {
+    list('details.al-menu[open]').forEach(function (m) { if (m !== except) { m.open = false; } });
+  }
+  doc.addEventListener('click', function (e) { closeMenus(e.target.closest && e.target.closest('details.al-menu')); });
+
+  // Where is the top of the readable area? Each target says, with scroll-margin-top.
+  function margin(el) { return parseFloat(getComputedStyle(el).scrollMarginTop) || 0; }
+  function index(els) {
+    var at = -1;
+    for (var i = 0; i < els.length; i++) {
+      if (els[i].getBoundingClientRect().top - margin(els[i]) <= 4) { at = i; } else { break; }
+    }
+    return at;
+  }
+  function go(els, dir) {
+    if (!els.length) { return; }
+    var next = Math.max(0, Math.min(els.length - 1, index(els) + dir));
+    var el = els[next];
+    if (!el.hasAttribute('tabindex')) { el.setAttribute('tabindex', '-1'); }
+    el.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+    el.focus({ preventScroll: true });
+  }
+
+  var keys = doc.getElementById('keys');
+  doc.addEventListener('keydown', function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) { return; }
+    var t = e.target;
+    if (t && (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(t.tagName) || t.isContentEditable)) { return; }
+    if (keys && keys.open) { return; }
+    var k = e.key;
+    if (k === 'j' || k === 'k') { go(list('[data-fact], .al-diff__hunk'), k === 'j' ? 1 : -1); e.preventDefault(); }
+    else if (k === 'n' || k === 'p') { go(list('[data-page]'), k === 'n' ? 1 : -1); e.preventDefault(); }
+    else if (k === 'v') {
+      var pages = list('[data-page]'); var cur = pages[Math.max(0, index(pages))];
+      var other = cur && cur.querySelector('a[data-view][aria-current="false"]');
+      if (other) { location.href = other.href; e.preventDefault(); }
+    }
+    else if (k === '?' && keys && keys.showModal) { keys.showModal(); e.preventDefault(); }
+  });
+  doc.addEventListener('keydown', function (e) { if (e.key === 'Escape') { closeMenus(null); } });
+
+  // The current entry in the contents.
+  var links = list('a[data-rail]');
+  var targets = links.map(function (a) { return doc.getElementById(a.getAttribute('href').slice(1)); });
+  var queued = false;
+  function mark() {
+    queued = false;
+    var live = [];
+    targets.forEach(function (t, i) { if (t && t.getClientRects().length) { live.push(i); } });
+    var at = -1;
+    live.forEach(function (i) { if (targets[i].getBoundingClientRect().top - margin(targets[i]) <= 48) { at = i; } });
+    if (at < 0 && live.length) { at = live[0]; }
+    links.forEach(function (a, i) { if (i === at) { a.setAttribute('aria-current', 'location'); } else { a.removeAttribute('aria-current'); } });
+    if (at >= 0 && links[at].scrollIntoView && !reduce) { links[at].scrollIntoView({ block: 'nearest' }); }
+  }
+  window.addEventListener('scroll', function () { if (!queued) { queued = true; window.requestAnimationFrame(mark); } }, { passive: true });
+  mark();
+}());
 `;
 
 /**
@@ -148,7 +235,7 @@ export function layout({ title, actor = null, nonce, csrf = '', current = '', bo
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>${title} · Almagest</title>
-<style nonce="${nonce}">${raw(CSS)}</style>
+<style nonce="${nonce}">${raw(currentCss)}</style>
 </head>
 <body>
 <a class="al-skip-link" href="#main">Skip to content</a>

@@ -200,6 +200,11 @@
   --diff-del-mark: var(--color-red-200);
   --diff-del-content: var(--color-red-800);
 
+  /* Marked words: the words of a passage that also occur in a fact. Text stays --content on top. */
+  --mark: color-mix(in srgb, var(--color-amber-400) 34%, transparent);
+  --mark-strong: color-mix(in srgb, var(--color-amber-400) 62%, transparent);
+  --mark-line: var(--color-amber-600);
+
   --shadow-pop: 0 4px 16px #1a1c2112;
 }
 
@@ -250,6 +255,10 @@
     --diff-del-mark: #7a1f25;
     --diff-del-content: var(--color-red-200);
 
+    --mark: color-mix(in srgb, var(--color-amber-400) 26%, transparent);
+    --mark-strong: color-mix(in srgb, var(--color-amber-400) 52%, transparent);
+    --mark-line: var(--color-amber-400);
+
     --shadow-pop: 0 4px 16px #00000066;
   }
 }
@@ -299,6 +308,10 @@
   --diff-del: #3a1114;
   --diff-del-mark: #7a1f25;
   --diff-del-content: var(--color-red-200);
+
+  --mark: color-mix(in srgb, var(--color-amber-400) 26%, transparent);
+  --mark-strong: color-mix(in srgb, var(--color-amber-400) 52%, transparent);
+  --mark-line: var(--color-amber-400);
 
   --shadow-pop: 0 4px 16px #00000066;
 }
