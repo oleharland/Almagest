@@ -287,7 +287,44 @@ export function findCitations(body) {
 
 // ── loading ──────────────────────────────────────────────────────────────────
 
+/**
+ * Front matter is YAML and nothing else.
+ *
+ * gray-matter picks its parser from the word after the opening `---`, and its
+ * `js` / `javascript` engine EVALUATES the block: a page that opens with
+ * `---js` runs code in whatever process parses it (the audit, the service, a
+ * site build). Wiki pages are written by an agent from untrusted sources, so
+ * that is remote code execution. Every caller parses through this wrapper:
+ *
+ *   1. a named language other than yaml / yml is refused before gray-matter
+ *      sees the text;
+ *   2. every non-YAML engine gray-matter knows is replaced with one that
+ *      throws, in case the detection above and gray-matter's ever disagree.
+ *
+ * @param {Function} matter  gray-matter, injected by the caller
+ * @returns {(text: string) => object}  gray-matter's result for YAML front matter
+ */
+export function safeFrontmatter(matter) {
+  if (typeof matter !== 'function') throw new Error('[wiki] safeFrontmatter needs gray-matter');
+  const refuse = (name) => ({
+    parse() { throw new Error(`front matter must be YAML; a "${name}" block is refused`); },
+    stringify() { throw new Error(`front matter must be YAML; a "${name}" block is refused`); },
+  });
+  const engines = {};
+  for (const name of ['js', 'javascript', 'coffee', 'coffeescript', 'cson', 'json', 'toml']) engines[name] = refuse(name);
+  return (text) => {
+    const source = String(text ?? '');
+    const opening = /^\uFEFF?---[ \t]*([^\r\n]*?)[ \t]*(?:\r?\n|$)/.exec(source);
+    const language = opening ? opening[1] : '';
+    if (language && !/^ya?ml$/i.test(language)) {
+      throw new Error(`front matter must be YAML; the opening line names "${language.slice(0, 40)}", which is refused`);
+    }
+    return matter(source, { engines });
+  };
+}
+
 function readRawPages({ repoRoot, wikiDirs, showExamplePages, onWarn, matter }) {
+  const parseFrontmatter = safeFrontmatter(matter);
   const out = [];
 
   for (const brain of wikiDirs) {
@@ -308,7 +345,7 @@ function readRawPages({ repoRoot, wikiDirs, showExamplePages, onWarn, matter }) 
       const source = fs.readFileSync(abs, 'utf-8');
       let parsed;
       try {
-        parsed = matter(source);
+        parsed = parseFrontmatter(source);
       } catch (err) {
         throw new Error(
           `[wiki] could not parse frontmatter in ${brain.dir}/${file}. ` +
