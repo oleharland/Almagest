@@ -40,7 +40,7 @@ MCP server ──list──▶ items (ref, version, title)
 | Recipe | `server/src/connectors/recipes/<name>.yaml` | How to list, fetch and render that kind of server |
 | Snapshot | `brain/raw/extracted/<connector-id>/<slug>.txt` | The committed text pages cite; its sha256 is the fingerprint |
 | Manifest entry | `brain/manifest.yaml`, `kind: connector` | The record of what was ingested at which digest |
-| Operational state | service store: `connector-cursor`, `connector-item`, `connector-oauth` | Sync cursor, per-item version cache, sealed OAuth tokens |
+| Operational state | service store: `connector-cursor`, `connector-item`, `connector-lookup`, `connector-oauth` | Sync cursor, per-item version cache, documents fetched by live lookup, sealed OAuth tokens |
 
 ## Configuration
 
@@ -65,6 +65,9 @@ sources:
       # max_items: 1000            # per-sync listing cap; a capped listing never reports items missing
       # concurrency: 4             # parallel fetches
       # timeout_seconds: 30        # connect and per-request timeout
+      # lookup: true               # let live lookup search this connector when no page answers (default false)
+      # lookup_select:             # optional scope for lookup, instead of `select`
+      #   query: "'0AbC…' in parents"
       # oauth:                     # only for servers that need OAuth and want more than the defaults
       #   scope: "read"
       #   client_id: "…"           # a pre-registered client; omit to use dynamic client registration
@@ -96,6 +99,15 @@ sources:
         render: json-to-markdown
         render_options: { title: title, body: [summary, timeline], omit: [updated_at, viewed_at] }
 ```
+
+`lookup: true` lets [live lookup](live-lookup.md) search this connector when a
+chat's question has no reviewed answer, and read its staged snapshots. It does
+not change how the connector syncs. Lookup searches with the connector's
+`select` unless `lookup_select` is set, which replaces `select` for lookup
+alone, so a wider scope for lookup is a choice you make on purpose. A connector
+without `lookup: true` is never searched, whatever its recipe has. One whose
+recipe has no `search` block is not searched either, but its staged snapshots
+still count.
 
 `mcp` accepts three shapes:
 
@@ -148,6 +160,15 @@ cursor entirely.
 gone. The sync then lists every `kind: connector` entry for that connector whose
 `ref` was not seen, in `missing`. The next ingest sets their manifest `status:
 missing`; pages and snapshots stay.
+
+**A document that lookup fetched outside the listing is not missing.** Live
+lookup can fetch a document the connector's `select` does not list. It records
+that ref in the `connector-lookup` store namespace. On a complete listing the
+sync leaves such an entry out of `missing` and fetches it again by ref, up to
+`max_items` of them, with the title the search gave. A changed document comes
+back as a `changed` SourceRef like any other. A fetch that fails goes to
+`errors`. This needs a recipe whose `fetch` calls a tool or method. Without the
+record, the same entry is reported missing.
 
 **Unchanged with respect to what?** To `main`. An item whose proposal is still
 open is returned again on the next sync, with the same sha256; the runner's job
@@ -277,6 +298,14 @@ list:
     - { path: state, in: "{{select.states}}" }      # an empty list matches everything
     - { path: kind, not: archived }
 
+search:                        # optional; live lookup only. Same shape as `list`, no `static`
+  tool: search_things
+  args: { query: "{{query}}" }   # {{query}}: the terms joined by a space · {{terms}}: the list
+  items: "things[*]"
+  ref: id
+  version: updatedAt
+  title: name
+
 fetch:
   tool: get_thing              # or `method: resources/read`; omit both to render the list item itself
   args: { id: "{{item.ref}}" }
@@ -289,6 +318,16 @@ fetch:
     body: [description]
     omit: [updatedAt]
 ```
+
+**The `search` block.** Live lookup runs it for a question and reads its first
+page, at most `limit` items (10 by default, 50 at most). It is checked like
+`list`: `ref` is required, `static` is not allowed. A connector can set `search:`
+inline to merge over the recipe's. `{{select.*}}` inside it holds `lookup_select`
+when set, else `select`. Terms come from a chat, so they are sanitised before
+they are rendered: only letters, digits, spaces, hyphens, underscores and dots
+survive, with at most 8 terms, 64 characters each and 200 in all. A recipe
+without `search` still validates, and its connector takes no part in the search
+step.
 
 **Paths.** `a.b`, `a[0]`, `a[-1]`, `a["key with spaces"]`, `a[*].b` (fans out),
 `$` (the whole value). `x | y | z` takes the first alternative that yields a
@@ -339,6 +378,13 @@ matches.
 | `notion` | Notion's hosted MCP (`notion-search`, `notion-fetch`) | one page | no |
 | `slack` | the reference Slack MCP server | one channel's history, a row per message | no |
 | `web-fetch` | the reference `fetch` server (`uvx mcp-server-fetch`, tool `fetch`) | one URL from `select.urls` (no lister), converted to markdown; no `version`, so every sync re-fetches and the snapshot's sha256 decides whether it changed | no |
+
+`google-drive` and `notion` also ship a `search` block for live lookup. Both
+are unverified: they have not been run against the real server. Drive reuses
+`search_files` with a `fullText contains` condition, which is an assumption.
+Notion calls `notion-search`. Check one with `almagest connectors search <id>
+<words>` before you set `lookup: true`. No other shipped recipe has a `search`
+block.
 
 Overriding part of a shipped recipe needs no fork: `list:`, `fetch:` and
 `resolve:` on the connector merge over the recipe. Two common ones:
@@ -421,6 +467,9 @@ treated as statically authenticated and gets no OAuth provider.
 ```
 almagest connectors list                        configured connectors, cursor, last sync
 almagest connectors sync <id> [--dry-run] [--full] [--json]
+almagest connectors search <id> <query…> [--limit N] [--json]
+                                                search a connector with `lookup: true`; print the candidates
+                                                (ref, version, title). Fetches and queues nothing
 almagest connectors test <id> [--fetch]         connect, list the first page, print mapped items
 almagest connectors init <mcp> [--name n] [--stdout]
 almagest connectors login <id|mcp>

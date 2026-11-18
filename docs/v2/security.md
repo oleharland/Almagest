@@ -29,11 +29,43 @@ and no setting relaxes this.
 | What can merge | Only knowledge-base paths (`brain/wiki/*.md`, `.txt` sidecars, bookkeeping files, `brain/.index/*.tsv`); no dotfiles, symlinks, executables, submodules, or agent instruction files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `SKILL.md`, `*.mdc`, `.claude/` … in any letter case) — checked by the runner, when the proposal is built, in policy, and again inside the merge. The inbox shows the content of every non-wiki file | `server/src/governance/paths.mjs`, `merge.mjs`, `ingest/runner.mjs` |
 | The gate itself | One `verifyCandidate` for every new `main`: path check, then the audit from the service's own checkout on the merge result; exit 1 blocks | `server/src/governance/merge.mjs`, `ingest/audit.mjs` |
 | Merges on GitHub | Almagest stays the gate for its own `main`. A merged pull request moves local `main` only when policy is met for the GitHub user who merged (mapped, current roles, separation of duties), the merged head is the reviewed one, the merge commit's parents are exactly (local `main`, reviewed head), and `verifyCandidate` passes. Otherwise the proposal becomes `merged_unaccepted` with the reason and `main` stays put. Pull requests from forks are ignored | `governance/channels/github-pr.mjs`, `service.mjs` → `recordExternalMerge`, `merge.mjs` → `acceptExternal` |
-| What chats read | The MCP server serves a snapshot of local `main` only, never the remote's | `server/src/core/snapshot.mjs` |
+| What chats read | The MCP server serves wiki pages from a snapshot of local `main` only, never the remote's. With live lookup on, `ask` can also return labelled passages from outside the wiki; see below | `server/src/core/snapshot.mjs`, `mcp/lookup.mjs` |
 | The ingest agent | No git, network or MCP tools; writes confined to `brain/`; the audit is an exact-command wrapper outside the worktree; `ALMAGEST_*` and other secrets stripped from its environment; source content declared untrusted | `server/src/ingest/drivers/`, `runner.mjs` |
 | The runner after the agent | Never trusts the worktree's `.git` file: the git dir is resolved from the repository, the `.git` file must be byte-identical to what the runner created, every git call passes `--git-dir`/`--work-tree` with fsmonitor and hooks off and inherited `GIT_*` dropped, and the commit must land on the job's branch with `main` untouched | `server/src/core/git.mjs`, `ingest/runner.mjs` |
 | Interactive agent sessions | `guard-wiki` (Write/Edit) blocks wiki changes on `main` and any write into `.git/`; `guard-git` (Bash) blocks wiki changes on `main` and, on any branch, every command that moves `main` without a commit; the `reference-transaction` hook refuses a wiki-changing move of `main` from an agent environment; `pre-commit` runs the audit. Both are installed from `main` into the git dir (`almagest hooks install`), so a checked-out branch cannot replace them; `guard-git` also blocks new remotes, hook-related git config, and `almagest login`, which itself refuses in an agent environment. `guard-git` also blocks clearing an agent-environment variable before any program. The checked-in `.claude/settings.json` no longer pre-allows interpreters, `cp`/`mv`, `npm install`/`ci` or arbitrary `npm run` scripts (only `check`, `audit`, `selftest`, `test:server`), branch-moving git commands, `git remote` writes, CLI subcommands that change state, or `curl` to the inbox | `server/src/ingest/hooks.mjs`, `guard-git.mjs`, `tools/hooks/`, `tools/lib/git-hooks.mjs`, `.claude/settings.json` |
 | Configuration | Your approval rules are added to the profile's, never instead of them (unless you set `inherit_profile_rules: false`, which warns at startup); `enterprise` without OIDC refuses to start; `serve` fails fast without a local `main` | `server/src/core/config.mjs`, `app.mjs` |
+
+**Live lookup.** With `mcp.lookup.enabled` (off by default), a chat's `ask` can
+reach more than the wiki: committed source text, snapshots staged by connectors,
+and a search of the connected MCP servers with the connector's own credentials.
+Those credentials can read more than the person asking may see, so these limits
+hold:
+
+- A connector is searched, and its staged snapshots are read, only when it sets
+  `lookup: true`. Its scope is its `select`, or `lookup_select` when you set a
+  wider one on purpose.
+- The staged and connector steps answer only callers at or above
+  `mcp.lookup.min_role` (default `contributor`). Committed source text is
+  already on `main` and is open to every caller.
+- With `anonymization.enabled: true` the staged and connector steps are off,
+  because fetched text cannot be anonymized mechanically.
+- `send_query: false` turns the connector step off, and so does stdio. Terms
+  sent to a provider are sanitised first, so a term cannot add an operator to
+  the provider's query.
+- Every passage that is not on a reviewed page is labelled as a source passage
+  or as unreviewed. Canonical pages are printed first and are never overridden.
+  A passage carries no `[source: <id>, <locator>]` citation, and fetched text is
+  declared data, not instructions.
+- Lookup writes nothing to `brain/wiki/` and nothing to `main`. A fetched
+  document is queued as an ordinary ingest job, capped per day, and reaches
+  `main` only by the approval described above. A source whose proposal was
+  rejected is not served again until its content changes.
+- A looked-up question is still a miss in telemetry, so its gap stays open.
+
+What this does not cover: a chat with the role floor can read, through lookup,
+whatever the connector's credentials can find in that scope. Set `select`,
+`lookup_select` and `min_role` with that in mind. Details are in
+[live-lookup.md](live-lookup.md).
 
 ## Status
 

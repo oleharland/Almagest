@@ -165,7 +165,7 @@ optionally `commit` and `supersedes` (a v1 `kind: remote` manifest id). See
 { id: 'job_…',
   kind: 'ingest' | 'revise' | 'reverify' | 'drop-page',
   source: SourceRef | null,
-  trigger: 'watch' | 'schedule' | 'manual' | 'mcp' | 'hook' | 'decision' | 'feedback' | 'demand',
+  trigger: 'watch' | 'schedule' | 'manual' | 'mcp' | 'hook' | 'decision' | 'feedback' | 'demand' | 'lookup',
   requestedBy: Actor.id,
   requester?: { id, kind?, display?, email? },   // when enqueue got an Actor, not an id — the commit co-author
   onBehalfOf?: Actor.id,                  // an agent acting for a person (MCP submit_source); also co-authors
@@ -193,7 +193,7 @@ Dedup: enqueueing a job whose `(kind, source.id, source.sha256)` matches a
 - a `revise` still **queued** for the same proposal absorbs the new
   `instructions` (appended) instead of being collapsed or duplicated: two
   decisions resolved back to back must both reach the agent;
-- an `ingest` from an automatic trigger (`watch`, `schedule`, `hook`, `mcp`)
+- an `ingest` from an automatic trigger (`watch`, `schedule`, `hook`, `mcp`, `lookup`)
   also returns a finished job for the same bytes whose proposal is not yet
   merged / rejected / superseded, or that found nothing to review: a connector
   re-listing an item under review every 15 minutes spawns no new jobs.
@@ -339,6 +339,8 @@ ctx.ingest      .enqueue({ kind, source, trigger, requestedBy, onBehalfOf?, prop
 ctx.connectors  .list() → [{ id, mcp, recipe, schedule, lastSync }]
                 .sync(id, { since?, full?, dryRun? }) → [SourceRef]   // fetch + snapshot + fingerprint
                 .syncDetailed(id, opts) → { refs, unchanged, missing, errors, … }
+                .search(id, { terms, limit }) → [{ ref, title, version, mime }]   // live lookup; needs `lookup: true` and a recipe `search` block; terms are sanitised
+                .fetchOne(id, item) → { ref, text, sha256, title, truncated, reused }   // one document from search(), staged like a sync does; ref.via = 'lookup'
                 .snapshotPath(sourceRef) → 'brain/raw/extracted/<connector>/<file>.txt'
                 .stagedPath(sourceRef) → '<abs>/.almagest/connector-snapshots/<connector>/<file>.txt'
                 .materialize(sourceRef, worktreeDir) → snapshotPath   // copy staged → worktree; throws if sha256 moved
@@ -449,6 +451,17 @@ mcp:                               # mcp — every key and its default: docs/v2/
   allow_url_fetch: false           # submit_source { url }, SSRF-guarded when on
   builtin_oauth: true              # token mode: OAuth 2.1 front door for claude.ai
   git_webhook_secret_env: ALMAGEST_GIT_WEBHOOK_SECRET
+  lookup:                          # live lookup, off by default: docs/v2/live-lookup.md
+    enabled: false
+    min_role: contributor          # who may receive unreviewed passages
+    steps: [sources, staged, connectors]
+    timeout_ms: 8000
+    max_fetch: 3                   # documents fetched per question
+    send_query: true               # false: the connectors step is off
+    negative_ttl_minutes: 60
+    rate: { per_caller_per_minute: 6, per_connector_per_minute: 30 }
+    ingest: auto                   # auto | off
+    max_ingest_per_day: 20
 
 telemetry:
   enabled: true

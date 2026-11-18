@@ -335,6 +335,7 @@ sources:
     #   schedule: "0 * * * *"      # cron; omit for manual sync only
     #   label: meetings
     #   tier: evidence
+    #   lookup: true               # let live lookup search this connector when no page answers
 
 
 # ══ v2 service ═══════════════════════════════════════════════════════════════
@@ -379,6 +380,20 @@ governance:
 mcp:
   allow_url_fetch: false           # let chats submit URLs for ingest
   builtin_oauth: true              # token mode: the OAuth front door claude.ai needs
+  # Live lookup: when no page answers, ask also tries source text, staged
+  # snapshots and the connectors that set `lookup: true`. Off by default.
+  # docs/v2/live-lookup.md
+  # lookup:
+  #   enabled: false
+  #   min_role: contributor          # who may receive unreviewed passages
+  #   steps: [sources, staged, connectors]
+  #   timeout_ms: 8000               # for the whole lookup
+  #   max_fetch: 3                   # documents fetched per question
+  #   send_query: true               # false: the connectors step is off
+  #   negative_ttl_minutes: 60
+  #   rate: { per_caller_per_minute: 6, per_connector_per_minute: 30 }
+  #   ingest: auto                   # auto | off: queue fetched documents for review
+  #   max_ingest_per_day: 20
 
 # Request tracking and demand — docs/v2/telemetry.md
 telemetry:

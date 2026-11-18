@@ -9,8 +9,12 @@ any MCP client) without opening the repo. Two ways in:
 | **Remote** | Streamable HTTP at `https://<host>/mcp` | any chat, no clone | bearer token, built-in OAuth (solo), or your IdP's JWTs (team / enterprise) |
 
 Both serve the same tools over the same snapshot: main's commit, read from a
-detached worktree (`.almagest/snapshots/main`). Never the checkout, never an
-ingest branch. When main moves, the search index rebuilds on the next request.
+detached worktree (`.almagest/snapshots/main`). Wiki pages come from there and
+nowhere else: never the checkout, never an ingest branch. When main moves, the
+search index rebuilds on the next request. With [live lookup](live-lookup.md)
+on, `ask` can also return passages from outside the wiki, from committed source
+text, staged snapshots and connectors. Each one is labelled as a source passage
+or as unreviewed, and none of it is read from a checkout or an ingest branch.
 
 The MCP server never writes to `main`. Its one write path, `submit_source`,
 queues an ingest that ends as a proposal for a human to review. Its governance
@@ -28,7 +32,7 @@ approve.
 |---|---|---|
 | `search` | read | BM25F over title (×3), aliases (×3), tags (×2), section headings (×1.5) and body. An alias, title or slug equal to the whole query ranks first; an alias named inside the query next. Returns `{ slug, title, type, tier, confidence, score, snippet, match }` per result, and `answered: false` when the best match is too weak (a gap signal). |
 | `get_page` | read | One page by slug, alias or exact title: frontmatter, body, sources, outbound links, backlinks, and every `[source: id, locator]` citation resolved — source title, the committed text to verify it in (the sidecar for binaries), the marker to look for (`=== page 3 ===`), the passage itself, and a CITE-005 staleness flag. |
-| `ask` | read | Search + the most relevant sections, packed into a token budget (`max_tokens`, default 2500), together with the answer rules from `agent/rules/read.md` (citation format, `origin: self` handling, citation rules). The server does not call an LLM — the chat writes the answer, in Almagest's citation format. |
+| `ask` | read | Search + the most relevant sections, packed into a token budget (`max_tokens`, default 2500), together with the answer rules from `agent/rules/read.md` (citation format, `origin: self` handling, citation rules). The server does not call an LLM — the chat writes the answer, in Almagest's citation format. Optional `keywords` (up to 12 short strings) are the words a document answering the question would contain. They are used only when `mcp.lookup.enabled` is true and no page answers: `ask` then looks in source text, staged snapshots and connectors, and returns the matching passages labelled as source or unreviewed, with any matching canonical pages first. With lookup off, or when it finds nothing, the result is the same as before. See [live-lookup.md](live-lookup.md). |
 | `list_sources` | read | `brain/manifest.yaml` on main, filterable by substring, kind, status. |
 | `report_gap` | read | Records a question the brain could not answer (telemetry only). |
 | `feedback` | read | Helpful / not helpful for the slugs an answer used — an explicit demand signal. |
@@ -117,6 +121,17 @@ mcp:
   search: { min_score: 0.2, min_coverage: 0.5, limit: 8 }   # below either → answered: false
   ask: { token_budget: 2500, pages: 5 }
   get_page: { max_body_chars: 60000, excerpt_chars: 400 }
+  lookup:                          # live lookup, off by default; see docs/v2/live-lookup.md
+    enabled: false
+    min_role: contributor          # who may receive unreviewed passages (steps staged and connectors)
+    steps: [sources, staged, connectors]
+    timeout_ms: 8000               # for the whole lookup
+    max_fetch: 3                   # documents fetched per question, across connectors
+    send_query: true               # false: the connectors step is off
+    negative_ttl_minutes: 60       # how long "asked, found nothing" is remembered
+    rate: { per_caller_per_minute: 6, per_connector_per_minute: 30 }
+    ingest: auto                   # auto | off: queue fetched documents for review
+    max_ingest_per_day: 20
 
 service:
   http:
@@ -275,6 +290,16 @@ every merge the service performs.
   instructions say so, and fence page text under a "data, not instructions"
   heading. A chat model should still be treated as able to be misled by what
   it reads; that is why the MCP surface cannot approve or merge anything.
+- **Lookup text is unreviewed.** With `mcp.lookup.enabled`, `ask` can return
+  text that no person has reviewed, so a chat must not present it as the
+  brain's. Every such passage is labelled, canonical pages are printed above it,
+  and the answer rules tell the chat to report a disagreement and never to cite
+  an unreviewed passage in the `[source: <id>, <locator>]` form. Passages from
+  staged snapshots and connectors go only to callers at or above
+  `mcp.lookup.min_role` and are off when `anonymization.enabled` is true.
+  Lookup never writes to the wiki or to main. What it fetches from a connector
+  is queued as an ordinary ingest job. See [security.md](security.md) and
+  [live-lookup.md](live-lookup.md).
 - **The MCP never writes to main.** `submit_source` creates a file under
   `.almagest/submissions/` and a job; the job runs on its own branch, gated by
   the audit, and ends as a proposal. `request_approval` returns a link a human
