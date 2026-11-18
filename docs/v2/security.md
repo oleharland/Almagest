@@ -65,6 +65,17 @@ hold:
   Zero-width and bidirectional control characters are removed from those
   values, and bidirectional controls from passage text, so fetched text cannot
   pose as a heading of the result or reorder how a line displays.
+- The live pass reaches only connectors that set `lookup: true` and whose recipe
+  is `live`, and only when the question names them: a query term has to match
+  the connector's id, label, the owner or name in its `select.repo` or a word in
+  the recipe's `about`, so an unrelated question never reaches the provider. The
+  gates are the connector step's: a caller at or above `min_role`, anonymization
+  off, `send_query: true`, not over stdio, both rate limits and the overall
+  deadline. What it can read is what the connector's credentials can read for
+  the call the recipe makes (the branches or the recent commits of one
+  repository); the recipe names the fields that reach the document, and the
+  commit recipe leaves out author names and emails. Live text is never staged,
+  queued or recorded, and `sync` refuses a live connector.
 - Lookup writes nothing to `brain/wiki/` and nothing to `main`. A fetched
   document is queued as an ordinary ingest job, capped per day, and reaches
   `main` only by the approval described above. The job's `instructions` are a
@@ -73,7 +84,7 @@ hold:
   prompt never shows. A source whose proposal was
   rejected is not served again until its content changes.
 - The per-caller rate limit is charged once per lookup, as soon as it reaches
-  the staged or connector step. A failed ingest job for a staged document is
+  the staged or connector step, or the live pass with a live connector to call. A failed ingest job for a staged document is
   retried at most once per document per day.
 - A looked-up question is still a miss in telemetry, so its gap stays open.
 - A provider failure is logged as its class or code only, never its message,

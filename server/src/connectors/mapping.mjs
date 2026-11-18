@@ -122,6 +122,10 @@ const FILTERS = {
   after: (v, arg) => (v == null ? v : String(v).includes(arg) ? String(v).slice(String(v).indexOf(arg) + arg.length) : ''),
   join: (v, arg = ',') => (Array.isArray(v) ? v.join(arg) : v),
   first: (v) => (Array.isArray(v) ? v[0] : v),
+  /** `{{raw.sha | short:7}}` — the first N characters (7 by default). */
+  short: (v, arg) => (isEmpty(v) ? v : String(v).slice(0, Number(arg) > 0 ? Number(arg) : 7)),
+  /** `{{raw.commit.message | firstline}}` — the first line of a multi-line string, trimmed. */
+  firstline: (v) => (isEmpty(v) ? v : String(v).split(/\r\n|[\r\n]/)[0].trim()),
   lower: (v) => (v == null ? v : String(v).toLowerCase()),
   upper: (v) => (v == null ? v : String(v).toUpperCase()),
   urlencode: (v) => (v == null ? v : encodeURIComponent(String(v))),

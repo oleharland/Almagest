@@ -12,6 +12,19 @@
 # The mapping logic (resolve → tree → glob filter → fetch) is covered by the
 # connector tests against a fake server with the same tool names.
 #
+# search: used by live lookup (`lookup: true` on the connector). Written against
+# the README of github/github-mcp-server, tool `search_code` (arguments `query`,
+# `perPage`; GitHub code search syntax, where `repo:owner/name` restricts it to
+# one repository). NOT run against the live server, and the README does not
+# document the result fields: `items[*]` with `path` and `sha` follows GitHub's
+# code search REST shape, which the server passes through. The query is
+# `repo:<select.repo> (<terms>)`, so the terms cannot widen the search beyond
+# the repository; `select.paths` filters the hits. Code search indexes the
+# default branch only. Check it with `almagest connectors search <id> <words>`.
+# The tool belongs to the `repos` toolset, the same one as `get_file_contents`
+# and `list_commits`; `get_repository_tree` is in `git`. `X-MCP-Toolsets:
+# repos,git` is enough.
+#
 # select:
 #   repo:   owner/name             (required)
 #   paths:  ["docs/**/*.md"]       globs within the repo; empty = every file
@@ -49,12 +62,26 @@ list:
       in: [blob, file]
     - field: ref
       glob: "{{select.paths}}"
+search:
+  tool: search_code
+  args:
+    query: "repo:{{select.repo}} ({{query}})"
+    perPage: 10
+  items: "items[*] | $[*]"
+  ref: path
+  version: sha
+  title: "{{select.repo}}/{{raw.path}}"
+  commit: "{{vars.commit}}"
+  mime: "{{raw.path | mime}}"
+  where:
+    - field: ref
+      glob: "{{select.paths}}"
 fetch:
   tool: get_file_contents
   args:
     owner: "{{select.repo | before:/}}"
     repo: "{{select.repo | after:/}}"
     path: "{{item.ref}}"
-    ref: "{{item.commit}}"
+    ref: "{{vars.commit}}"
   text: "content | text | $"
   render: auto

@@ -285,6 +285,8 @@ environment variables.
 # verified: no — what was checked, against which server, when
 name: example
 description: One line.
+live: false                    # optional; true = current state: answered from, never ingested (below)
+about: [thing, things]         # optional; words a question may use to point at this connector (live lookup)
 
 resolve:                       # optional; runs once per sync, before listing
   - tool: list_commits
@@ -328,7 +330,7 @@ fetch:
   text: "content | body | $"   # what to render (default: the whole result)
   title: title                 # optional — overrides the list title
   mime: mimeType               # optional
-  render: json-to-markdown     # markdown | json-to-markdown | transcript | rows | auto (default)
+  render: json-to-markdown     # markdown | json-to-markdown | transcript | rows | lines | auto (default)
   render_options:              # per mode, below
     title: identifier
     body: [description]
@@ -348,6 +350,26 @@ word with no letter or digit is dropped. At most 8 terms, 64 characters each and
 without `search` still validates, and its connector takes no part in the search
 step.
 
+**Live recipes.** `live: true` marks a recipe that describes the current state
+of a system (the branches of a repository, its recent commits). Such a document
+is out of date as soon as a person has reviewed it, so it is read for one
+answer and never kept:
+
+- `sync` and `syncDetailed` refuse a connector whose recipe is live, with an
+  error that says live sources are answered from and never ingested.
+  `list()` reports `live: true` for it.
+- A live recipe needs a `search` block. The block may ignore `{{query}}`, since
+  the state is the same whatever the question is. With no `fetch` call, the
+  document is rendered from the item the search returned, so the live recipes
+  list and fetch with one call.
+- The connector still needs `lookup: true`. Live lookup then fetches it only
+  when the question mentions it: a query term has to match the connector's id,
+  its `label`, the owner or name in `select.repo`, or a word in the recipe's
+  `about`. `about` is a list of at most 20 single words (letters, digits, `-` or
+  `_`, 24 characters each).
+- `fetchOne` returns the snapshot text with `live: true` and the fetch time. It
+  writes no staged file and no store record, and returns no SourceRef.
+
 **Paths.** `a.b`, `a[0]`, `a[-1]`, `a["key with spaces"]`, `a[*].b` (fans out),
 `$` (the whole value). `x | y | z` takes the first alternative that yields a
 non-empty value, and recipes use this to cover several plausible result shapes.
@@ -360,7 +382,8 @@ template keeps the value's type (a list stays a list). Variables: `since`,
 `default:<v>` · `before:<s>` · `after:<s>` · `join:<s>` · `first` · `lower` ·
 `upper` · `urlencode` · `json` · `string` · `number` · `date` (YYYY-MM-DD) ·
 `quote` (single-quoted) · `mime` (from a file extension) · `attr:<name>`
-(`name="…"` out of an XML-ish tag).
+(`name="…"` out of an XML-ish tag) · `short:<n>` (the first n characters, 7 by
+default) · `firstline` (the first line of a string).
 
 **MCP results.** A tool result is read as its `structuredContent` when present;
 otherwise its text blocks, parsed as JSON when they parse. An embedded text
@@ -375,6 +398,7 @@ resource wins over text blocks beside it ("successfully downloaded …").
 | `json-to-markdown` | an object or array | `title` (path), `body` (keys rendered as markdown sections), `omit` (keys) |
 | `transcript` | segments, or text with leading `[hh:mm:ss]` stamps | `segments` (path), `start`, `speaker`, `text` (paths), `unit: ms` |
 | `rows` | an array | `rows` (path), `columns` (keys, in order) |
+| `lines` | an array, or a wrapper that holds one | `rows` (path), `line` (a template over `{{raw.*}}`, required), `section` (the section name), `max` (default 100, at most 200). One section of one-line entries. Only the fields `line` names reach the text |
 | `auto` | anything | picks by mime type: JSON → `json-to-markdown`, CSV → `rows`, markdown/unknown → `markdown`, other text → verbatim (no heading markers — a YAML `# comment` is not a section) |
 
 ## Shipped recipes
@@ -389,7 +413,9 @@ matches.
 | Recipe | Server | Item | Verified |
 |---|---|---|---|
 | `mcp-resources` | **any** server exposing resources | one resource | yes — tests |
-| `github` | GitHub's official MCP server | one file at the branch head; `version` = blob sha, `commit` = commit sha | no |
+| `github` | GitHub's official MCP server | one file at the branch head; `version` = blob sha, `commit` = commit sha. Ships a `search` block (`search_code`, scoped to `select.repo` and `select.paths`) | no |
+| `github-commits` | GitHub's official MCP server (`list_commits`) | live: the latest commits of `select.repo` on `select.branch` (`select.limit`, default 20) as one document: short sha, date, first line of the message; no author names or emails | no |
+| `github-branches` | GitHub's official MCP server (`list_branches`) | live: the branches of `select.repo` as one document: name and head sha | no |
 | `gitlab` | community `@zereight/mcp-gitlab`-style tools | one file at the branch head | no |
 | `google-drive` | hosted Google Drive MCP (`search_files`, `read_file_content`) | one file as text | partial |
 | `granola` | hosted Granola MCP (`list_meetings`, `get_meetings`) | one meeting's notes | partial |
@@ -398,11 +424,18 @@ matches.
 | `slack` | the reference Slack MCP server | one channel's history, a row per message | no |
 | `web-fetch` | the reference `fetch` server (`uvx mcp-server-fetch`, tool `fetch`) | one URL from `select.urls` (no lister), converted to markdown; no `version`, so every sync re-fetches and the snapshot's sha256 decides whether it changed | no |
 
-`google-drive` also ships a `search` block for live lookup. It is unverified: it
-has not been run against the real server. It reuses `search_files` with a
-`fullText contains` condition, which is an assumption. Check it with `almagest
-connectors search <id> <words>` before you set `lookup: true`. No other shipped
-recipe has a `search` block. The `notion` recipe has none on purpose:
+`google-drive` and `github` also ship a `search` block for live lookup. Both are
+unverified: neither has been run against the real server. The Drive block
+reuses `search_files` with a `fullText contains` condition, which is an
+assumption. The GitHub block calls `search_code` with `repo:<select.repo>
+(<terms>)` and filters hits by `select.paths`; the tool is in the `repos`
+toolset, the same one as `get_file_contents` and `list_commits`, so
+`X-MCP-Toolsets: repos,git` is enough. The two live GitHub recipes use
+`list_commits` and `list_branches`, also in `repos`. Their headers record that
+they were written against the README of `github/github-mcp-server`, which does
+not document result fields. Check each with `almagest connectors search <id>
+<words>` before you set `lookup: true`. No other shipped recipe has a `search`
+block. The `notion` recipe has none on purpose:
 `notion-search` would reach every page the service's Notion token can see, and
 neither its arguments nor its result fields are verified, so it cannot be held
 to `select`. To use lookup on Notion, add an inline `search:` block with a

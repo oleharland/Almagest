@@ -1,9 +1,11 @@
 # Live lookup: one ask, cheapest source first
 
 Status: built, and off by default. Set `mcp.lookup.enabled: true` to turn it
-on. The ladder, the labels, the `search` block, enrichment and the telemetry
-field are in the code and covered by tests against an in-memory MCP server. The
-`search` block of the Drive recipe has not been checked against the real server.
+on. The ladder, the labels, the `search` block, enrichment, the live pass and
+the telemetry field are in the code and covered by tests against an in-memory MCP
+server. The `search` block of the Drive recipe and the three GitHub pieces (the
+`github` `search` block and the `github-commits` and `github-branches` recipes)
+have not been checked against the real servers.
 [Before turning it on](#before-turning-it-on) lists what is not verified, and
 [What is built and what is not](#what-is-built-and-what-is-not) lists the rest.
 
@@ -15,9 +17,17 @@ Lookup is off by default for these reasons:
   server.
 - The Drive `search` block is unverified, and the `fullText contains` syntax in
   it is an assumption.
-- Drive is the only shipped recipe with a `search` block. A connector on any
-  other recipe takes part in steps 1 and 2 only, unless you add an inline
-  `search:` block.
+- The three GitHub pieces are unverified. They were written against the README
+  of `github/github-mcp-server` (tools `search_code`, `list_commits` and
+  `list_branches`) and never run against the live server. The README lists the
+  arguments but not the fields of the results, so the field names (`items[*]`,
+  `path`, `sha`, `commit.author.date`, `commit.message`, `name`, `commit.sha`)
+  follow GitHub's REST shapes and are an assumption. Check each with
+  `almagest connectors search <id> <words>` and `almagest connectors test <id>
+  --fetch`, with a real token, before you set `lookup: true`.
+- Drive and GitHub are the only shipped recipes with a `search` block. A
+  connector on any other recipe takes part in steps 1 and 2 only, unless you add
+  an inline `search:` block.
 - The feature has not been operated end to end with a running service.
 - The review-state check and the staged retry were tested with fake ingest and
   stores only.
@@ -37,6 +47,12 @@ budget as a normal answer, marked as source or unreviewed text. A document it
 fetched from a connector is queued for review, so the next person who asks gets
 the answer from the brain. With lookup off, or when lookup finds nothing, `ask`
 returns exactly what it returned before.
+
+Some questions ask about current state: which branches a repository has, what
+was committed last. That is a list, and it is out of date as soon as a person
+has reviewed it, so queueing it for the wiki makes no sense. A connector whose
+recipe is `live` is answered from and never kept. See
+[The live pass](#the-live-pass).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../diagrams/live-lookup-dark.png">
@@ -62,14 +78,16 @@ No number is claimed here. "How to measure it" below says how to get one.
 ## What the chat gets back
 
 `ask` keeps its shape. The context block gains a second kind of content, and
-each kind says what it is. One answer carries one kind of lookup text: the
-first step that finds a passage decides it.
+each kind says what it is. One answer carries one kind of ladder text: the
+first step that finds a passage decides it. Live text can come with it, in a
+block of its own.
 
 | Kind | Where it comes from | How the chat must present it |
 |---|---|---|
 | Reviewed | A wiki page on `main` | As today: the page and its `[source: <id>, <locator>]` citation |
 | Source passage | Text of a source the brain has ingested, where no page carries the claim yet | `From the source "<title>" (<id>), <locator>. Not yet on a reviewed page.` |
 | Unreviewed | A document fetched from a connector, or one waiting for review | `From <connector>: "<title>", <locator>. Not reviewed.` |
+| Live | Current state read from a connector whose recipe is `live`, when the question was asked | `Live from <connector>: "<title>", as of <time>. Not reviewed.` The answer gives the time |
 
 The attribution lines come from the rule section "Answering from source and
 unreviewed passages" in `agent/rules/read.md`. The server adds that section to
@@ -97,7 +115,13 @@ What `ask` prints when lookup found passages, in this order:
    `row 14`). The passage text is printed as quoted lines, each starting with
    `> `, so fetched text cannot pose as a heading of the tool's own. Titles,
    refs and server labels are flattened to one line.
-5. Closing lines, when they apply: `Queued for review: ingest job <id>. A person
+5. `## Live state: read from a connected system at the time of asking, not
+   reviewed`, when the live pass found a passage. It comes after the blocks
+   above. Each document has a `###` title and a provenance line, `Live from
+   connector <id> (server <label>): "<title>", as of <time>`, then the quoted
+   passages as in the block above. The block says that the text describes
+   current state and that the answer must give the time it was read.
+6. Closing lines, when they apply: `Queued for review: ingest job <id>. A person
    reviews it before it can reach the brain.` and `Lookup note: ...`, which
    names a timeout (`the lookup timed out, so it may be incomplete`) or a step
    that was skipped and why.
@@ -133,8 +157,10 @@ lookup that is off, print what `ask` printed before.
 
 The structured result gains a `lookup` field with the same content: `step`,
 `kind`, `tokens`, `truncated`, `incomplete`, `skipped`, `queued`, the canonical
-pages and the documents with their passages. It is absent when lookup found
-nothing. When a matching canonical page did not fit and no passages are
+pages and the documents with their passages. When the live pass found text,
+`lookup.live` holds `tokens`, `truncated` and `documents` (title, connector,
+server, ref, sha256, `fetchedAt` and passages), and `step` and `kind` are `null`
+if no ladder step answered. The field is absent when lookup found nothing. When a matching canonical page did not fit and no passages are
 returned, the structured result carries `canonicalCovers` instead: the slug and
 title of each canonical page that matched.
 
@@ -154,6 +180,9 @@ and `mcp.search.min_coverage` 0.5, the share of query terms that matched).
 Steps 1 and 2 cost no provider call and send nothing off the machine. They
 share all the machinery step 3 needs (passage ranking, packing, labels).
 
+The live pass is not part of the ladder. It runs after it, whichever step
+answered or none. [The live pass](#the-live-pass) describes it.
+
 Which steps run for whom:
 
 - Step 1 runs for every caller, including a viewer. Its text is already on
@@ -165,13 +194,69 @@ Which steps run for whom:
   only the sidecars the ingest agent wrote. It skips committed connector
   snapshots, which are stored as fetched, and committed text originals, which
   nothing has anonymized.
-- Step 3 is off over stdio (`almagest mcp`) and with `send_query: false`.
-  Step 2 still runs over stdio.
+- Step 3 and the live pass are off over stdio (`almagest mcp`) and with
+  `send_query: false`. Step 2 still runs over stdio.
+- The live pass needs a caller at or above `mcp.lookup.min_role` and is off
+  when anonymization is on.
 - `mcp.lookup.steps` lists the steps that may run. Remove one to turn it off.
 
 Step 1 covers a common case: a source was ingested, the page summarises it, and
 the detail someone now asks for is in the source but was never written into a
 page.
+
+## The live pass
+
+A recipe can say `live: true`. Such a recipe describes the current state of a
+system: the branches of a repository, its recent commits. The ladder never
+touches it, and nothing it returns is kept.
+
+What a live connector is:
+
+- `ctx.connectors.sync` and `syncDetailed` refuse it with an error that says
+  live sources are answered from and never ingested. The scheduler ignores a
+  `schedule` on a live connector and says so once when the service starts.
+- `ctx.connectors.list()` reports `live: true`, the recipe's `about` words and
+  the connector's `select.repo`.
+- It still needs `lookup: true`, like any connector that lookup may read.
+- `fetchOne` fetches and renders the item and passes the text through the same
+  snapshot building as any fetched document (header, neutralised marker lines,
+  `max_bytes` cap). It returns the text with `live: true` and the fetch time. It
+  writes nothing: no staged file, no `connector-item` record, no
+  `connector-lookup` mark and no title record. It returns no SourceRef, so
+  nothing can be queued.
+- Its `search` block may ignore `{{query}}`. The current state is the same
+  whatever the question is.
+
+What the live pass does, in `server/src/mcp/lookup.mjs`:
+
+1. It runs whenever lookup runs, after the ladder, under the same gates as step
+   3: a caller at or above `min_role`, anonymization off, `send_query: true`, not
+   over stdio, the per-caller and per-connector rate limits and the overall
+   deadline. The per-caller limit is charged once per lookup, shared with the
+   ladder, and only when a live connector is about to be called.
+2. A live connector is called only when the question is about it. At least one
+   query term has to match the connector's static descriptor: its id, its
+   `label`, the owner and the name in `select.repo` (split on characters that
+   are not letters or digits) and the words in the recipe's `about`. The terms
+   are tokenised as everywhere else in lookup, so a plural or an `-ing` form
+   matches. With no match, no provider call is made, and the question that has
+   nothing to do with GitHub never reaches GitHub.
+3. For each live connector that matches, lookup searches and fetches. The live
+   pass has its own `max_fetch` count. The text is ranked with the passage
+   ranking of the ladder, and only passages that clear the same thresholds
+   (`min_score`, `min_coverage`) are returned.
+4. The budget: live passages come out of the passage share. When a ladder step
+   also answered, live gets at most `LIVE_SHARE` (0.3) of that share and the
+   ladder's passages the rest. When no ladder step answered, live gets the whole
+   share. The canonical pass and its backstop apply as before: when a canonical
+   page matched and could not be shown, no live text is returned either.
+5. Live text is never staged, never queued for ingest and never served by the
+   staged step. A connector whose recipe is live is skipped by the staged and
+   connectors steps.
+
+The answer rules (`agent/rules/read.md`) rank live text below everything
+reviewed and with unreviewed passages. They give the attribution and require the
+answer to say when the state was read.
 
 ## Design decisions
 
@@ -227,11 +312,17 @@ Inside a `search` block, `select.*` holds the connector's `lookup_select` when
 it is set, and its `select` otherwise. A connector whose recipe has no `search`
 block takes part in steps 1 and 2 only.
 
-One recipe ships a `search` block, `google-drive`. It is not verified against
-the real server. The block reuses the tool the recipe lists with, and the
-`fullText contains` syntax is an assumption. Check a block with `almagest
-connectors search <id> <words>`, which prints the candidates and fetches
-nothing.
+Two document recipes ship a `search` block, `google-drive` and `github`. Neither
+is verified against the real server. The Drive block reuses the tool the recipe
+lists with, and the `fullText contains` syntax is an assumption. The GitHub
+block calls `search_code` with `repo:<select.repo> (<terms>)`, so the terms sit
+inside parentheses and cannot widen the search beyond the repository, and its
+own `where` keeps the hits inside `select.paths`. The hit's `ref` is the file
+path, which is what the recipe's `fetch` takes, so `fetchOne` can fetch it. Code
+search covers the default branch only. The two live GitHub recipes carry a
+`search` block too, which runs the same call as their `list`. Check a block with
+`almagest connectors search <id> <words>`, which prints the candidates and
+fetches nothing.
 
 The `notion` recipe has no `search` block. `notion-search` would reach every
 page the service's Notion token can see, and neither its arguments nor the
@@ -377,12 +468,15 @@ A looked-up answer is still a miss for the brain: the event keeps
 `answered: false`, so the gap stays open until a reviewed page answers it. The
 `ask` tool hands the event a `lookup` summary whenever lookup ran, even when it
 found nothing. It holds `step` (`sources`, `staged`, `connectors` or `null`),
-`steps` (the steps tried), `connectorsAsked`, `connectors` (the ids of the
+`steps` (the steps tried, `live` among them when the live pass called a
+connector), `connectorsAsked`, `connectors` (the ids of the
 connectors asked), `fetched`, `cacheHits`, `latencyMs`, `incomplete`, `skipped`
 (the names of the steps that were skipped) and `queued` (ingest job ids). It
-carries counts and ids only: no passage text and no document titles. The gap list shows when lookup served
-a gap and whether an ingest job is queued, and a proposal queued by lookup says
-so.
+carries counts and ids only: no passage text and no document titles. When the
+live pass ran it adds `live` (the ids of the live connectors whose text was
+returned) and `liveFetched` (how many live documents were read). The gap list
+shows when lookup served a gap, including from a live source, and whether an
+ingest job is queued. A proposal queued by lookup says so.
 
 ## How lookup meets the brain's rules
 
@@ -514,6 +608,11 @@ written into the ingest job either. Under `plain` it goes only into the job's
 `lookupQuestion` field. When lookup logs a provider failure, it logs the error's
 class or code and never its message, which can echo the query.
 
+**Live state is read and dropped.** A live document is fetched for one answer.
+It is not staged, queued, cached or recorded, and no ingest job can come from
+it. Its text goes through the same neutralising, size cap, flattening and
+quoting as any fetched text, and the answer says when it was read.
+
 **Fetched text is data.** It is neutralised and headed like every snapshot, and
 the tool result repeats that it is content and not instruction. It has not been
 read by a person, so it can be wrong or planted. The label tells the reader.
@@ -547,10 +646,10 @@ mcp:
   lookup:
     enabled: false
     min_role: contributor          # who may receive unreviewed passages
-    steps: [sources, staged, connectors]
+    steps: [sources, staged, connectors, live]
     timeout_ms: 8000               # for the whole lookup
     max_fetch: 3                   # documents fetched per question
-    send_query: true               # false: step 3 is off
+    send_query: true               # false: the connectors and live steps are off
     negative_ttl_minutes: 60
     rate:
       per_caller_per_minute: 6
@@ -567,45 +666,70 @@ sources:
       lookup: true                 # this connector may be searched on a miss
       # lookup_select:             # optional, wider than `select`
       #   query: "'0AbC…' in parents"
+
+    # A repository: its files are searched and its current state is read.
+    - id: platform-repo
+      mcp: github
+      recipe: github
+      select: { repo: acme/platform, paths: ["docs/**/*.md"] }
+      lookup: true
+    - id: platform-commits         # live: answered from, never ingested; no schedule
+      mcp: github
+      recipe: github-commits
+      select: { repo: acme/platform, limit: 20 }
+      lookup: true
+    - id: platform-branches
+      mcp: github
+      recipe: github-branches
+      select: { repo: acme/platform }
+      lookup: true
 ```
 
-`steps` takes `sources`, `staged` and `connectors`. `min_role` is one of
+`steps` takes `sources`, `staged`, `connectors` and `live`. A `steps` list
+written before the live pass existed has no `live`, so the pass stays off until
+you add it. `min_role` is one of
 `viewer`, `contributor`, `reviewer`, `owner`, `admin`. With a value that is none
 of these, the two unreviewed steps are off and the service logs a warning. The
 token budget is the call's `max_tokens`, `mcp.ask.token_budget` by default.
 Lookup has no budget of its own: canonical sections, weak page matches and
-passages share it as described under "When the answer is given". Every key is listed with its default in
+passages share it as described under "When the answer is given". Live passages
+come out of the passage share, as described under [The live pass](#the-live-pass). Every key is listed with its default in
 [mcp.md](mcp.md#configuration).
 
 ## Where the code is
 
 | File | What it holds |
 |---|---|
-| `server/src/mcp/lookup.mjs` | The ladder, the role and transport gates, the negative cache, rate limits and deadline, the canonical pass, enrichment and the rejected-source list |
+| `server/src/mcp/lookup.mjs` | The ladder, the live pass and its descriptor check, the role and transport gates, the negative cache, rate limits and deadline, the canonical pass, enrichment and the rejected-source list |
 | `server/src/mcp/passages.mjs` | Splitting on locator markers, passage scoring and packing |
-| `server/src/mcp/tools.mjs` | `ask`: the `keywords` input, the call to lookup on a miss, the labelled blocks and the telemetry summary |
-| `server/src/mcp/config.mjs` | The `lookup` defaults (`MCP_DEFAULTS`) and `LOOKUP_BUDGET_SPLIT` |
+| `server/src/mcp/tools.mjs` | `ask`: the `keywords` input, the call to lookup on a miss, the labelled blocks (including the live block) and the telemetry summary |
+| `server/src/mcp/config.mjs` | The `lookup` defaults (`MCP_DEFAULTS`) and `LOOKUP_BUDGET_SPLIT` (`LIVE_SHARE` is in `lookup.mjs`) |
 | `server/src/mcp/rules.mjs`, `agent/rules/read.md` | `lookupRules` and the section "Answering from source and unreviewed passages" |
-| `server/src/connectors/index.mjs` | `search`, `fetchOne`, `stageItem`, `sanitiseTerms`, the `connector-lookup` and `connector-lookup-title` namespaces, the missing check and the `connectors search` command |
+| `server/src/connectors/index.mjs` | `search`, `fetchOne` (and `fetchLive` for a live recipe), the refusal in `syncDetailed`, `stageItem`, `sanitiseTerms`, the `connector-lookup` and `connector-lookup-title` namespaces, the missing check and the `connectors search` command |
 | `server/src/connectors/render.mjs` | `flattenField`, the one-line form of provider strings |
-| `server/src/connectors/execute.mjs`, `recipes.mjs` | `searchItems`; validation of the `search` block |
-| `server/src/connectors/recipes/google-drive.yaml` | The one shipped `search` block (`notion.yaml` has none) |
+| `server/src/connectors/execute.mjs`, `recipes.mjs` | `searchItems`; validation of the `search` block, `live` and `about` |
+| `server/src/connectors/render.mjs`, `mapping.mjs` | The `lines` render mode and the `short` and `firstline` template filters the live recipes use |
+| `server/src/connectors/recipes/google-drive.yaml`, `github.yaml` | The shipped `search` blocks for documents (`notion.yaml` has none) |
+| `server/src/connectors/recipes/github-commits.yaml`, `github-branches.yaml` | The two live recipes |
 | `server/src/core/schemas.mjs`, `server/src/ingest/queue.mjs` | The `lookup` job trigger and its dedup |
-| `server/test/mcp/lookup.test.mjs`, `server/test/connectors/lookup.test.mjs` | The intended behaviour, against an in-memory MCP server |
+| `server/test/mcp/lookup.test.mjs`, `server/test/mcp/live.test.mjs`, `server/test/connectors/lookup.test.mjs`, `server/test/connectors/live.test.mjs` | The intended behaviour, against an in-memory MCP server |
 
 ## What is built and what is not
 
 Built: the passage ranking and labels, steps 1 to 3 with the canonical pass,
 the role, anonymization, `send_query` and stdio gates, the timeout, negative
-cache and rate limits, the `search` block and `connectors search`, `fetchOne`,
+cache and rate limits, the live pass with `live` recipes, the `search` block and `connectors search`, `fetchOne`,
 enrichment through the `lookup` trigger with its dedup, daily cap and rejected
 list, and the `lookup` summary on telemetry events. The gap list and the
 proposal page show where lookup was involved.
 
 Not built:
 
-- A live check of the Drive `search` block, and `search` blocks for the other
-  shipped recipes. Only the in-memory test server has run it.
+- A live check of the Drive `search` block, of the `github` `search` block and
+  of the two live GitHub recipes, and `search` blocks for the other shipped
+  recipes. Only the in-memory test server has run them.
+- The telemetry event store keeps the `live` fields only once
+  `server/src/telemetry/events.mjs` lists them.
 - The three benchmark arms in [How to measure it](#how-to-measure-it), and so
   no measured token saving.
 - A default of lookup on for the `solo` profile.

@@ -86,7 +86,7 @@ function validTs(ts) {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString();
 }
 
-const LOOKUP_STEPS = ['sources', 'staged', 'connectors'];
+const LOOKUP_STEPS = ['sources', 'staged', 'connectors', 'live'];
 const strings = (v, max = 50) => (Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === 'string' && x).map((x) => x.slice(0, 120)))].slice(0, max) : []);
 const count = (v) => (Number.isFinite(Number(v)) ? Math.max(0, Math.round(Number(v))) : 0);
 
@@ -109,6 +109,9 @@ function cleanLookup(l) {
     skipped: strings(l.skipped),
     queued: strings((l.queued || []).map?.((q) => (typeof q === 'string' ? q : q?.jobId))),
   };
+  // Live sources that answered: connector ids and a count, like the rest.
+  if (l.live !== undefined) out.live = strings(l.live);
+  if (l.liveFetched !== undefined) out.liveFetched = count(l.liveFetched);
   return out;
 }
 

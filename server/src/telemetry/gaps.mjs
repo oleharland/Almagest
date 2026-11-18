@@ -50,7 +50,7 @@ function plural(n, word) {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
-const STEP_WORDS = { sources: 'ingested sources', staged: 'staged documents', connectors: 'a connected source' };
+const STEP_WORDS = { sources: 'ingested sources', staged: 'staged documents', connectors: 'a connected source', live: 'a live source' };
 
 /**
  * What live lookup did for the misses in one cluster, or null when none of
@@ -66,7 +66,11 @@ function lookupSummary(members) {
   const jobs = new Set();
   for (const m of withLookup) {
     const l = m.extra.lookup;
+    // A live source can answer alone (no ladder step) or next to one.
+    const live = Array.isArray(l.live) ? l.live : [];
     if (l.step) { served++; lastStep = l.step; }
+    else if (live.length) { served++; lastStep = 'live'; }
+    for (const c of live) connectors.add(c);
     if (Array.isArray(l.connectorsAsked)) for (const c of l.connectorsAsked) { connectors.add(c); connectorsAsked++; }
     else connectorsAsked += Number(l.connectorsAsked) || 0;
     for (const c of l.connectors || []) connectors.add(c);
@@ -77,7 +81,7 @@ function lookupSummary(members) {
 
 /** Where lookup found its answer, in words. */
 export function lookupSource(lookup) {
-  if (lookup.lastStep === 'connectors' && lookup.connectors.length) return lookup.connectors.join(', ');
+  if ((lookup.lastStep === 'connectors' || lookup.lastStep === 'live') && lookup.connectors.length) return lookup.connectors.join(', ');
   return STEP_WORDS[lookup.lastStep] || 'outside the wiki';
 }
 

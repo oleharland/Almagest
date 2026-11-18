@@ -10,11 +10,12 @@
  * `.almagest/connector-snapshots/`, and the ingest runner copies one into its
  * job worktree with `materialize()`.
  *
- *   ctx.connectors.list()                      → [{ id, mcp, recipe, schedule, lastSync, … }]
- *   ctx.connectors.sync(id, { since?, full?, dryRun? }) → [SourceRef]
+ *   ctx.connectors.list()                      → [{ id, mcp, recipe, schedule, lastSync, live, about, repo, … }]
+ *   ctx.connectors.sync(id, { since?, full?, dryRun? }) → [SourceRef]   (refuses a connector whose recipe is `live`)
  *   ctx.connectors.syncDetailed(id, opts)      → { refs, unchanged, missing, errors, … }
  *   ctx.connectors.search(id, { terms, limit }) → [{ ref, title, version, mime }]   live lookup; needs `lookup: true` + a recipe `search` block
  *   ctx.connectors.fetchOne(id, item)          → { ref: SourceRef (via: 'lookup'), text, sha256, title, truncated, reused }
+ *                                                 a `live` recipe: { live: true, fetchedAt, server, text, sha256, title, truncated }, nothing written, no SourceRef
  *   ctx.connectors.snapshotPath(ref)           → 'brain/raw/extracted/<connector>/<slug>.txt'
  *   ctx.connectors.stagedPath(ref)             → abs path of the staged snapshot
  *   ctx.connectors.materialize(ref, worktree)  → copies the staged snapshot in, sha-checked
@@ -186,7 +187,14 @@ export function createConnectors(ctx, options = {}) {
     for (const c of byId.values()) {
       const cursor = (await store.kv.get(CURSOR_NS, c.id)) || {};
       let searchable = false;
-      try { searchable = Boolean(recipeFor(c, { repoRoot, dir: recipesDir }).search); } catch { searchable = false; }
+      let live = false;
+      let about = [];
+      try {
+        const recipe = recipeFor(c, { repoRoot, dir: recipesDir });
+        searchable = Boolean(recipe.search);
+        live = recipe.live === true;
+        about = Array.isArray(recipe.about) ? recipe.about.map(String) : [];
+      } catch { searchable = false; }
       out.push({
         id: c.id,
         mcp: typeof c.mcp === 'string' ? c.mcp : c.mcp?.url || c.mcp?.command || 'inline',
@@ -198,6 +206,12 @@ export function createConnectors(ctx, options = {}) {
         fromV1Remote: Boolean(c.fromV1Remote),
         lookup: c.lookup === true,
         searchable,
+        // A live recipe describes current state: lookup answers from it, and a sync refuses it.
+        live,
+        // What a question may mention to point at this connector (live lookup's pre-check): the recipe's own words
+        // and the repository `lookup` would search.
+        about,
+        repo: String((c.lookup_select || c.select)?.repo || ''),
         since: cursor.since || '',
         lastSync: cursor.lastSync || null,
       });
@@ -326,6 +340,9 @@ export function createConnectors(ctx, options = {}) {
   async function syncDetailed(id, opts = {}) {
     const c = connector(id);
     const recipe = recipeFor(c, { repoRoot, dir: recipesDir });
+    if (recipe.live === true) {
+      throw new Error(`connector "${id}": recipe "${recipe.name}" is live, so it is answered from and never ingested. Live sources describe current state; a sync would put a list into the wiki that is out of date once it is reviewed`);
+    }
     const timeoutMs = timeoutOf(c);
     const maxBytes = Number(c.max_bytes) > 0 ? Number(c.max_bytes) : DEFAULT_MAX_BYTES;
     const startedAt = nowIso();
@@ -481,14 +498,45 @@ export function createConnectors(ctx, options = {}) {
       // flattening would change (control characters, newlines, over 500 characters)
       // is not offered.
       if (flattenRef(i.ref) !== i.ref) continue;
-      rawTitles.set(`${id}:${i.ref}`, i.title);
-      // Flattening can change a title (newlines, a leading #, the length cap), and the snapshot
-      // header carries the raw one. Keep those across a restart.
-      if (flattenField(i.title, MAX_TITLE_CHARS) !== i.title) await store.kv.set(TITLE_NS, `${id}:${i.ref}`, { title: String(i.title) });
-      if (rawTitles.size > 500) rawTitles.delete(rawTitles.keys().next().value);
+      // A live document is never staged, so nothing needs its raw title later.
+      if (recipe.live !== true) {
+        rawTitles.set(`${id}:${i.ref}`, i.title);
+        // Flattening can change a title (newlines, a leading #, the length cap), and the snapshot
+        // header carries the raw one. Keep those across a restart.
+        if (flattenField(i.title, MAX_TITLE_CHARS) !== i.title) await store.kv.set(TITLE_NS, `${id}:${i.ref}`, { title: String(i.title) });
+        if (rawTitles.size > 500) rawTitles.delete(rawTitles.keys().next().value);
+      }
       out.push({ ref: i.ref, title: flattenField(i.title, MAX_TITLE_CHARS), version: flattenField(i.version), mime: flattenField(i.mime) });
     }
     return out;
+  }
+
+  /**
+   * A live recipe's document: the search block is run again for the item with this ref (its text comes from the
+   * search result, as `fetch` without a call reads the list item), rendered and wrapped in the snapshot header,
+   * neutralised and capped like any other fetched text, and handed back. Nothing is written: no staged file, no
+   * `connector-item` or `connector-lookup` record, no title record, and no SourceRef that could be queued.
+   */
+  async function fetchLive(c, recipe, item) {
+    const timeoutMs = timeoutOf(c);
+    const maxBytes = Number(c.max_bytes) > 0 ? Number(c.max_bytes) : DEFAULT_MAX_BYTES;
+    const { spec, client } = await clientFor(c);
+    const vars = await resolveVars(client, recipe, lookupVars(c), { timeoutMs });
+    const { items } = await searchItems(client, recipe, { ...vars, terms: sanitiseTerms(item.terms) }, { timeoutMs, limit: MAX_SEARCH_LIMIT });
+    const hit = items.find((i) => i.ref === String(item.ref));
+    if (!hit) throw new Error(`connector "${c.id}": the live document "${flattenField(item.ref, 80)}" is not in the search result any more`);
+    const out = await fetchItem(client, recipe, hit, vars, { timeoutMs });
+    const fetchedAt = nowIso();
+    const snap = buildSnapshot({ connector: c.id, server: spec.label, ref: hit.ref, title: out.title, body: out.body, maxBytes });
+    return {
+      live: true,
+      fetchedAt,
+      server: spec.label,
+      text: snap.text,
+      sha256: snap.sha256,
+      title: flattenField(out.title, MAX_TITLE_CHARS),
+      truncated: Boolean(snap.truncated),
+    };
   }
 
   /**
@@ -504,6 +552,7 @@ export function createConnectors(ctx, options = {}) {
     requireLookup(c);
     if (!item || item.ref === undefined || item.ref === null || item.ref === '') throw new Error('fetchOne needs an item from search() with a ref');
     const recipe = recipeFor(c, { repoRoot, dir: recipesDir });
+    if (recipe.live === true) return fetchLive(c, recipe, item);
     if (!canFetchByRef(recipe)) throw new Error(`connector "${id}": recipe "${recipe.name}" has no fetch call, so a document cannot be fetched by ref`);
     const timeoutMs = timeoutOf(c);
     const maxBytes = Number(c.max_bytes) > 0 ? Number(c.max_bytes) : DEFAULT_MAX_BYTES;

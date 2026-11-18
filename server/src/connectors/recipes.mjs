@@ -10,6 +10,8 @@
  *               next_cursor?, where?, items_regex?, max_pages? }
  *   search:   optional, same shape as `list` minus `static` — live lookup. Adds {{query}} and {{terms}}
  *   fetch:    { tool | method, args, text?, title?, mime?, render, render_options? }
+ *   live:     optional boolean — the recipe describes current state: lookup answers from it and never keeps it, sync refuses it
+ *   about:    optional list of short words a question may use to point at this connector (live lookup's pre-check)
  *
  * Where a recipe comes from, in order:
  *   recipe: custom             → nothing; the connector's inline list/fetch is the recipe
@@ -32,6 +34,9 @@ import { RENDER_MODES } from './render.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const RECIPES_DIR = path.join(HERE, 'recipes');
+/** A recipe's `about` list: words a question may use to point at what the connector describes. */
+export const MAX_ABOUT = 20;
+export const MAX_ABOUT_CHARS = 24;
 export const METHODS = ['resources/list', 'resources/read'];
 
 export function shippedRecipes(dir = RECIPES_DIR) {
@@ -122,6 +127,17 @@ export function validateRecipe(recipe, connectorId = '?') {
     else {
       if (recipe.search.static !== undefined) problems.push('search cannot be `static` — it needs a tool or method that takes the query');
       checkListBlock(problems, 'search', recipe.search, { allowStatic: false });
+    }
+  }
+  if (recipe.live !== undefined && typeof recipe.live !== 'boolean') problems.push('`live` must be true or false');
+  if (recipe.live === true && !recipe.search) problems.push('a `live` recipe needs a `search` block: lookup finds its document through it');
+  if (recipe.about !== undefined) {
+    if (!Array.isArray(recipe.about)) problems.push('`about` must be a list of short words');
+    else {
+      if (recipe.about.length > MAX_ABOUT) problems.push(`\`about\` has more than ${MAX_ABOUT} words`);
+      for (const [i, w] of recipe.about.entries()) {
+        if (typeof w !== 'string' || !w || w.length > MAX_ABOUT_CHARS || !/^[\p{L}\p{N}_-]+$/u.test(w)) problems.push(`about[${i}] must be one word of at most ${MAX_ABOUT_CHARS} letters, digits, hyphens or underscores`);
+      }
     }
   }
   if (!fetch || typeof fetch !== 'object') problems.push('`fetch` is required (use `fetch: { text: <path into the list item> }` when the list already carries the content)');

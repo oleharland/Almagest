@@ -96,3 +96,25 @@ describe('gaps: the recorder keeps the lookup summary', () => {
     assert.ok(!/lookup/.test(out));
   });
 });
+
+describe('gaps: a live source answered', () => {
+  const tokens = ['commit', 'workremotely'];
+
+  it('counts as served and names the live connector, alone or next to a ladder step', () => {
+    const [gap] = clusterGaps([
+      miss('1', 'workremotely commits', 2, tokens, { lookup: lookup({ step: null, steps: ['sources', 'live'], live: ['wr-commits'], liveFetched: 1 }) }),
+      miss('2', 'workremotely commits', 1, tokens, { lookup: lookup({ step: 'sources', steps: ['sources', 'live'], live: ['wr-commits'], liveFetched: 1 }) }),
+    ], { now: NOW });
+    assert.equal(gap.lookup.served, 2);
+    assert.deepEqual(gap.lookup.connectors, ['wr-commits']);
+    assert.deepEqual(gap.lookup.jobs, []);
+  });
+
+  it('says where it came from when only the live source answered', () => {
+    const [gap] = clusterGaps([
+      miss('1', 'workremotely commits', 1, tokens, { lookup: lookup({ step: null, steps: ['live'], live: ['wr-commits'], liveFetched: 1 }) }),
+    ], { now: NOW });
+    assert.equal(gap.lookup.lastStep, 'live');
+    assert.match(gap.suggestion, /Served 1 time from wr-commits; nothing is queued\.$/);
+  });
+});

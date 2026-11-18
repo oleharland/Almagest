@@ -19,10 +19,10 @@ after(async () => {
   repos.forEach(rmrf);
 });
 
-const SHIPPED = ['github', 'gitlab', 'google-drive', 'granola', 'linear', 'mcp-resources', 'notion', 'slack', 'web-fetch'];
+const SHIPPED = ['github', 'github-branches', 'github-commits', 'gitlab', 'google-drive', 'granola', 'linear', 'mcp-resources', 'notion', 'slack', 'web-fetch'];
 
 describe('shipped recipes', () => {
-  it('ships the nine recipes the spec names, and every one validates', () => {
+  it('ships the eleven recipes (the nine the spec names, and two live GitHub ones), and every one validates', () => {
     assert.deepEqual(shippedRecipes(), SHIPPED);
     for (const name of SHIPPED) {
       assert.doesNotThrow(() => recipeFor({ id: 't', recipe: name }), name);

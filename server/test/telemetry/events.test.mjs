@@ -149,3 +149,23 @@ describe('telemetry.record', () => {
     assert.deepEqual(await ctx.telemetry.reverifyQueue(), []);
   });
 });
+
+describe('the lookup summary on an event', () => {
+  it('keeps the live step, the live connector ids and the count, and nothing else', () => {
+    const evt = build({
+      tool: 'ask', query: 'workremotely commits', answered: false,
+      lookup: { step: null, steps: ['sources', 'live', 'bogus'], live: ['wr-commits', { not: 'a string' }], liveFetched: 2, title: 'Recent commits', text: 'abc' },
+    });
+    assert.deepEqual(evt.extra.lookup.steps, ['sources', 'live']);
+    assert.deepEqual(evt.extra.lookup.live, ['wr-commits']);
+    assert.equal(evt.extra.lookup.liveFetched, 2);
+    assert.equal('title' in evt.extra.lookup, false);
+    assert.equal('text' in evt.extra.lookup, false);
+  });
+
+  it('adds no live fields to a summary that has none', () => {
+    const evt = build({ tool: 'ask', query: 'grid fee', answered: false, lookup: { step: 'sources', steps: ['sources'] } });
+    assert.equal('live' in evt.extra.lookup, false);
+    assert.equal('liveFetched' in evt.extra.lookup, false);
+  });
+});

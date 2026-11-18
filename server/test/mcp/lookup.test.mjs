@@ -149,7 +149,9 @@ describe('live lookup — the ladder', () => {
     assert.equal(r.items[0].passages[0].locator, 'p.2');
     assert.deepEqual(r.stats.steps, ['sources']);
     assert.equal(t.calls.search.length, 0);
-    assert.equal(t.calls.list, 0);
+    assert.equal(t.calls.fetch.length, 0);
+    // The live pass lists the connectors (a local call) to see whether a live one is meant; none here is, so nothing else happens.
+    assert.ok(!r.stats.steps.includes('live'));
   });
 
   it('staged answers when sources do not, and no provider is called', async () => {

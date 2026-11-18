@@ -336,6 +336,27 @@ sources:
     #   label: meetings
     #   tier: evidence
     #   lookup: true               # let live lookup search this connector when no page answers
+    #
+    # A repository with the three GitHub connectors. `github` is synced and
+    # searched like any document source. The other two are live: lookup reads
+    # them when a question mentions the repository, its commits or its
+    # branches, and they are never synced or ingested, so they get no schedule.
+    # Unverified against the live server: docs/v2/live-lookup.md
+    # - id: platform-repo
+    #   mcp: github
+    #   recipe: github
+    #   select: { repo: acme/platform, paths: ["docs/**/*.md"] }
+    #   lookup: true
+    # - id: platform-commits
+    #   mcp: github
+    #   recipe: github-commits
+    #   select: { repo: acme/platform, branch: main, limit: 20 }   # branch: default branch when unset
+    #   lookup: true
+    # - id: platform-branches
+    #   mcp: github
+    #   recipe: github-branches
+    #   select: { repo: acme/platform }
+    #   lookup: true
 
 
 # ══ v2 service ═══════════════════════════════════════════════════════════════
@@ -381,12 +402,13 @@ mcp:
   allow_url_fetch: false           # let chats submit URLs for ingest
   builtin_oauth: true              # token mode: the OAuth front door claude.ai needs
   # Live lookup: when no page answers, ask also tries source text, staged
-  # snapshots and the connectors that set `lookup: true`. Off by default.
+  # snapshots and the connectors that set `lookup: true`, then reads the live
+  # connectors (the `live` step). Off by default.
   # docs/v2/live-lookup.md
   # lookup:
   #   enabled: false
   #   min_role: contributor          # who may receive unreviewed passages
-  #   steps: [sources, staged, connectors]
+  #   steps: [sources, staged, connectors, live]
   #   timeout_ms: 8000               # for the whole lookup
   #   max_fetch: 3                   # documents fetched per question
   #   send_query: true               # false: the connectors step is off

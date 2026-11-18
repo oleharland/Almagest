@@ -1,0 +1,50 @@
+# Recipe: github-commits — the most recent commits of one repository, as ONE
+# live document. A live recipe describes current state: live lookup answers from
+# it and never keeps it (`live: true`), and `sync` refuses it. Give the connector
+# `lookup: true` and the same `select.repo` as the `github` connector.
+#
+# verified: no — written against the README of github/github-mcp-server (tool
+# `list_commits`: owner, repo, sha, perPage; toolset `repos`). Not run against the
+# live server. The README does not document the result fields. The mapping assumes
+# GitHub's REST shape, which the server passes through: an array of
+# { sha, commit: { message, author: { date } } }. Author names and emails are in
+# that result and are never written to the document: `render_options.line` names
+# the three fields that are.
+#
+# select:
+#   repo:   owner/name   (required)
+#   branch: main         default: the repository's default branch
+#   limit:  20           commits listed (the server allows at most 100)
+#
+# The question's words are not sent: the search and the list are the same call.
+name: github-commits
+description: The latest commits of a GitHub repository, as one live document (short sha, date, first line of the message).
+live: true
+about: [commits, commit, history, changes, recent, latest, github, repository, repo]
+list:
+  tool: list_commits
+  args:
+    owner: "{{select.repo | before:/}}"
+    repo: "{{select.repo | after:/}}"
+    sha: "{{select.branch}}"
+    perPage: "{{select.limit | default:20}}"
+  items: "$"
+  ref: "{{select.repo}}:commits:{{select.branch | default:HEAD}}"
+  title: "Recent commits in {{select.repo}} (branch {{select.branch | default:default}})"
+search:
+  tool: list_commits
+  args:
+    owner: "{{select.repo | before:/}}"
+    repo: "{{select.repo | after:/}}"
+    sha: "{{select.branch}}"
+    perPage: "{{select.limit | default:20}}"
+  items: "$"
+  ref: "{{select.repo}}:commits:{{select.branch | default:HEAD}}"
+  title: "Recent commits in {{select.repo}} (branch {{select.branch | default:default}})"
+fetch:
+  render: lines
+  render_options:
+    rows: "commits[*] | items[*] | [*]"
+    section: Recent commits
+    line: "{{raw.sha | short:7}} {{raw.commit.author.date | date}} {{raw.commit.message | firstline}}"
+    max: 100
