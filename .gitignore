@@ -9,6 +9,9 @@ dist/
 # Instance-specific settings (not shared)
 .claude/settings.local.json
 
+# Git worktrees created by Claude Code sessions — local checkouts, never committed.
+.claude/worktrees/
+
 # Raw processed ORIGINALS — reference material, not wiki content.
 # Text files (md, json, csv, txt, srt) are tracked; binaries are local-only,
 # because a repo is not a file server and 2 GB of PDFs helps nobody clone it.
