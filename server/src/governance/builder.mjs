@@ -11,7 +11,7 @@ import path from 'node:path';
 
 import matter from 'gray-matter';
 
-import { asArray, asString, normalizeSources } from '../../../tools/lib/wiki-core.mjs';
+import { asArray, asString, normalizeSources, safeFrontmatter } from '../../../tools/lib/wiki-core.mjs';
 import { diffClaims, extractClaims } from './claims.mjs';
 import { locate } from './excerpt.mjs';
 
@@ -23,10 +23,13 @@ const FIELD_WORDS = {
   tags: 'Tags', aliases: 'Also known as', origin: 'Origin', type: 'Page type',
 };
 
+// A page is agent-written text: YAML front matter only, never an engine that evaluates it.
+const parseFrontmatter = safeFrontmatter(matter);
+
 function parsePage(text) {
   if (text === null || text === undefined) return null;
   try {
-    const parsed = matter(text);
+    const parsed = parseFrontmatter(text);
     return { data: parsed.data || {}, body: parsed.content, sources: normalizeSources(parsed.data?.sources) };
   } catch (err) {
     return { data: {}, body: text, sources: [], parseError: err.message };

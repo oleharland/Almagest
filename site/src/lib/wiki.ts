@@ -9,6 +9,8 @@
  *
  * Runs at build time only. Nothing here ships to the browser.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import matter from 'gray-matter';
 import { marked } from 'marked';
 import siteConfig from '../../site.config';
@@ -94,6 +96,30 @@ export interface WikiPage {
 }
 
 let cache: WikiPage[] | null = null;
+let cacheStamp = '';
+
+const IS_DEV = Boolean((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV);
+
+/**
+ * What the wiki directories hold right now: each page's name, size and mtime.
+ *
+ * The dev server compares this on every call, so a page that lands on disk (an
+ * approved proposal, a merge, an edit) shows on the next request instead of
+ * after a restart. A build never calls it: nothing changes under a build.
+ */
+function wikiStamp(): string {
+  const parts: string[] = [];
+  for (const brain of WIKI_DIRS) {
+    const dir = path.resolve(REPO_ROOT, brain.dir);
+    if (!fs.existsSync(dir)) continue;
+    for (const file of fs.readdirSync(dir).sort()) {
+      if (!file.endsWith('.md') || file.startsWith('.')) continue;
+      const stat = fs.statSync(path.join(dir, file), { throwIfNoEntry: false });
+      if (stat) parts.push(`${brain.name}/${file}:${stat.size}:${stat.mtimeMs}`);
+    }
+  }
+  return parts.join('|');
+}
 
 /**
  * Broken wikilinks fail the production build.
@@ -132,9 +158,13 @@ function gateBrokenLinks(pages: WikiPage[]): void {
   }
 }
 
-/** All wiki pages, fully resolved. Cached for the lifetime of the build. */
+/**
+ * All wiki pages, fully resolved. Cached for the lifetime of the build; in dev,
+ * until a file in a wiki directory is added, removed or changed.
+ */
 export function getPages(): WikiPage[] {
-  if (cache) return cache;
+  const stamp = IS_DEV ? wikiStamp() : '';
+  if (cache && stamp === cacheStamp) return cache;
 
   const { pages } = loadWiki({
     repoRoot: REPO_ROOT,
@@ -146,6 +176,7 @@ export function getPages(): WikiPage[] {
   });
 
   cache = pages as WikiPage[];
+  cacheStamp = stamp;
   gateBrokenLinks(cache);
   return cache;
 }
