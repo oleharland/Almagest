@@ -214,8 +214,15 @@ it; an invalid or missing report fails the job.
   pages: [{ slug, action: 'create' | 'update', tier, summary: 'one line' }],
   blocked: [{ kind: DecisionKind, slug, question, claimA?, sourceA?, claimB?, sourceB?,
               options: [{ id, label, effect }] }],
+  extends?: [{ slug, proposalId }],   // pages written as additions to pages pending in other open proposals
   notes?: '…' }
 ```
+
+`extends` is checked by the runner: every `{ slug, proposalId }` must have been
+in the pending set it handed the job (below), else the report is invalid and the
+job fails. The runner stores the list, with each proposal's `title`, on the
+proposal as `extends`; governance uses it when two approved versions of a page
+are combined at merge (Governance → merge).
 
 ### Proposal (governance owns; ingest creates)
 
@@ -228,7 +235,8 @@ it; an invalid or missing report fails the job.
   decisions: ['dec_…'],
   required: { approvals: n, perPage: bool, roles: [...], teams: [...], reasons: ['hot page: x', …] },
   approvals: [{ actorId, at, scope: 'all' | '<slug>', channel: ChannelKind }],
-  merge?: { sha, at, by },
+  merge?: { sha, at, by, combined?: [slug] },
+  extends?: [{ slug, proposalId, title }],   // pages written as additions to pages pending in other proposals
   createdAt, updatedAt }
 
 ProposalChange =
@@ -502,6 +510,10 @@ Runner, per job:
    a content-addressed staging copy taken at enqueue; connector snapshot via
    `ctx.connectors.materialize(ref, worktree)`), re-hashed against
    `source.sha256`.
+   For an `ingest` job, and a `revise` job for a proposal other than its own,
+   the runner also writes the text of every page that another open proposal adds
+   or changes to `.almagest/pending/<proposal id>/<slug>.md` (git-ignored, removed
+   when the driver returns) and lists the pages in the prompt.
 3. Run the driver (`ingest/drivers/*.mjs`) with cwd = worktree, the ingest
    prompt (rules + "runner mode" addendum + `instructions`), a **locked-down tool
    allowlist** (read/write/edit inside the worktree, `shasum`, and a per-job
@@ -510,7 +522,8 @@ Runner, per job:
    **no** git, **no** network, **no** MCP), the budget and the
    timeout. Source content is untrusted input; the prompt says so, and the tool
    allowlist is what makes it true.
-4. Validate `.almagest/run-report.json` (then remove `.almagest/` from the
+4. Validate `.almagest/run-report.json`, including `extends` against the pending
+   set (then remove `.almagest/` from the
    worktree, so it can never be committed). A local original moves to
    `processed/`. **Path guard:** any change outside `brain/`'s writable paths
    (wiki, raw, `.index`, index.md, manifest, log.md, canonical-challenges.md)
@@ -589,7 +602,11 @@ and `docs/manifest.md`). Full guide: `docs/v2/connectors.md`.
   re-audit the merge tree → move `main` by compare-and-swap (`update-ref` with
   the old value), or `merge --ff-only` inside a worktree that has `main` checked
   out. Bookkeeping files merge structurally (`governance/bookkeeping.mjs`:
-  manifest `sources[]` by id, table rows with placeholder rows dropped); a real
+  manifest `sources[]` by id, table rows with placeholder rows dropped). Two
+  approved versions of one wiki page are combined section by section
+  (`governance/page-merge.mjs`) when that is provably safe: every line and value
+  of the result is in main's or the reviewed head's version, rechecked on the
+  merge commit itself, and canonical pages never. A real
   conflict enqueues a `revise` job, capped per proposal, after which it is
   `conflicted` and needs a person. `log.md` gets the approval line. `push: true`
   pushes `main`.

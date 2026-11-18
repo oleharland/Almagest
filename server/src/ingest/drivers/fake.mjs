@@ -29,6 +29,11 @@
  *   crash-once    crashes on attempt 1, behaves as `write` afterwards
  *   hang          never finishes until aborted (timeout tests)
  *
+ * Two more settings serve the pending-pages tests (runner.mjs → collectPending):
+ * `ingest.fake.record` names a file the driver writes `{ prompt, pending }` to,
+ * where `pending` maps each file under `.almagest/pending/` to its text as the
+ * agent saw it; `ingest.fake.extends` is the `extends` list its run report carries.
+ *
  * The page it writes is the smallest one the clean fixture's audit accepts.
  */
 import fs from 'node:fs';
@@ -105,11 +110,22 @@ export function createFakeDriver(ctx, options = {}) {
     name: 'fake',
     capabilities: { tool_restriction: true, budget_cap: true, cost_reporting: true, session_isolation: true, sandbox: true },
 
-    async run({ cwd, signal, logStream, job, source, sourcePath, allowedTools = [] }) {
+    async run({ cwd, prompt, signal, logStream, job, source, sourcePath, allowedTools = [] }) {
       const started = Date.now();
       let m = mode();
       if (m === 'crash-once') m = (job?.attempts || 1) <= 1 ? 'crash' : 'write';
       logStream?.write(`[fake] mode ${m}\n`);
+      if (ctx.config.ingest.fake?.record) {
+        const seen = {};
+        const walk = (dir) => {
+          for (const e of fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : []) {
+            const f = path.join(dir, e.name);
+            if (e.isDirectory()) walk(f); else seen[path.relative(cwd, f)] = fs.readFileSync(f, 'utf-8');
+          }
+        };
+        walk(path.join(cwd, '.almagest', 'pending'));
+        fs.writeFileSync(ctx.config.ingest.fake.record, JSON.stringify({ prompt, pending: seen }));
+      }
 
       if (m === 'hang') {
         await new Promise((resolve) => {
@@ -130,7 +146,7 @@ export function createFakeDriver(ctx, options = {}) {
 
       const report = (body) => {
         fs.mkdirSync(path.join(cwd, '.almagest'), { recursive: true });
-        fs.writeFileSync(path.join(cwd, '.almagest', 'run-report.json'), JSON.stringify({ source: { id: source?.id || 'none', sha256: source?.sha256 }, ...body }, null, 2));
+        fs.writeFileSync(path.join(cwd, '.almagest', 'run-report.json'), JSON.stringify({ source: { id: source?.id || 'none', sha256: source?.sha256 }, ...(ctx.config.ingest.fake?.extends ? { extends: ctx.config.ingest.fake.extends } : {}), ...body }, null, 2));
         return { ok: true, costUsd: 0, durationMs: Date.now() - started, raw: { mode: m } };
       };
 

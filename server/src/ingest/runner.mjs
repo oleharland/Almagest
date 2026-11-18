@@ -22,13 +22,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import matter from 'gray-matter';
 import YAML from 'yaml';
+
+import { asArray } from '../../../tools/lib/wiki-core.mjs';
 
 import { serviceActor } from '../core/auth.mjs';
 import { modelForTier } from '../core/config.mjs';
 import { gitIdentity, WorktreeTamperedError } from '../core/git.mjs';
 import { ingestBranch, nowIso, slugify, validateRunReport } from '../core/schemas.mjs';
 import { agentInstructionPath, writableMatcher } from '../governance/paths.mjs';
+import { LIVE } from '../governance/policy.mjs';
 import { auditSummary, runAudit, wrapperIntact, writeAuditWrapper } from './audit.mjs';
 import { allowedTools as claudeAllowedTools } from './drivers/claude-code.mjs';
 import { appendTableRow, removeTableRowsFor } from './md.mjs';
@@ -47,6 +51,20 @@ export class JobError extends Error {
 
 const SVC = serviceActor('ingest');
 const CLOSED_PROPOSAL = new Set(['merged', 'rejected', 'superseded']);
+
+/**
+ * Where the text of pages pending in other proposals is put for the agent to
+ * read: under `.almagest/` in the job worktree, next to the run report. That
+ * directory is git-ignored, outside every path the path guard allows, never
+ * read by the audit (which reads the wiki directory and the bookkeeping files
+ * only), and removed by the runner right after the agent finishes, before the
+ * run report is read and long before the path guard, the audit and the commit.
+ */
+export const PENDING_DIR = '.almagest/pending';
+/** A page text never needs more than this; a runaway set of open proposals is cut at it, newest first. */
+const MAX_PENDING_PAGES = 400;
+const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const pairKey = (slug, proposalId) => `${slug}\0${proposalId}`;
 
 function modelFor(config, driverName) {
   if (config.ingest.model) return String(config.ingest.model);
@@ -199,8 +217,72 @@ export function createRunner(ctx, { driver, logsDir }) {
     return git.mergeBase(config.service.git.main, branch);
   }
 
+  /**
+   * Every wiki page that another open proposal adds or changes, with its text
+   * at that proposal's head, written under PENDING_DIR in the worktree. Newest
+   * proposal first, so two proposals on one slug come out newest first. Open
+   * means a status governance still works on (policy.LIVE); the job's own
+   * proposal is left out. A job that cannot read the list runs without it:
+   * the cost is a duplicate page the reviewer sees, not a wrong write.
+   */
+  async function collectPending(job, t, wt) {
+    if (job.kind !== 'ingest' && job.kind !== 'revise') return [];
+    let proposals;
+    try { proposals = await ctx.governance.listProposals({ status: LIVE }); }
+    catch (err) { log.warn('could not list open proposals, running without the pending set', { job: job.id, error: err.message }); return []; }
+    const others = (proposals || [])
+      .filter((p) => p && LIVE.includes(p.status) && p.id !== t.proposal?.id && p.branch !== t.branch && SAFE_NAME.test(String(p.id)))
+      .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
+    const root = path.join(wt, PENDING_DIR);
+    const pages = [];
+    for (const p of others) {
+      for (const c of p.changes || []) {
+        if (pages.length >= MAX_PENDING_PAGES) return pages;
+        if (c.action === 'delete' || c.pageStatus === 'rejected' || !SAFE_NAME.test(String(c.slug)) || !p.headSha || !c.path) continue;
+        let text;
+        try { text = await git.show(p.headSha, c.path); } catch { text = null; }
+        if (typeof text !== 'string') continue;
+        let data = {};
+        try { data = matter(text, {}).data || {}; } catch { /* a page the parser cannot read is still shown as text */ }
+        const file = path.join(root, p.id, `${c.slug}.md`);
+        if (!isInside(root, file)) continue;
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, text);
+        pages.push({
+          slug: c.slug, title: String(data.title || c.title || c.slug), aliases: asArray(data.aliases),
+          proposalId: p.id, proposalTitle: String(p.title || ''), kind: c.action === 'create' ? 'new' : 'change',
+          file: path.posix.join(PENDING_DIR, p.id, `${c.slug}.md`),
+        });
+      }
+    }
+    return pages;
+  }
+
+  /**
+   * `extends`: each entry must name a page and a proposal that were in the
+   * pending set this job was handed (a revise may also repeat what its
+   * proposal already extended). Returns the entries with the proposal's title
+   * filled in from the runner's own record, never from the agent.
+   */
+  function checkExtends(report, pending, prior) {
+    if (report.extends === undefined) return [];
+    const bad = (why) => new JobError(`invalid run report: ${why}`, { retryable: true });
+    if (!Array.isArray(report.extends)) throw bad('extends must be an array');
+    const known = new Map();
+    for (const e of prior || []) known.set(pairKey(e.slug, e.proposalId), e.title || '');
+    for (const p of pending) known.set(pairKey(p.slug, p.proposalId), p.proposalTitle);
+    const out = [];
+    report.extends.forEach((e, i) => {
+      if (!e || typeof e.slug !== 'string' || typeof e.proposalId !== 'string') throw bad(`extends[${i}] needs a slug and a proposalId`);
+      const key = pairKey(e.slug, e.proposalId);
+      if (!known.has(key)) throw bad(`extends[${i}] names a page or proposal that was not in the pending set`);
+      if (!out.some((x) => pairKey(x.slug, x.proposalId) === key)) out.push({ slug: e.slug, proposalId: e.proposalId, title: known.get(key) });
+    });
+    return out;
+  }
+
   /** Step 4: the run report. Missing or malformed is a failed run, retryable — agents do flake. */
-  function readReport(wt, source, placed) {
+  function readReport(wt, source, placed, { pending = [], prior = [] } = {}) {
     const file = path.join(wt, RUN_REPORT_PATH);
     if (!fs.existsSync(file)) throw new JobError(`agent finished without writing ${RUN_REPORT_PATH}`, { retryable: true });
     // job.error is readable through /api/jobs, so it never echoes report
@@ -223,7 +305,7 @@ export function createRunner(ctx, { driver, logsDir }) {
     if (expected && report.source.sha256 && report.source.sha256 !== expected) {
       throw new JobError(`run report fingerprints ${report.source.id} as ${report.source.sha256.slice(0, 7)}… but the runner computed ${expected.slice(0, 7)}… — the agent must use the runner's sha256`);
     }
-    return report;
+    return { ...report, extends: checkExtends(report, pending, prior) };
   }
 
   /** The original leaves the drop folder for processed/ — mechanically, so the agent needs no `mv`. */
@@ -345,11 +427,14 @@ export function createRunner(ctx, { driver, logsDir }) {
         demandFile: config.paths.demand,
       });
       let result;
+      let pending = [];
       try {
+        pending = await collectPending(job, t, wt);
+        if (pending.length) write(`pending: ${pending.length} page(s) in ${new Set(pending.map((p) => p.proposalId)).size} other open proposal(s) handed to the agent under ${PENDING_DIR}`);
         const tools = claudeAllowedTools(config, { auditWrapper: wrapper.path });
         const { prompt, systemPrompt } = buildPrompt({
           job, source: t.source, placed, branch: t.branch, proposal: t.proposal,
-          auditCommand: wrapper.path, allowedTools: tools,
+          auditCommand: wrapper.path, allowedTools: tools, pending,
         });
         write(`step 3: driver ${driver.name}, model ${modelFor(config, driver.name) || '(default)'}, budget $${config.ingest.budget_usd_per_job}`);
         result = await runDriver(job, {
@@ -362,12 +447,15 @@ export function createRunner(ctx, { driver, logsDir }) {
         }
       } finally {
         fs.rmSync(wrapper.dir, { recursive: true, force: true });
+        // Other proposals' text is for the agent to read, never to commit:
+        // gone as soon as the agent is, whether it finished or not.
+        fs.rmSync(path.join(wt, PENDING_DIR), { recursive: true, force: true });
       }
       // First thing after the agent: is `.git` still what git wrote? Every git
       // command below checks again; this fails before anything else runs.
       repo.check();
 
-      const report = readReport(wt, t.source, placed);
+      const report = readReport(wt, t.source, placed, { pending, prior: t.proposal?.extends });
       fs.mkdirSync(path.join(logsDir, '..', 'reports'), { recursive: true });
       fs.writeFileSync(path.join(logsDir, '..', 'reports', `${job.id}.json`), JSON.stringify(report, null, 2));
       // The report has been read; it is not part of the diff. Removing it

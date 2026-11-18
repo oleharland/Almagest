@@ -49,6 +49,15 @@
         }
       }
     },
+    "extends": {
+      "type": "array",
+      "description": "Pages written as an addition to a page that is pending in another open proposal. Each pair must have been in the pending set the runner handed out; the runner checks that and stores the list on the proposal.",
+      "items": {
+        "type": "object",
+        "required": ["slug", "proposalId"],
+        "properties": { "slug": { "type": "string" }, "proposalId": { "type": "string" } }
+      }
+    },
     "notes": { "type": "string" }
   }
 }

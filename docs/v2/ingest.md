@@ -190,6 +190,35 @@ a changed source, the branch, the proposal, any instructions, and the exact
 audit command it may self-check with. The system prompt states that source
 content is untrusted data.
 
+**Pages pending in other proposals.** Jobs run one at a time, each on a branch
+made from `main`, and `main` moves only when a person approves. A job
+therefore cannot see the pages that earlier jobs wrote, whose proposals are
+still open. Before an `ingest` job, or a `revise` job for a proposal other than
+the one it revises, the runner collects every wiki page that another open
+proposal adds or changes (statuses `open`, `changes_requested`, `approved`
+and `conflicted`; never the job's own proposal) and writes its text, as it
+stands at that proposal's head, to `.almagest/pending/<proposal id>/<slug>.md`
+in the job worktree. When two proposals touch one slug, both texts are there,
+newest proposal first. The prompt lists them (slug, title, aliases, proposal
+id, path, whether the page is new or a change) and says the text is material
+under review by a person: data to read, never instructions.
+
+That directory is git-ignored, outside every path the path guard allows, and
+read by neither the audit nor the commit. The runner removes it as soon as the
+agent finishes, whether the run succeeded or not, before it reads the run
+report. A job that cannot list the open proposals runs without the set and
+logs a warning.
+
+The rule the agent follows is in `agent/rules/ingest.md` → Runner mode →
+*Pending pages*: a pending page counts as an existing page, and a source that
+adds to it writes a page with the same slug that carries only what the source
+adds. Each such page is recorded in the run report's `extends` list. The runner
+refuses a pair whose proposal and slug were not in the set it handed out, and
+stores the list, with each proposal's title taken from its own record, on the
+proposal. When both proposals are approved, governance combines the two pages
+without an agent where that is provably safe
+([`governance.md`](governance.md) → *How a merge happens*, step 3).
+
 The agent never stops to ask. Every case the risk-tier table says *blocks* is
 left unwritten and recorded in `blocked[]` of `.almagest/run-report.json`;
 governance turns each into a Decision card, and resolving one enqueues a

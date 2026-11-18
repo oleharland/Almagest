@@ -47,6 +47,26 @@ export const MAX_CONFLICT_REVISES = 2;
 
 export const DEFAULT_SESSION_ROLES_MAX_AGE_MINUTES = 60;
 
+/**
+ * The pages a run wrote as additions to pages pending in other proposals, as
+ * the runner validated and enriched them (ingest/runner.mjs). null when the
+ * report says nothing about it, so a job without a report (drop-page, an
+ * answered decision) leaves a proposal's list as it was.
+ */
+function extendsFrom(report) {
+  if (!Array.isArray(report?.extends)) return null;
+  const seen = new Set();
+  const out = [];
+  for (const e of report.extends) {
+    if (!e || typeof e.slug !== 'string' || typeof e.proposalId !== 'string' || !e.slug || !e.proposalId) continue;
+    const key = `${e.slug}\0${e.proposalId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ slug: e.slug, proposalId: e.proposalId, title: typeof e.title === 'string' ? e.title.slice(0, 300) : '' });
+  }
+  return out;
+}
+
 function submittersFromJob(job) {
   const ids = [job.requestedBy, job.onBehalfOf?.id ?? job.onBehalfOf, job.requestedFor, job.source?.submittedBy];
   return [...new Set(ids.filter((v) => typeof v === 'string' && v))];
@@ -228,6 +248,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       decisions: decisions.map((d) => d.id),
       notes: runReport.notes || '',
       reportPages: runReport.pages || [],
+      extends: extendsFrom(runReport) ?? live?.extends ?? [],
       updatedAt: now,
     };
     fields.required = policy.computeRequirements({ changes, decisions, source, label: labelFor(source), rules });
@@ -315,10 +336,11 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
         merge: {
           sha: result.sha, at: nowIso(), by: actor.id, approvers: approvers.map((a) => a.actorId),
           method: result.method, pushed: result.pushed, headSha: p.headSha,
+          ...(result.combined?.length ? { combined: result.combined } : {}),
           audit: { exit: result.audit.exit, errors: result.audit.errors, warnings: result.audit.warnings },
         },
       });
-      await record('proposal.merge', actor, p.id, channel, { sha: result.sha, headSha: p.headSha, approvers: approvers.map((a) => a.actorId), method: result.method });
+      await record('proposal.merge', actor, p.id, channel, { sha: result.sha, headSha: p.headSha, approvers: approvers.map((a) => a.actorId), method: result.method, ...(result.combined?.length ? { combined: result.combined } : {}) });
       bus.emit('proposal.merged', { proposal: merged, actor });
       return merged;
     }

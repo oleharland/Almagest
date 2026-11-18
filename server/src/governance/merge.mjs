@@ -38,6 +38,8 @@ import { authorizeMainMove } from '../../../tools/lib/git-hooks.mjs';
 import { serviceActor } from '../core/auth.mjs';
 import { childEnv, gitIdentity } from '../core/git.mjs';
 import { mergeManifest, stripRemovedPlaceholders } from './bookkeeping.mjs';
+import { canonicalSet } from './builder.mjs';
+import { mergePages, pageProvenance, parsePage } from './page-merge.mjs';
 import { describeOutside, listChanges, outsideFiles } from './paths.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -116,10 +118,11 @@ Chronological record of all ingest, audit, and maintenance actions.
 
 const cell = (s) => String(s ?? '').replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').trim();
 
-export function logRow({ date, proposal, approvers }) {
+export function logRow({ date, proposal, approvers, combined = [] }) {
   const who = approvers.map((a) => `${a.display || a.actorId} (${a.channel})`).join(', ') || 'unknown';
   const pages = (proposal.changes || []).filter((c) => c.pageStatus !== 'rejected').map((c) => c.slug).join(', ') || 'none';
-  return `| ${cell(date)} | merge | ${cell(proposal.id)} ${cell(proposal.title)} — approved by ${cell(who)}; reviewed ${cell(String(proposal.headSha).slice(0, 7))}; pages: ${cell(pages)} |`;
+  const joined = combined.length ? `; combined with what was already there: ${cell(combined.join(', '))}` : '';
+  return `| ${cell(date)} | merge | ${cell(proposal.id)} ${cell(proposal.title)} — approved by ${cell(who)}; reviewed ${cell(String(proposal.headSha).slice(0, 7))}; pages: ${cell(pages)}${joined} |`;
 }
 
 export function appendLogRow(text, row) {
@@ -157,6 +160,9 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
   const indexDir = config.v1.indexDir.replace(/\/+$/, '');
   const appendOnly = new Set([logPath, `${brainDir}/index.md`, config.v1.manifestPath, config.v1.challengesPath]);
   const committer = gitIdentity(serviceActor('governance'));
+  const canonical = canonicalSet(config.v1.canonicalPages);
+  const escapeRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pageFile = new RegExp(`^${escapeRe(brainDir.replace(/\/+$/, ''))}/wiki/([^/]+)\\.md$`);
   const gitx = (args, opts = {}) => execp('git', args, { cwd: git.repoRoot, ...opts });
 
   async function mergeTree(ours, theirs) {
@@ -186,6 +192,28 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
       fs.rmSync(dir, { recursive: true, force: true });
     }
   }
+
+  /**
+   * Two approved versions of one wiki page, combined (page-merge.mjs), or null
+   * when that is not provably safe: not a page, a canonical page, a version
+   * missing on either side (delete against change), or any clash.
+   * `extended` is the set of slugs the proposal marked in `extends`.
+   */
+  async function combinePage(file, base, ours, theirs, extended = new Set()) {
+    const m = pageFile.exec(file);
+    if (!m || canonical.has(m[1])) return null;
+    const [b, o, t] = await Promise.all([git.show(base, file), git.show(ours, file), git.show(theirs, file)]);
+    if (o === null || t === null) return null;
+    if ([b, o, t].some((text) => text !== null && parsePage(text)?.data?.tier === 'canonical')) return null;
+    const r = mergePages({ base: b, ours: o, theirs: t, extended: extended.has(m[1]) });
+    if (!r.ok) {
+      log?.info('page merge fell through to a revise', { file, reason: r.reason });
+      return null;
+    }
+    return { slug: m[1], text: r.text };
+  }
+
+  const extendedSlugs = (proposal) => new Set((proposal?.extends || []).map((e) => e?.slug).filter(Boolean));
 
   async function treeWith(tree, files) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-index-'));
@@ -275,11 +303,21 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
    * Only modifications are tolerated, so the index cannot be dropped (which
    * would skip that check) and no file can be added beside it.
    */
-  async function unreviewedContent(commit, mainSha, head) {
+  async function unreviewedContent(commit, mainSha, head, { extended = new Set() } = {}) {
     const derived = (f) => f.startsWith(`${indexDir}/`);
-    const { tree: expected, conflicts } = await mergeTree(mainSha, head);
-    const clashes = conflicts.filter((f) => !derived(f));
+    const { tree, conflicts } = await mergeTree(mainSha, head);
+    // A clash on a wiki page that page-merge.mjs can combine is part of "the
+    // merge of the two": the expected tree holds the combined page. Anything
+    // else that clashes is how somebody settled something nobody reviewed.
+    const base = conflicts.some((f) => !derived(f)) ? await git.mergeBase(mainSha, head) : null;
+    const combined = new Map();
+    const clashes = [];
+    for (const f of conflicts.filter((x) => !derived(x))) {
+      const page = await combinePage(f, base, mainSha, head, extended);
+      if (page) combined.set(f, page.text); else clashes.push(f);
+    }
     if (clashes.length) return { clash: true, files: clashes.map((f) => ({ path: f, reason: 'clashes with the current knowledge base' })) };
+    const expected = combined.size ? await treeWith(tree, combined) : tree;
     const actual = (await git.run(['rev-parse', `${commit}^{tree}`])).trim();
     if (actual === expected) return null;
     const parts = (await git.run(['diff', '--name-status', '--no-renames', '-z', expected, actual])).split('\0');
@@ -294,6 +332,35 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
   }
 
   /**
+   * For every wiki page that clashed between main and the reviewed head, what
+   * `commit` holds must satisfy the page-merge invariant, recomputed here from
+   * main's version and the head's version alone: every body line and every
+   * frontmatter value occurs in one of the two. This does not trust whoever
+   * made the commit, and does not look at how they got there. A page that is
+   * canonical is never combined. A clash on any file that is neither such a
+   * page nor one of the bookkeeping files merge() resolves itself is refused.
+   * Returns the files that fail, [] when there is nothing wrong.
+   */
+  async function combinedPageProblems(commit, mainSha, head) {
+    const derived = (f) => f.startsWith(`${indexDir}/`);
+    const { conflicts } = await mergeTree(mainSha, head);
+    const bad = [];
+    for (const file of conflicts.filter((f) => !derived(f))) {
+      if (appendOnly.has(file)) continue;
+      const m = pageFile.exec(file);
+      const [o, t, c] = m ? await Promise.all([git.show(mainSha, file), git.show(head, file), git.show(commit, file)]) : [null, null, null];
+      const tier = [o, t, c].some((text) => text !== null && parsePage(text)?.data?.tier === 'canonical');
+      if (!m || canonical.has(m[1]) || tier || o === null || t === null || c === null) {
+        bad.push({ path: file, reason: 'clashed with the current knowledge base and was not combined from the two versions' });
+        continue;
+      }
+      const why = pageProvenance(c, o, t);
+      if (why) bad.push({ path: file, reason: `holds content that is in neither version (${why})` });
+    }
+    return bad;
+  }
+
+  /**
    * The gate every new main passes, whoever made the commit: only the
    * knowledge base's writable files change, and the result passes the
    * service's own audit. The path check runs first, so a commit that touches
@@ -305,6 +372,11 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
     const refuse = (outside) => refusePaths(outside, proposalId);
     let outside = await outsideOfCandidate(commit, { mainSha, base, head });
     if (outside.length) return refuse(outside);
+    const unreviewed = await combinedPageProblems(commit, mainSha, head);
+    if (unreviewed.length) {
+      log?.error('merge refused: a combined page holds content that was not reviewed', { proposal: proposalId, files: unreviewed.map((f) => f.path) });
+      return { ok: false, reason: 'content', files: unreviewed, message: `The combined result holds content that was in neither reviewed version (${unreviewed.slice(0, 5).map((f) => f.path).join(', ')}), so it was not added.` };
+    }
     const { commit: final, audit } = await verify(commit, { parents, message, author, regenerate });
     if (audit.exit !== 0) {
       return {
@@ -377,9 +449,15 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
 
       const replacements = new Map();
       const unresolved = [];
+      const combined = [];
       for (const file of conflicts) {
         if (file.startsWith(`${indexDir}/`)) continue;          // derived — regenerated in verify()
-        const resolved = appendOnly.has(file) ? await unionResolve(file, base, mainSha, head) : null;
+        let resolved = null;
+        if (appendOnly.has(file)) resolved = await unionResolve(file, base, mainSha, head);
+        else {
+          const page = await combinePage(file, base, mainSha, head, extendedSlugs(proposal));
+          if (page) { resolved = page.text; combined.push(page.slug); }
+        }
         if (resolved === null) unresolved.push(file);
         else replacements.set(file, resolved);
       }
@@ -391,7 +469,7 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
       }
 
       const logText = replacements.has(logPath) ? replacements.get(logPath) : await git.show(tree, logPath);
-      replacements.set(logPath, appendLogRow(logText, logRow({ date, proposal, approvers })));
+      replacements.set(logPath, appendLogRow(logText, logRow({ date, proposal, approvers, combined })));
       const mergedTree = await treeWith(tree, replacements);
 
       const names = approvers.map((a) => `${a.display || a.actorId}${a.email ? ` <${a.email}>` : ''} (${a.channel})`);
@@ -421,7 +499,7 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
           if (!pushed) log?.error('push after merge failed — main moved locally only', { error: r.stderr.trim() });
         }
         await cleanup(proposal.branch);
-        return { ok: true, sha: commit, audit, method: moved.method, pushed };
+        return { ok: true, sha: commit, audit, method: moved.method, pushed, combined };
       }
       if (moved.reason !== 'moved') return moved;
       log?.info('main moved during merge — retrying', { proposal: proposal.id, attempt });
@@ -467,7 +545,7 @@ export function createMerger({ git, config, log, allowed, auditScript = AUDIT_SC
     if (outside.length) return refusePaths(outside, proposal.id);
     // Right parents say nothing about what the commit holds: a hand-made
     // merge commit can carry any edit. It must be the reviewed merge, exactly.
-    const extra = await unreviewedContent(commit, mainSha, proposal.headSha);
+    const extra = await unreviewedContent(commit, mainSha, proposal.headSha, { extended: extendedSlugs(proposal) });
     if (extra) {
       const list = `${extra.files.slice(0, 5).map((f) => f.path).join(', ')}${extra.files.length > 5 ? ` and ${extra.files.length - 5} more` : ''}`;
       log?.error('external merge refused: content not in the reviewed version', { proposal: proposal.id, sha: commit, files: extra.files.map((f) => f.path) });

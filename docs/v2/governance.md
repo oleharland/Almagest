@@ -384,18 +384,62 @@ merge (one at a time, under a lock):
    most **two** per proposal. After that the inbox says it needs a person (ask
    for specific changes, or turn it down and add the source again); asking for
    changes resets the count.
-3. A row is added to `brain/log.md`: date, proposal, approvers and channels,
-   the reviewed version, pages.
-4. A merge commit with two parents (main, the reviewed head). Author: the
+3. **Two approved versions of one wiki page are combined**, before a clash on
+   a page is given up on (`page-merge.mjs`). This applies when `git
+   merge-tree` reports a clash on `brain/wiki/<slug>.md` and both sides have
+   the file: both added it, or both changed it from a common base. A delete
+   against a change stays a clash, and so does any canonical page, named in
+   `canonical_pages` or marked `tier: canonical` on any of the three versions.
+   The page is read with the same parser the audit uses, then merged key by key
+   in the frontmatter and section by section (by `##` heading) in the body:
+
+   | Part | Rule |
+   |---|---|
+   | `sources` | Union by `id`, main's order first. The same `id` with a different `path` or `sha256` is a clash |
+   | `aliases`, `tags`, `related`, each list under `relations` | Union, main's order first |
+   | `title`, `type`, `tier`, `origin` | Must be equal, else a clash |
+   | `status`, `confidence`, `owner` | Equal, or changed on one side only since the base. With no base and different values, main's value is kept if the proposal listed this page in `extends`, else a clash. Changed differently on both sides is a clash even with `extends` |
+   | `date_created`, `last_verified` | The earlier. A page one side never verified has no `last_verified` |
+   | `date_modified` | The later |
+   | Other keys | Equal, or present on one side only. Removed on one side and changed on the other is a clash |
+   | A section on one side only | Kept. Removed on one side and unchanged on the other since the base: stays removed. Removed and changed: a clash |
+   | A section identical on both sides | Kept once |
+   | A section changed on one side only since the base | Takes the changed side |
+   | A section where one side's lines are a superset of the other's | Takes the superset |
+   | Any other section | With `extends` for this page: main's lines, then the proposal's lines that main does not have. Without it: a clash |
+   | Order | Main's sections in main's order, then the proposal's new sections in theirs |
+
+   The result must satisfy one invariant: **every body line and every
+   frontmatter value of the combined page occurs in main's version or in the
+   reviewed head's version of that page.** Nothing is invented, reworded or
+   reordered inside a line. `page-merge.mjs` checks it before it returns, and
+   step 6 checks it again. Any clash, and any failure of the check, leaves the
+   file as a clash, and the proposal goes down the `revise` path described in
+   step 2, unchanged.
+
+   `extends` is the list of pages the agent wrote as additions to a page that
+   was waiting in another proposal (see [`ingest.md`](ingest.md)). It widens
+   only the two rules above that name it, and only toward lines and values
+   that were already reviewed on one of the two sides.
+4. A row is added to `brain/log.md`: date, proposal, approvers and channels,
+   the reviewed version, pages. When a page was combined, the row says so:
+   *combined with what was already there: slug*. The proposal's `merge.combined`
+   and the activity entry carry the same list.
+5. A merge commit with two parents (main, the reviewed head). Author: the
    person whose approval completed it. Committer: `svc:governance`.
-5. Re-audit (above), then the path check (invariant 11) on the branch diff and
-   on the merge result.
-6. `main` moves by compare-and-swap: `git merge --ff-only` inside a working
+6. Re-audit (above), then the path check (invariant 11) on the branch diff and
+   on the merge result. The same gate (`verifyCandidate`) recomputes the page
+   invariant from main's version and the reviewed head's version of every page
+   that clashed, on the commit itself, whoever made it. It does not trust
+   step 3 to have been the author. A combined page that fails is refused with
+   reason `content`, and a clash on anything that is neither such a page nor a
+   bookkeeping file is refused too.
+7. `main` moves by compare-and-swap: `git merge --ff-only` inside a working
    copy that has main checked out (refused, with a "Try again" button, if that
    copy has unsaved edits to the same files), otherwise `git update-ref` with
    the old value. If main moved meanwhile, the merge is recomputed.
-7. With `service.git.push: true`, main is pushed to `service.git.remote`.
-8. The ingest worktree is removed and the merged branch deleted. A turned-down
+8. With `service.git.push: true`, main is pushed to `service.git.remote`.
+9. The ingest worktree is removed and the merged branch deleted. A turned-down
    or superseded proposal is cleaned up the same way (its branch is kept only
    with `governance.keep_closed_branches: true`).
 
@@ -521,7 +565,12 @@ to accept a commit, not an order to move main. In this order:
    hand-made merge commit can carry any edit, so a merge commit that changes,
    adds or removes anything beyond that merge is refused (reason `content`,
    naming the files), and so is a head that does not merge cleanly onto main,
-   since how GitHub settled the clash was never reviewed. GitHub's merge
+   since how GitHub settled the clash was never reviewed. The one clash with
+   an answer is a wiki page the service can combine (*How a merge happens*,
+   step 3): its expected content is what the service would have written, and
+   the commit must hold exactly that. A hand-made combination that differs by
+   one character is refused, even if every line in it comes from one of the two
+   versions. GitHub's merge
    button writes no log row and resolves no bookkeeping, so a plain merge of
    a clean PR passes. The one tolerance is the derived index
    (`brain/.index/`): its files may differ from the plain merge, because step
@@ -574,4 +623,7 @@ with a source); plus `submitters`, `otherFiles` (each with `bytes`, `lines`,
 file, `added` for the lines a change adds), `files` (every changed path
 with mode and binary flag), `outside` (paths outside the writable set),
 `revision`, `revisedBecause`, `conflictRevise`, `mergeError`, `feedback`,
-`rejection`, `supersededBy`.
+`rejection`, `supersededBy`, `extends` (`[{ slug, proposalId, title }]`: pages
+written as additions to pages waiting in other proposals; stored by
+`createFromJob` from the run report) and `merge.combined` (the slugs combined
+at merge).

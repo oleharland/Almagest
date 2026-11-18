@@ -146,6 +146,11 @@ function hotWhy(e) {
   return bits.length ? html`<p class="faint">Why it counts as frequently read: ${bits.join(', ')}. Changes to it need a closer look.</p>` : '';
 }
 
+/** One sentence for a page written as an addition to a page that waits in another proposal. */
+function extendsNote(e) {
+  return html`<p class="faint">This page adds to one that is waiting in another proposal, ${e.proposalId ? html`<a href="/inbox/p/${encodeURIComponent(e.proposalId)}">${e.title || 'that proposal'}</a>` : 'that proposal'}, and when both are approved the service combines them section by section and drops nothing.</p>`;
+}
+
 function pageCard(p, change, { canAct, csrf, required, why = null }) {
   const req = required?.pages?.[change.slug];
   const rejected = change.pageStatus === 'rejected';
@@ -172,6 +177,7 @@ function pageCard(p, change, { canAct, csrf, required, why = null }) {
       </div>` : ''}
     </div>
     <div class="body">
+      ${(p.extends || []).filter((e) => e.slug === change.slug).map(extendsNote)}
       ${change.hot ? hotWhy(why) : ''}
       ${change.needsManualLook ? html`<p class="missing">This new page has no facts the inbox could pair with a source, so nothing below has been checked for you. Read the whole page before you approve.</p>
         <pre class="preview">${change.preview || ''}</pre>` : ''}
@@ -227,7 +233,7 @@ function decisionCard(p, d, { canAct, csrf }) {
 
 function needsBox(evaluation, p) {
   if (p.status === 'merged') {
-    return html`<div class="needs ready"><h2>Added to the knowledge base</h2><p>${p.merge?.at ? `On ${p.merge.at.slice(0, 10)}` : ''}${p.merge?.approvers?.length ? `, approved by ${p.approvals.filter((a) => p.merge.approvers.includes(a.actorId)).map((a) => a.display).filter((v, i, a) => a.indexOf(v) === i).join(', ')}` : ''}.</p></div>`;
+    return html`<div class="needs ready"><h2>Added to the knowledge base</h2><p>${p.merge?.at ? `On ${p.merge.at.slice(0, 10)}` : ''}${p.merge?.approvers?.length ? `, approved by ${p.approvals.filter((a) => p.merge.approvers.includes(a.actorId)).map((a) => a.display).filter((v, i, a) => a.indexOf(v) === i).join(', ')}` : ''}.</p>${p.merge?.combined?.length ? html`<p>${plural(p.merge.combined.length, 'page')} (${p.merge.combined.join(', ')}) ${p.merge.combined.length === 1 ? 'was' : 'were'} combined with what was already there. Nothing was dropped.</p>` : ''}</div>`;
   }
   if (p.status === 'merged_unaccepted') {
     return html`<div class="needs"><h2>Merged on GitHub, not accepted here</h2><p>${p.merge?.by ? `Merged by ${p.merge.by}` : 'Merged'}${p.merge?.at ? ` on ${p.merge.at.slice(0, 10)}` : ''}, but the knowledge base was not updated: ${p.merge?.message || p.mergeError?.message || 'it could not be verified.'}</p><p>An administrator has to reconcile it by hand. This is recorded as a policy violation.</p></div>`;
@@ -395,6 +401,7 @@ export function activityPage({ entries, titles, actor, csrf, nonce, now = Date.n
     <table class="list"><tbody>${entries.map((e) => html`<tr>
       <td><strong>${e.detail?.actor || e.actorId}</strong> ${ACTIVITY_WORDS[e.action] || e.action}${e.detail?.scope && e.detail.scope !== 'all' ? html` (page ${e.detail.scope})` : ''}
         ${titles.get(e.target) ? html` — <a href="/inbox/p/${encodeURIComponent(e.target)}">${titles.get(e.target)}</a>` : ''}
+        ${e.action === 'proposal.merge' && e.detail?.combined?.length ? html`<div class="cite">Combined with what was already there: ${e.detail.combined.join(', ')}.</div>` : ''}
         ${e.action === 'policy.violation' ? html`<div class="cite missing">${e.detail?.reason || ''}</div>` : ''}</td>
       <td class="faint">${e.channel}</td><td class="faint">${timeAgo(e.ts, now)}</td></tr>`)}</tbody></table>`}`;
   return layout({ title: 'Activity', actor, nonce, csrf, current: 'activity', body });
