@@ -40,7 +40,7 @@ MCP server ──list──▶ items (ref, version, title)
 | Recipe | `server/src/connectors/recipes/<name>.yaml` | How to list, fetch and render that kind of server |
 | Snapshot | `brain/raw/extracted/<connector-id>/<slug>.txt` | The committed text pages cite; its sha256 is the fingerprint |
 | Manifest entry | `brain/manifest.yaml`, `kind: connector` | The record of what was ingested at which digest |
-| Operational state | service store: `connector-cursor`, `connector-item`, `connector-lookup`, `connector-oauth` | Sync cursor, per-item version cache, documents fetched by live lookup, sealed OAuth tokens |
+| Operational state | service store: `connector-cursor`, `connector-item`, `connector-lookup`, `connector-lookup-title`, `connector-oauth` | Sync cursor, per-item version cache, documents fetched by live lookup, raw titles of lookup search hits until fetched, sealed OAuth tokens |
 
 ## Configuration
 
@@ -166,13 +166,24 @@ missing`; pages and snapshots stay.
 **A document that lookup fetched outside the listing is not missing.** Live
 lookup can fetch a document the connector's `select` does not list. It records
 that ref in the `connector-lookup` store namespace, as `{ at, title, failures,
-checkedAt }`, but only when no sync has tracked the document. On a complete
+checkedAt }`, unless the sync is already responsible for the document. The sync
+is responsible when its own listing wrote the item record and `main` has no
+entry yet, or when `main` has an entry and the store holds no item record. A
+record that only lookups wrote never counts, and neither does a sync record once
+`main` has the entry, because the document may have left `select` since. The
+`connector-item` record has an optional `via` field for this: `lookup` when only
+lookup has fetched the document, absent when a sync listing wrote it. The
+`connector-lookup-title` namespace keeps the raw title of a search hit until the
+document is fetched, so a lookup fetch after a restart gives the same
+fingerprint a sync does. On a complete
 listing the sync leaves such an entry out of `missing` and fetches it again by
 ref, up to `max_items` of them, oldest check first, with the title the search
 gave. A changed document comes back as a `changed` SourceRef like any other. A
 fetch that fails goes to `errors`. After three failed re-checks in a row the ref
-is reported in `missing` and the record is removed. A complete listing that
-includes the ref clears the record. This needs a recipe whose `fetch` calls a
+is reported in `missing` and the record is removed. A document that lookup
+fetched and that is then deleted upstream before the next complete sync is
+reported missing after three syncs, where a sync-only document is reported after
+one. A complete listing that includes the ref clears the record. This needs a recipe whose `fetch` calls a
 tool or method. Without the record, the same entry is reported missing.
 
 **Unchanged with respect to what?** To `main`. An item whose proposal is still
