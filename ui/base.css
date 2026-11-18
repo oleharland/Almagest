@@ -1,0 +1,223 @@
+/*
+ * Almagest UI base: fonts, reset, document typography, focus, selection and
+ * the layout primitives. Needs tokens.css first. No dependencies.
+ *
+ * Both frontends take their look from this folder. Do not restyle the same
+ * thing in the site or the inbox: change it here.
+ */
+
+@font-face {
+  font-family: "Geist";
+  src: url("./fonts/GeistVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("./fonts/GeistMonoVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Reset */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body, h1, h2, h3, h4, h5, h6, p, figure, blockquote, dl, dd, pre { margin: 0; }
+:where(ul[role="list"], ol[role="list"]) { list-style: none; margin: 0; padding: 0; }
+img, svg, video { display: block; max-width: 100%; }
+img { height: auto; }
+button, input, select, textarea { font: inherit; color: inherit; letter-spacing: inherit; }
+button { cursor: pointer; }
+[hidden] { display: none !important; }
+table { border-collapse: collapse; }
+
+/* Document */
+html {
+  background: var(--surface);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  min-height: 100vh;
+  background: var(--surface);
+  color: var(--content);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  font-feature-settings: "calt", "kern";
+  overflow-wrap: break-word;
+}
+
+h1, h2, h3, h4 { font-weight: var(--weight-semibold); line-height: var(--leading-tight); color: var(--content); text-wrap: balance; }
+h1 { font-size: var(--text-2xl); letter-spacing: var(--tracking-display); }
+h2 { font-size: var(--text-lg); letter-spacing: var(--tracking-title); line-height: var(--leading-snug); }
+h3 { font-size: var(--text-md); letter-spacing: var(--tracking-heading); line-height: var(--leading-snug); }
+h4 { font-size: var(--text-base); line-height: var(--leading-snug); }
+@media (min-width: 768px) { h1 { font-size: var(--text-3xl); } }
+
+p { text-wrap: pretty; }
+strong, b { font-weight: var(--weight-semibold); }
+small { font-size: var(--text-sm); }
+
+/* Links: ink, with a quiet underline. Colour is never the only cue. */
+a {
+  color: var(--content);
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: text-decoration-color var(--duration) var(--ease), color var(--duration) var(--ease);
+}
+@media (hover: hover) {
+  a:hover { text-decoration-color: var(--content); }
+}
+
+code, kbd, samp, pre { font-family: var(--font-mono); font-size: 0.9em; font-feature-settings: "calt" 0; }
+code {
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-subtle);
+  padding: 0.05em 0.35em;
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+pre {
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  overflow-x: auto;
+  line-height: var(--leading-snug);
+}
+pre code { background: none; border: 0; padding: 0; font-size: 1em; overflow-wrap: normal; }
+
+hr { border: 0; border-top: 1px solid var(--border); margin: var(--space-6) 0; }
+
+/* Focus: visible on every interactive element, blue, never removed. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+:focus:not(:focus-visible) { outline: none; }
+
+::selection { background: var(--selection); color: var(--selection-content); }
+
+:target { scroll-margin-top: calc(var(--appbar-height) + var(--space-4)); }
+
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth; }
+}
+
+/* A theme switch must not smear every transition at once. Set the attribute
+   on <html>, remove it on the next frame. */
+:root[data-theme-switching] *, :root[data-theme-switching] *::before, :root[data-theme-switching] *::after {
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+
+/* ── Layout primitives ─────────────────────────────────────────────────────
+   Three named widths. A page container picks exactly one:
+     .al-page            standard: lists and ordinary pages   (--width-page)
+     .al-page--measure   reading: prose                       (--width-measure)
+     .al-page--wide      review work                          (--width-wide)
+   The app bar's inner container takes the same modifier as the page below it,
+   so the brand and the content share one left edge. */
+
+.al-page {
+  width: 100%;
+  max-width: calc(var(--width-page) + 2 * var(--gutter));
+  margin-inline: auto;
+  padding-inline: var(--gutter);
+}
+.al-page--measure { max-width: calc(var(--width-measure) + 2 * var(--gutter)); }
+.al-page--wide {
+  max-width: calc(var(--width-wide) + 2 * var(--gutter-wide));
+  padding-inline: var(--gutter-wide);
+}
+
+/* The main region of a page. */
+.al-main { padding-block: var(--space-6) var(--space-8); min-width: 0; }
+@media (max-width: 640px) { .al-main { padding-block: var(--space-5) var(--space-7); } }
+
+/* Vertical rhythm: children are spaced by --stack, default one step. */
+.al-stack { display: flex; flex-direction: column; gap: var(--stack, var(--space-4)); min-width: 0; }
+.al-stack--sm { --stack: var(--space-2); }
+.al-stack--lg { --stack: var(--space-6); }
+
+/* Document flow: a page body with its own rhythm. Headings get more space above. */
+.al-flow { min-width: 0; }
+.al-flow > * + * { margin-top: var(--space-4); }
+.al-flow > h2 { margin-top: var(--space-7); }
+.al-flow > h2 + * { margin-top: var(--space-3); }
+.al-flow > h1 + .al-lede, .al-flow > .al-pagehead { margin-top: 0; }
+.al-flow > h1 + p { margin-top: var(--space-2); }
+
+/* A wrapping row. */
+.al-cluster { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cluster, var(--space-2)); min-width: 0; }
+.al-cluster--lg { --cluster: var(--space-4); }
+.al-cluster--end { justify-content: flex-end; }
+.al-cluster--between { justify-content: space-between; }
+.al-grow { flex: 1 1 0; min-width: 0; }
+
+/* Page header: title, then a lede. */
+.al-pagehead { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-5); }
+.al-lede { color: var(--content-secondary); font-size: var(--text-md); line-height: var(--leading-normal); max-width: var(--width-measure); }
+
+/* Section heading with an optional count. */
+.al-section { margin-top: var(--space-6); }
+.al-section__title {
+  display: flex; align-items: baseline; gap: var(--space-2);
+  font-size: var(--text-sm); font-weight: var(--weight-medium);
+  color: var(--content-secondary);
+  letter-spacing: var(--tracking-label); text-transform: uppercase;
+  padding-bottom: var(--space-2); margin-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+.al-section__count { color: var(--content-tertiary); font-variant-numeric: tabular-nums; }
+
+/* Prose: document typography for rendered Markdown and long text. */
+.al-prose { max-width: var(--width-measure); line-height: var(--leading-prose); font-size: var(--text-base); }
+.al-prose > * + * { margin-top: var(--space-4); }
+.al-prose h1 { font-size: var(--text-2xl); }
+.al-prose h2 { margin-top: var(--space-6); padding-bottom: var(--space-2); border-bottom: 1px solid var(--border); }
+.al-prose h3 { margin-top: var(--space-5); }
+.al-prose h2 + *, .al-prose h3 + * { margin-top: var(--space-3); }
+.al-prose ul, .al-prose ol { padding-left: 1.3em; }
+.al-prose li + li { margin-top: var(--space-1); }
+.al-prose li > ul, .al-prose li > ol { margin-top: var(--space-1); }
+.al-prose blockquote {
+  padding: var(--space-2) var(--space-4);
+  border-left: 2px solid var(--border-strong);
+  color: var(--content-secondary);
+}
+.al-prose blockquote > * + * { margin-top: var(--space-2); }
+.al-prose img { border-radius: var(--radius); }
+.al-prose table { width: 100%; font-size: var(--text-sm); }
+.al-prose th, .al-prose td { border: 1px solid var(--border); padding: var(--space-2) var(--space-3); text-align: left; vertical-align: top; }
+.al-prose th { background: var(--surface-secondary); font-weight: var(--weight-semibold); }
+.al-prose a { text-decoration-color: var(--border-strong); }
+
+/* Utilities */
+.al-text-secondary { color: var(--content-secondary); }
+.al-text-tertiary { color: var(--content-tertiary); font-size: var(--text-sm); }
+.al-mono { font-family: var(--font-mono); font-size: 0.92em; }
+.al-text-warning { color: var(--warning); font-size: var(--text-sm); }
+.al-nowrap { white-space: nowrap; }
+.al-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.al-visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.al-skip-link {
+  position: absolute; left: var(--space-3); top: -100px; z-index: 100;
+  background: var(--surface); color: var(--content);
+  padding: var(--space-2) var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius);
+}
+.al-skip-link:focus { top: var(--space-3); }

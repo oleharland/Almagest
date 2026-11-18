@@ -1,0 +1,304 @@
+/*
+ * Almagest UI tokens. Shared by the site and the review inbox.
+ *
+ * Layer 1, primitives: raw colour ramps. Never use them in components.
+ * Layer 2, semantic: what a colour is for. Components use only these.
+ * Dark follows prefers-color-scheme and can be forced either way with
+ * data-theme="light" or data-theme="dark" on <html>.
+ *
+ * Instance themes redefine semantic tokens in site/src/styles/theme.css.
+ * Remember the dark blocks: a plain `:root` override loses to them in dark.
+ */
+
+:root {
+  /* Primitives: ink (neutral) */
+  --color-white: #ffffff;
+  --color-black: #000000;
+  --color-ink-50: #f4f4f5;
+  --color-ink-100: #e8e8e9;
+  --color-ink-200: #d4d4d6;
+  --color-ink-300: #bcbcbe;
+  --color-ink-400: #a2a3a6;
+  --color-ink-500: #88898c;
+  --color-ink-600: #6f7074;
+  --color-ink-700: #55565b;
+  --color-ink-800: #3e4044;
+  --color-ink-900: #2b2c31;
+  --color-ink-950: #1a1c21;
+
+  /* Primitives: blue (accent) */
+  --color-brand-blue: #4469fc;
+  --color-blue-50: #eff3fe;
+  --color-blue-100: #dee8ff;
+  --color-blue-200: #c2d4ff;
+  --color-blue-300: #a0baff;
+  --color-blue-400: #7b9eff;
+  --color-blue-500: #567dff;
+  --color-blue-600: #3b5def;
+  --color-blue-700: #123bd9;
+  --color-blue-800: #0613bb;
+  --color-blue-900: #04008f;
+  --color-blue-950: #020168;
+
+  /* Primitives: status and tier hues */
+  --color-teal-50: #e4f7ff;
+  --color-teal-100: #cfeefa;
+  --color-teal-200: #b5dbeb;
+  --color-teal-300: #93c5d8;
+  --color-teal-400: #6eadc5;
+  --color-teal-500: #4794af;
+  --color-teal-600: #247b97;
+  --color-teal-700: #046079;
+  --color-teal-800: #00475b;
+  --color-teal-900: #003241;
+  --color-teal-950: #00222d;
+
+  --color-red-50: #ffefee;
+  --color-red-100: #f8e4e4;
+  --color-red-200: #ffc3bf;
+  --color-red-300: #ff9d98;
+  --color-red-400: #f87471;
+  --color-red-500: #e7494d;
+  --color-red-600: #cc1e30;
+  --color-red-700: #a5011f;
+  --color-red-800: #7c0014;
+  --color-red-900: #5a000c;
+  --color-red-950: #3b0b0b;
+
+  --color-green-50: #ddffd9;
+  --color-green-100: #cef5ca;
+  --color-green-200: #b2e4ac;
+  --color-green-300: #8dd085;
+  --color-green-400: #62bb5a;
+  --color-green-500: #32a429;
+  --color-green-600: #0c8801;
+  --color-green-700: #076a01;
+  --color-green-800: #114e0b;
+  --color-green-900: #023800;
+  --color-green-950: #012700;
+
+  --color-amber-50: #fcf8d8;
+  --color-amber-100: #f1eab9;
+  --color-amber-200: #e0d797;
+  --color-amber-300: #cbbe66;
+  --color-amber-400: #b7a51e;
+  --color-amber-500: #9b8a01;
+  --color-amber-600: #7f7101;
+  --color-amber-700: #5e5515;
+  --color-amber-800: #494000;
+  --color-amber-900: #332d00;
+  --color-amber-950: #231e00;
+
+  /* Typography */
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Type scale. Body is 15px. Nothing is smaller than 12px. */
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md: 1.0625rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2rem;
+  --text-3xl: 2.5rem;
+
+  --leading-tight: 1.2;
+  --leading-snug: 1.4;
+  --leading-normal: 1.6;
+  --leading-prose: 1.7;
+
+  --tracking-display: -0.03em;
+  --tracking-title: -0.02em;
+  --tracking-heading: -0.01em;
+  --tracking-label: 0.04em;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* Spacing scale, 4px base */
+  --space-0: 0.125rem;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  /* Radii. Small. Nested surfaces: outer = inner + padding + border. */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
+  --radius-full: 999px;
+
+  /* Named widths. A page picks one, nothing sets its own pixel width. */
+  --width-measure: 70ch;
+  --width-page: 1120px;
+  --width-wide: 1440px;
+  --gutter: clamp(16px, 4vw, 32px);
+  --gutter-wide: clamp(16px, 3vw, 48px);
+
+  /* Chrome */
+  --appbar-height: 56px;
+  --pane-width: 300px;
+  --control-height: 36px;
+  --control-height-sm: 30px;
+  --control-height-lg: 44px;
+
+  /* Motion: short colour and opacity transitions only */
+  --duration: 120ms;
+  --ease: ease-out;
+
+  color-scheme: light;
+}
+
+/* Semantic tokens, light (default). [data-theme] on any element scopes a theme to it. */
+:root,
+[data-theme="light"] {
+  --surface: var(--color-white);
+  --surface-secondary: var(--color-ink-50);
+  --surface-tertiary: var(--color-ink-100);
+  --surface-inverse: var(--color-ink-950);
+
+  --content: var(--color-ink-950);
+  --content-secondary: var(--color-ink-700);
+  --content-tertiary: var(--color-ink-600);
+  --content-inverse: var(--color-ink-50);
+
+  --border-subtle: #1a1c210f;
+  --border: #1a1c211a;
+  --border-strong: #1a1c2147;
+
+  --accent: var(--color-blue-600);
+  --accent-hover: var(--color-blue-700);
+  --accent-soft: color-mix(in srgb, var(--color-blue-600) 9%, transparent);
+  --accent-content: var(--color-white);
+  --focus-ring: var(--color-blue-600);
+  --selection: var(--color-blue-200);
+  --selection-content: var(--color-blue-900);
+
+  --success: var(--color-green-700);
+  --success-soft: color-mix(in srgb, var(--color-green-600) 10%, transparent);
+  --warning: var(--color-amber-700);
+  --warning-soft: color-mix(in srgb, var(--color-amber-600) 10%, transparent);
+  --danger: var(--color-red-700);
+  --danger-soft: color-mix(in srgb, var(--color-red-600) 10%, transparent);
+  --info: var(--color-blue-700);
+  --info-soft: color-mix(in srgb, var(--color-blue-600) 10%, transparent);
+
+  --tier-canonical: var(--color-ink-950);
+  --tier-curated: var(--color-teal-700);
+  --tier-evidence: var(--color-ink-600);
+
+  --diff-add: var(--color-green-50);
+  --diff-add-mark: var(--color-green-200);
+  --diff-add-content: var(--color-green-800);
+  --diff-del: var(--color-red-50);
+  --diff-del-mark: var(--color-red-200);
+  --diff-del-content: var(--color-red-800);
+
+  --shadow-pop: 0 4px 16px #1a1c2112;
+}
+
+/* Semantic tokens, dark: by system preference, unless the page forces light */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --surface: var(--color-ink-950);
+    --surface-secondary: var(--color-ink-900);
+    --surface-tertiary: var(--color-ink-800);
+    --surface-inverse: var(--color-white);
+
+    --content: var(--color-ink-50);
+    --content-secondary: var(--color-ink-300);
+    --content-tertiary: var(--color-ink-400);
+    --content-inverse: var(--color-ink-950);
+
+    --border-subtle: #f4f4f512;
+    --border: #f4f4f521;
+    --border-strong: #f4f4f552;
+
+    --accent: var(--color-blue-400);
+    --accent-hover: var(--color-blue-300);
+    --accent-soft: color-mix(in srgb, var(--color-blue-400) 14%, transparent);
+    --accent-content: var(--color-ink-950);
+    --focus-ring: var(--color-blue-400);
+    --selection: var(--color-blue-800);
+    --selection-content: var(--color-blue-100);
+
+    --success: var(--color-green-300);
+    --success-soft: color-mix(in srgb, var(--color-green-400) 15%, transparent);
+    --warning: var(--color-amber-300);
+    --warning-soft: color-mix(in srgb, var(--color-amber-400) 15%, transparent);
+    --danger: var(--color-red-300);
+    --danger-soft: color-mix(in srgb, var(--color-red-400) 15%, transparent);
+    --info: var(--color-blue-300);
+    --info-soft: color-mix(in srgb, var(--color-blue-400) 15%, transparent);
+
+    --tier-canonical: var(--color-ink-50);
+    --tier-curated: var(--color-teal-300);
+    --tier-evidence: var(--color-ink-400);
+
+    --diff-add: #0f2a12;
+    --diff-add-mark: #1d5a1f;
+    --diff-add-content: var(--color-green-200);
+    --diff-del: #3a1114;
+    --diff-del-mark: #7a1f25;
+    --diff-del-content: var(--color-red-200);
+
+    --shadow-pop: 0 4px 16px #00000066;
+  }
+}
+
+/* Semantic tokens, dark: forced */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface: var(--color-ink-950);
+  --surface-secondary: var(--color-ink-900);
+  --surface-tertiary: var(--color-ink-800);
+  --surface-inverse: var(--color-white);
+
+  --content: var(--color-ink-50);
+  --content-secondary: var(--color-ink-300);
+  --content-tertiary: var(--color-ink-400);
+  --content-inverse: var(--color-ink-950);
+
+  --border-subtle: #f4f4f512;
+  --border: #f4f4f521;
+  --border-strong: #f4f4f552;
+
+  --accent: var(--color-blue-400);
+  --accent-hover: var(--color-blue-300);
+  --accent-soft: color-mix(in srgb, var(--color-blue-400) 14%, transparent);
+  --accent-content: var(--color-ink-950);
+  --focus-ring: var(--color-blue-400);
+  --selection: var(--color-blue-800);
+  --selection-content: var(--color-blue-100);
+
+  --success: var(--color-green-300);
+  --success-soft: color-mix(in srgb, var(--color-green-400) 15%, transparent);
+  --warning: var(--color-amber-300);
+  --warning-soft: color-mix(in srgb, var(--color-amber-400) 15%, transparent);
+  --danger: var(--color-red-300);
+  --danger-soft: color-mix(in srgb, var(--color-red-400) 15%, transparent);
+  --info: var(--color-blue-300);
+  --info-soft: color-mix(in srgb, var(--color-blue-400) 15%, transparent);
+
+  --tier-canonical: var(--color-ink-50);
+  --tier-curated: var(--color-teal-300);
+  --tier-evidence: var(--color-ink-400);
+
+  --diff-add: #0f2a12;
+  --diff-add-mark: #1d5a1f;
+  --diff-add-content: var(--color-green-200);
+  --diff-del: #3a1114;
+  --diff-del-mark: #7a1f25;
+  --diff-del-content: var(--color-red-200);
+
+  --shadow-pop: 0 4px 16px #00000066;
+}

@@ -523,7 +523,16 @@ reviewer's token in its environment (Claude Code with `ALMAGEST_TOKEN`, an MCP
 client) gets 403 on every action. API output never includes the server's
 filesystem paths (worktrees, staging). Every page is sent with a
 strict Content-Security-Policy (no external resources; only the page's own
-nonce'd style and script), `X-Frame-Options: DENY` and `no-referrer`.
+nonce'd style and script, plus fonts from the service itself via `font-src 'self'`),
+`X-Frame-Options: DENY` and `no-referrer`. The full policy is `default-src 'none'; style-src 'nonce-…'; script-src 'nonce-…'; img-src 'self' data:; font-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`.
+
+**Look.** The inbox takes its look from the shared `ui/` library at the repo
+root (tokens, base, components), the same files the site uses. They are read
+once at start and inlined in the one nonce'd `<style>`, followed by
+`site/src/styles/theme.css`, so one override file themes both frontends. The two
+Geist font files are served by the service at `/inbox/fonts/<version>/<name>.woff2`
+(fixed names, long cache, ETag, no directory listing); if they fail to load the
+system font stack is used. A deployment image must contain the `ui/` folder.
 
 **mcp**: `ctx.governance.createConfirmation(prpId, human, 'approve' |
 'reject')` returns `{ url, code, expiresAt }`. `/inbox/confirm/<code>` has no

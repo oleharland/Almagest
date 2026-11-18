@@ -4,5 +4,8 @@ interface Props {
   kind?: string;
 }
 const { label, kind } = Astro.props;
+const isTier = kind === 'canonical' || kind === 'curated' || kind === 'evidence';
 ---
-<span class:list={['badge', kind && `badge--${kind}`]}>{label}</span>
+{isTier
+  ? <span class={`al-tier al-tier--${kind}`}>{label}</span>
+  : <span class:list={['al-badge', kind === 'stub' && 'al-badge--quiet']}>{label}</span>}

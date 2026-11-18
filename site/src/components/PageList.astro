@@ -15,13 +15,13 @@ function preview(html: string): string {
   return text.length > 120 ? text.slice(0, 119).trimEnd() + '…' : text;
 }
 ---
-<ul class="page-list">
+<ul class="al-list">
   {pages.map((page) => (
-    <li data-search={`${page.title} ${page.tags.join(' ')} ${page.type}`.toLowerCase()}>
-      <a href={hrefFor(page.id)}>
-        <span class="name">{page.title}</span>
-        <span class="summary">{preview(page.html)}</span>
-        <span class="meta">
+    <li class="al-list__item" data-search={`${page.title} ${page.tags.join(' ')} ${page.type}`.toLowerCase()}>
+      <a class="al-row" href={hrefFor(page.id)}>
+        <span class="al-row__title">{page.title}</span>
+        <span class="al-row__summary">{preview(page.html)}</span>
+        <span class="al-row__meta">
           {page.status === 'stub' && <Badge label="stub" kind="stub" />}
           <Badge label={page.tier} kind={page.tier} />
         </span>

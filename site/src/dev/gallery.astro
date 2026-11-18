@@ -1,0 +1,48 @@
+---
+import Base from '../layouts/Base.astro';
+import GalleryBody from './GalleryBody.astro';
+---
+<Base title="Gallery" current="gallery">
+  <div class="al-pagehead">
+    <h1>Gallery</h1>
+    <p class="al-lede">Every shared component in every state, in light and dark. Dev only: this route is not built into the production site.</p>
+  </div>
+
+  <div class="g-panes">
+    <div class="g-pane" data-theme="light"><p class="g-label">Light</p><GalleryBody id="light" /></div>
+    <div class="g-pane" data-theme="dark"><p class="g-label">Dark</p><GalleryBody id="dark" /></div>
+  </div>
+
+  <section class="al-section">
+    <h2 class="al-section__title">Two-pane layout</h2>
+    <div class="al-twopane al-twopane--side-first">
+      <div class="al-twopane__main al-prose">
+        <h3>Job scheduler</h3>
+        <p>The main column holds the reading measure. The side pane sticks below the app bar while you scroll and drops above the content on narrow screens.</p>
+        <p>The scheduler retries a failed job on an exponential backoff. See <a class="wikilink" href="#">Retry budget</a>.</p>
+      </div>
+      <aside class="al-twopane__side">
+        <section><h2>Sources</h2><p><code>alpha-pdf</code> Alpha System Overview</p></section>
+        <section><h2>Metadata</h2><dl class="al-dl"><dt>Owner</dt><dd>platform</dd><dt>Tier</dt><dd>curated</dd></dl></section>
+      </aside>
+    </div>
+  </section>
+
+  <div class="al-actionbar g-actionbar">
+    <div class="al-actionbar__inner">
+      <div class="al-actionbar__msg">Ready to add. Approving adds it once everything above is in place.</div>
+      <button class="al-btn" type="button">Try again</button>
+      <button class="al-btn al-btn--primary" type="button">Approve all</button>
+    </div>
+  </div>
+</Base>
+
+<style is:global>
+  .g-panes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); align-items: start; }
+  .g-pane { background: var(--surface); color: var(--content); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-5); min-width: 0; }
+  .g-label { font-size: var(--text-xs); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--content-tertiary); margin-bottom: var(--space-4); }
+  .g-h { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--content-secondary); letter-spacing: var(--tracking-label); text-transform: uppercase; padding-bottom: var(--space-2); border-bottom: 1px solid var(--border); }
+  .g-static { position: static; border: 1px solid var(--border); border-radius: var(--radius-lg); padding-inline: var(--space-4); }
+  .g-actionbar { margin-top: var(--space-6); }
+  @media (max-width: 1100px) { .g-panes { grid-template-columns: minmax(0, 1fr); } }
+</style>
