@@ -1,10 +1,10 @@
 # Curation: choosing a tier in the inbox, and learnings the brain proposes
 
-Status: Part 1 (choosing a tier in the inbox) is built. Part 2 (learnings the
-brain proposes) is not built. The document covers two gaps seen in the first
-real run of the service. Part 1 now describes what the code does; where the
-code differs from the first design, this text follows the code. User-facing
-description: [governance.md](governance.md), section Tiers in the inbox.
+Status: both parts are built. The document covers two gaps seen in the first
+real run of the service. It describes what the code does; where the code
+differs from the first design, this text follows the code. User-facing
+description: [governance.md](governance.md), sections Tiers in the inbox and
+Learnings. Operator description: [ingest.md](ingest.md), section Learnings.
 
 ## The two gaps
 
@@ -134,17 +134,20 @@ writes one.
 
 | | |
 |---|---|
-| Trigger | After merges, once at least N pages changed since the last run (default 5). Also on a cron expression, and by hand with `almagest synthesize` |
+| Trigger | After a merge, once at least N source pages were added or changed on `main` since the last run (default 5). Also on a cron expression that runs the same check, and by hand with `almagest synthesize` (`--force` skips only the threshold) |
 | Default | On (`synthesis.enabled: true`), decided by the owner on 2026-11-18. The caps below bound what it costs |
 | What the agent reads | The wiki on `main`, nothing else. No new source |
-| What it may write | Up to a capped number of `claim` pages (default 5) on an `ingest/` branch, and nothing else |
+| What it may write | Up to a capped number of `claim` pages (default 5) on `ingest/learnings-<sha7 of main>`, and the index, log and derived index rows they need. Nothing else |
 | How it ends | A proposal labelled as learnings. Each claim can be accepted or turned down on its own, which the inbox already supports per page |
 
 What counts as a learning, written into the rules the agent follows:
 
 - It rests on at least two `origin: source` pages that come from different
-  sources. One page restated is not a learning.
-- Its Basis never consists of other claim pages alone.
+  sources. One page restated is not a learning. Two source entries count as one
+  source when they share an id or a sha256.
+- Its Basis never consists of other claim pages alone. The runner counts only
+  the `origin: source` pages in it, so a link to a claim page beside two source
+  pages is allowed.
 - It says something none of its Basis pages says alone: a pattern, a
   comparison, a consequence.
 - It carries a `confidence`, and `low` blocks, as for any curated page.
@@ -173,10 +176,17 @@ Both are plain comparisons, so they belong in `tools/audit.mjs`, as warnings:
 - The job cannot touch a canonical page, cannot edit an existing page and
   cannot add a source. The runner's path guard enforces it: for this job kind
   the only allowed change is new `claim` pages and the bookkeeping files.
-- No loops and no floods: at most one open learnings proposal at a time, one
-  run per window, a cap per run, and a cost cap per day.
-- A learning a person turned down is remembered by its Basis set and is not
-  proposed again until one of those pages changes.
+- No loops and no floods. The code enforces these bounds, in this order:
+  `synthesis.enabled`; one `synthesize` job queued or running; no new run while
+  a learnings proposal is open; `max_runs_per_day` runs per UTC day counted from
+  the jobs in the store; the changed-pages threshold. A merged learnings
+  proposal never starts a run: it adds claim pages, which are not source pages,
+  and its merge is skipped. The cap per run is `max_claims`. There is no
+  separate dollar cap: the existing `ingest.budget_usd_per_job` applies to the
+  job, and `max_runs_per_day` bounds the number of jobs.
+- A learning a person turned down is remembered by its Basis set, its title and
+  the sha256 of each Basis page. The runner refuses a new page on exactly that
+  Basis set while every one of those pages is unchanged.
 - With anonymization on, the job runs under the same rules as ingest.
 
 ### What changes in the code
@@ -184,13 +194,13 @@ Both are plain comparisons, so they belong in `tools/audit.mjs`, as warnings:
 | File | Change |
 |---|---|
 | `server/src/core/schemas.mjs` | Job kind `synthesize`, trigger `synthesis` |
-| `server/src/ingest/prompt.mjs`, `agent/rules/ingest.md` | The task text and the rules above |
-| `server/src/ingest/runner.mjs` | A path guard for this kind: new claim pages only |
-| `server/src/ingest/index.mjs` or a small `synthesis.mjs` | The trigger: count changed pages on merge, the cron, the window marker, the caps |
-| `server/src/governance/service.mjs`, `web/views.mjs` | Label the proposal, remember turned-down learnings |
-| `tools/audit.mjs`, `docs/audit.md` | `DUP-001`, `BASIS-001` |
-| `server/src/governance/index.mjs` (Part 1) | `almagest canonical-hints`, read only |
-| `server/bin/almagest.mjs` | `almagest synthesize` |
+| `server/src/ingest/prompt.mjs`, `agent/rules/ingest.md` | The task text and the rules above (Runner mode, Learnings) |
+| `server/src/ingest/runner.mjs` | `guardLearnings`: new claim pages and bookkeeping only, with the Basis checks. Also applied to a revise of a learnings proposal |
+| `server/src/ingest/synthesis.mjs` (new) | The trigger and the bounds: count changed source pages on merge, the cron, the last-run marker, the caps |
+| `server/src/ingest/index.mjs` | Starts and stops the trigger; `almagest synthesize` is registered here with the other ingest commands |
+| `server/src/governance/learnings.mjs` (new) | Reads a learning's Basis; the store of turned-down learnings |
+| `server/src/governance/service.mjs`, `summary.mjs`, `web/views.mjs` | `kind: 'learnings'`, the title, the explanation, the Basis links, remembering what was turned down |
+| `tools/lib/checks.mjs`, `docs/audit.md` | `DUP-001`, `BASIS-001` |
 
 ## Build order
 

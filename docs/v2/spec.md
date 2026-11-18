@@ -163,9 +163,9 @@ optionally `commit` and `supersedes` (a v1 `kind: remote` manifest id). See
 
 ```js
 { id: 'job_…',
-  kind: 'ingest' | 'revise' | 'reverify' | 'drop-page',
+  kind: 'ingest' | 'revise' | 'reverify' | 'drop-page' | 'synthesize',
   source: SourceRef | null,
-  trigger: 'watch' | 'schedule' | 'manual' | 'mcp' | 'hook' | 'decision' | 'feedback' | 'demand' | 'lookup',
+  trigger: 'watch' | 'schedule' | 'manual' | 'mcp' | 'hook' | 'decision' | 'feedback' | 'demand' | 'lookup' | 'synthesis',
   requestedBy: Actor.id,
   requester?: { id, kind?, display?, email? },   // when enqueue got an Actor, not an id — the commit co-author
   onBehalfOf?: Actor.id,                  // an agent acting for a person (MCP submit_source); also co-authors
@@ -193,6 +193,7 @@ Dedup: enqueueing a job whose `(kind, source.id, source.sha256)` matches a
 set on it so a caller that counts new jobs can tell. Refinements (ingest):
 - a source-less `reverify` dedups on `(kind, slug)`;
 - `drop-page` dedups on `(proposalId, slug)`;
+- a `synthesize` job has no source and dedups on its kind alone: one is queued or running at a time;
 - a `revise` still **queued** for the same proposal absorbs the new
   `instructions` (appended) instead of being collapsed or duplicated: two
   decisions resolved back to back must both reach the agent;
@@ -201,6 +202,11 @@ set on it so a caller that counts new jobs can tell. Refinements (ingest):
   merged / rejected / superseded, or that found nothing to review: a connector
   re-listing an item under review every 15 minutes spawns no new jobs.
   `manual` skips this: `almagest ingest <path>` is how a person forces a re-run.
+
+A `synthesize` job (trigger `synthesis`) has no source. It reads `main` and may
+only add `claim` pages; the runner enforces that, and `ctx.ingest.synthesis.request()`
+holds the bounds for when one is queued. CLI: `almagest synthesize [--force]`.
+Rules and bounds: `docs/v2/ingest.md` → Learnings.
 
 ### RunReport — what the agent hands back
 
@@ -239,7 +245,7 @@ cannot change it.
   approvals: [{ actorId, at, scope: 'all' | '<slug>', channel: ChannelKind }],
   merge?: { sha, at, by, combined?: [slug] },
   extends?: [{ slug, proposalId, title }],   // pages written as additions to pages pending in other proposals
-  kind?: 'tier', tier?: { slug, from, to, title },   // a tier proposal: one page, one `tier:` line (governance.md, Tiers in the inbox)
+  kind?: 'tier' | 'learnings', tier?: { slug, from, to, title },   // a tier proposal: one page, one `tier:` line (governance.md, Tiers in the inbox)
   tierEdits?: { [slug]: { from, to, by, at, headSha, blob } },   // a person's tier choice on a page in this proposal
   createdAt, updatedAt }
 
@@ -431,6 +437,13 @@ ingest:
   timeout_minutes: 30
   watch_raw: true
   max_attempts: 2
+
+synthesis:                         # docs/v2/ingest.md → Learnings. On by default
+  enabled: true
+  min_changed_pages: 5             # source pages added or changed on main since the last run
+  max_runs_per_day: 1
+  max_claims: 5                    # new claim pages one run may add
+  schedule: ""                     # cron expression that also checks; empty = after merges only
 
 sources:
   local: { path: brain/raw }

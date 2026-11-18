@@ -45,6 +45,16 @@ export const BASE = {
     canonical_hint: { enabled: true, min_sources: 5, min_backlinks: 8, hot_factor: 0.6 },
     rules: [],
   },
+  // The brain draws conclusions from pages already reviewed and proposes them
+  // (ingest/synthesis.mjs). On by default; every run is still a proposal a
+  // person approves. docs/v2/ingest.md → Learnings.
+  synthesis: {
+    enabled: true,
+    min_changed_pages: 5,     // source pages added or changed on main since the last run
+    max_runs_per_day: 1,
+    max_claims: 5,            // new claim pages one run may add
+    schedule: '',             // cron expression that also checks; empty = merges only
+  },
   telemetry: {
     enabled: true,
     store_queries: 'plain',
@@ -200,7 +210,7 @@ export function loadServiceConfig(repoRoot, options = {}) {
     deepMerge(
       BASE,
       PROFILE_DEFAULTS[profile],
-      { service: raw.service, ingest: raw.ingest, governance: raw.governance, telemetry: raw.telemetry, mcp: raw.mcp },
+      { service: raw.service, ingest: raw.ingest, governance: raw.governance, synthesis: raw.synthesis, telemetry: raw.telemetry, mcp: raw.mcp },
       overrides,
     ),
     env,
@@ -237,6 +247,7 @@ export function loadServiceConfig(repoRoot, options = {}) {
     service: merged.service,
     ingest: merged.ingest,
     governance: merged.governance,
+    synthesis: merged.synthesis,
     telemetry: merged.telemetry,
     mcp: merged.mcp || {},           // defaults live in server/src/mcp/config.mjs
     sources: { localPath: String(sources.local?.path || 'brain/raw'), connectors },

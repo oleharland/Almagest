@@ -693,6 +693,36 @@ documents come first, then the most backlinks.
 | `governance.canonical_hint.min_backlinks` | `8` | other pages that link to it |
 | `governance.canonical_hint.hot_factor` | `0.6` | multiplier on both thresholds for a hot page |
 
+### Learnings
+
+When enough pages have been added, the brain looks across them for conclusions
+and proposes them (docs/v2/ingest.md, Learnings). The proposal is marked
+`kind: 'learnings'` and titled in plain words, for example "5 things the brain
+concluded from what it holds". It has no source file. Its `source` is
+`{ kind: 'synthesis', id: 'learnings-<sha7 of main>' }`, which stands for the
+commit of `main` the agent read.
+
+The proposal page opens with one sentence: these are conclusions the brain
+drew from pages that were already reviewed, each one lists the pages it rests
+on, and you can accept or turn down each one on its own. Each learning shows
+its Basis pages as links, then the conclusion. The buttons are the ones every
+proposal has: **Accept page**, **Take this page out**, **Approve all**, **Ask
+for changes** and **Turn down**.
+
+Approval follows the normal policy for a new curated page, with the same roles
+and the same rules. Nothing about who can approve changes. "Ask for changes"
+queues a `revise` as for any proposal. The runner holds that revise to the same
+write limits as the first run: new claim pages and bookkeeping only.
+
+**Remembering what was turned down.** When a person takes a learning out of the
+proposal, or turns the whole proposal down, the service keeps a record in the
+store (namespace `synthesis.rejected`): the sorted slugs of the learning's Basis
+pages, its title, and the sha256 of each Basis page's text on `main` at that
+time. The next synthesize prompt lists these records. The runner refuses a new
+page whose Basis is exactly the same set while every one of those pages is
+unchanged. When any of them changes, the same set may be proposed again. The
+record is kept in the audit log as `learning.turned_down`.
+
 ### CLI
 
 ```
@@ -700,6 +730,8 @@ almagest proposals        # what's waiting, with inbox links
 almagest inbox-digest     # send the email digest now
 almagest canonical-hints  # pages worth fixing as canonical (read only; [--json])
 ```
+
+`almagest synthesize [--force]` queues a run that looks across the brain for conclusions; it is an ingest command (docs/v2/ingest.md, Learnings).
 
 ### Service API (for other modules)
 

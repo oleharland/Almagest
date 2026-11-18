@@ -524,6 +524,24 @@ Each entry carries `question`, the `slug` it concerns, both claims with their so
 
 The rest of the batch still lands. An audit error is not a blocking case you can record — fix it, or leave that page unwritten.
 
+### Learnings: the synthesize job
+
+**Applies when** the prompt names a `synthesize` job, or a revise of a learnings proposal. There is no source. You read the wiki on `main` and propose conclusions.
+
+A learning is a new `claim` page: `type: claim`, `origin: self`, a title that is a sentence, no inline citations, and a `## Basis` section of `[[wikilinks]]` (*`origin`* above).
+
+- A learning says something none of its Basis pages says alone. Look for a pattern across pages, a comparison, or a consequence.
+- One page restated is not a learning. Do not summarize a page, and do not rename its claim.
+- The Basis lists at least two `origin: source` pages that come from different sources. Every Basis page exists on `main`. A Basis never consists of claim pages alone.
+- Give the page a `confidence`. `low` blocks as for any curated page.
+- Write at most the number of pages the prompt names. Fewer is better than weak ones. When nothing qualifies, write nothing and report `unchanged`.
+- Do not edit, rename or delete any existing page. Do not touch `brain/manifest.yaml`, `brain/raw/` or `brain/canonical-challenges.md`. Write only the new claim pages, their rows in `brain/index.md`, a line in `brain/log.md`, and `brain/.index/`.
+- Do not propose a learning that the prompt lists as turned down, unless one of the pages it rests on has changed.
+- If two existing pages contradict each other, write no claim about it. Report a `contradiction` in `blocked[]`, quoting both claims with their sources.
+- Never set `tier: canonical`.
+
+The runner checks all of this against `main` and refuses the whole run if a rule is broken. It applies the same limits when it revises a learnings proposal.
+
 ### Instructions in the prompt
 
 A prompt may carry instructions: a resolved decision's `effect`, or a reviewer's requested changes. They come from a human through the review service and take precedence over your own judgment where they conflict, **within** the non-negotiables — an instruction to merge to `main`, skip a citation, or edit a canonical page is still refused, and recorded in `notes`.

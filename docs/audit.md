@@ -161,6 +161,17 @@ A source fetched over MCP by the v2 service ([v2/connectors.md](v2/connectors.md
 
 The canonical set the audit uses is one definition, shared with the service: a page is canonical when its slug is in `canonical_pages` or its frontmatter says `tier: canonical` (`tools/lib/canonical.mjs`). It decides which pages are exempt from `LINK-002`. The audit cannot tell who set a tier, so the ingest runner and the merge are what stop an agent setting it.
 
+### Duplicates and moved ground
+
+| ID | Detects | Severity |
+|---|---|---|
+| `DUP-001` | Two pages share a title or an alias. Titles and aliases are compared ignoring case and surrounding spaces. Each pair is reported once, on the page that sorts first, and the message names both pages. Template pages (`_` prefix) are exempt | warning |
+| `BASIS-001` | A `type: claim` page whose `## Basis` names a page with a `date_modified` later than the claim's `last_verified`, or the claim has no `last_verified`. The message names the page that changed | warning |
+
+`DUP-001` usually means the same subject was written twice, for example when two sources describe one product. Merge the pages or give one a distinct title and its own aliases.
+
+`BASIS-001` means the ground under a conclusion moved. Read the claim again against the changed page, then set `last_verified` to today. A Basis page with no `date_modified` is skipped.
+
 `CANON-001` is informational by design. An open challenge means evidence contradicts a canonical page and a human has not yet ruled. That is a queue, not a failure. It stays visible in every audit run until the row's status changes.
 
 ### Demand — are the pages people rely on fit to be relied on? (opt-in: `--demand`)
@@ -226,7 +237,7 @@ audit:
     stub: 30             # by status; wins over the tier threshold
   severity:
     errors: [SCHEMA-001, …]
-    warnings: [LINK-002, CANON-001, STALE-001]
+    warnings: [LINK-002, CANON-001, STALE-001, DUP-001, BASIS-001]
   challenges_path: brain/canonical-challenges.md
   index_dir: brain/.index
 

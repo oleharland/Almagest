@@ -8,9 +8,9 @@
  */
 import crypto from 'node:crypto';
 
-export const JOB_KINDS = ['ingest', 'revise', 'reverify', 'drop-page'];
+export const JOB_KINDS = ['ingest', 'revise', 'reverify', 'drop-page', 'synthesize'];
 export const JOB_STATUS = ['queued', 'running', 'succeeded', 'failed', 'blocked', 'cancelled'];
-export const JOB_TRIGGERS = ['watch', 'schedule', 'manual', 'mcp', 'hook', 'decision', 'feedback', 'demand', 'lookup'];
+export const JOB_TRIGGERS = ['watch', 'schedule', 'manual', 'mcp', 'hook', 'decision', 'feedback', 'demand', 'lookup', 'synthesis'];
 
 export const PROPOSAL_STATUS = ['open', 'changes_requested', 'approved', 'merged', 'merged_unaccepted', 'rejected', 'superseded', 'conflicted'];
 export const CHANGE_ACTIONS = ['create', 'update', 'delete', 'rename'];
@@ -75,6 +75,11 @@ export function ingestBranch(source) {
   const slug = slugify(source.title || source.id || source.path || 'source');
   const sha7 = String(source.sha256 || source.version || '').slice(0, 7) || crypto.randomBytes(4).toString('hex').slice(0, 7);
   return `ingest/${slug}-${sha7}`;
+}
+
+/** `ingest/learnings-<sha7 of main>` — the branch a synthesize job works on. */
+export function learningsBranch(mainSha, { unique = false } = {}) {
+  return ingestBranch({ id: 'learnings', sha256: unique ? '' : mainSha });
 }
 
 // ── validation ───────────────────────────────────────────────────────────────

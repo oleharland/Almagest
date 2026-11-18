@@ -271,6 +271,8 @@ audit:
       - PROV-005         # page exists with no index.md row
       - CANON-001        # outstanding entries in canonical-challenges.md
       - STALE-001        # last_verified past threshold
+      - DUP-001          # two pages share a title or an alias
+      - BASIS-001        # a claim's Basis page changed after the claim's last_verified
       - DEMAND-001       # hot page past telemetry.stale_after_days_hot  (only with --demand)
       - DEMAND-002       # hot page with confidence: low | unknown        (only with --demand)
 

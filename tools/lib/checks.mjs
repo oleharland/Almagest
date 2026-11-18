@@ -33,7 +33,8 @@ export const CATEGORIES = [
   { key: 'citations', emoji: '📎', label: 'Citations', prefixes: ['CITE-'] },
   { key: 'provenance', emoji: '🧾', label: 'Provenance', prefixes: ['PROV-'] },
   { key: 'canonical', emoji: '🛡️', label: 'Canonical', ids: ['CANON-'] },
-  { key: 'stale', emoji: '🕸️', label: 'Stale', ids: ['STALE-'] },
+  { key: 'stale', emoji: '🕸️', label: 'Stale', ids: ['STALE-', 'BASIS-'] },
+  { key: 'duplicates', emoji: '👯', label: 'Duplicates', ids: ['DUP-'] },
 ];
 
 export function categoryOf(id) {
@@ -66,6 +67,8 @@ const DEFAULT_SEVERITY = {
   'PROV-005': 'warning',
   'CANON-001': 'warning',
   'STALE-001': 'warning',
+  'DUP-001': 'warning',
+  'BASIS-001': 'warning',
 };
 
 /**
@@ -648,6 +651,88 @@ function checkStale(pages, config, today, out) {
   }
 }
 
+// ── DUP / BASIS ──────────────────────────────────────────────────────────────
+
+const normalizeName = (text) => String(text ?? '').trim().toLowerCase();
+
+/**
+ * DUP-001 — two pages share a title or an alias, compared case-insensitively
+ * and trimmed. Usually the same subject written twice. Each pair is reported
+ * once, on the page that sorts first, and names both. Template pages are exempt.
+ */
+function checkDuplicates(pages, out) {
+  const live = pages.filter((p) => !isTemplatePage(p)).sort((a, b) => a.id.localeCompare(b.id));
+  const names = new Map();   // normalized name → [{ page, kind }]
+  for (const page of live) {
+    const mine = new Map();
+    const add = (text, kind) => {
+      const key = normalizeName(text);
+      if (key && !mine.has(key)) mine.set(key, { page, kind, text: String(text).trim() });
+    };
+    add(page.title, 'title');
+    for (const alias of page.aliases) add(alias, 'alias');
+    for (const [key, entry] of mine) {
+      if (!names.has(key)) names.set(key, []);
+      names.get(key).push(entry);
+    }
+  }
+  const reported = new Set();
+  for (const [, entries] of [...names].sort(([a], [b]) => a.localeCompare(b))) {
+    for (let i = 0; i < entries.length; i++) {
+      for (let j = i + 1; j < entries.length; j++) {
+        const a = entries[i];
+        const b = entries[j];
+        const pair = `${a.page.id}\0${b.page.id}`;
+        if (reported.has(pair)) continue;
+        reported.add(pair);
+        const message = a.kind === b.kind
+          ? `\`${a.page.slug}\` and \`${b.page.slug}\` share the ${a.kind} "${a.text}"`
+          : `\`${a.page.slug}\` and \`${b.page.slug}\` share a name: "${a.text}" is the ${a.kind} of \`${a.page.slug}\` and the ${b.kind} of \`${b.page.slug}\``;
+        out.add('DUP-001', message, {
+          page: a.page.id,
+          file: a.page.relFile,
+          hint: 'merge the two pages, or give one a distinct title and aliases',
+        });
+      }
+    }
+  }
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}/;
+
+/**
+ * BASIS-001 — a claim page whose Basis names a page modified after the
+ * claim's `last_verified` (or the claim has no `last_verified`). The ground
+ * moved, so the conclusion may no longer follow. The message names the page
+ * that changed.
+ */
+function checkBasis(pages, known, out) {
+  const byId = new Map(pages.map((p) => [p.id, p]));
+  for (const page of pages) {
+    if (page.type !== 'claim' || isTemplatePage(page)) continue;
+    const verified = ISO_DAY.test(page.lastVerified) ? page.lastVerified.slice(0, 10) : '';
+    const seen = new Set();
+    for (const line of sectionLines(page.body, 'Basis')) {
+      const m = line.trim().match(/^(?:[-*+]|\d+[.)])\s+\[\[([^\]|#]+)/);
+      if (!m) continue;
+      const id = resolveTarget(m[1], page.prefix, known);
+      const basis = id ? byId.get(id) : null;
+      if (!basis || basis === page || seen.has(basis.id)) continue;
+      seen.add(basis.id);
+      if (!ISO_DAY.test(basis.dateModified)) continue;
+      const changed = basis.dateModified.slice(0, 10);
+      if (verified && changed <= verified) continue;
+      out.add('BASIS-001', verified
+        ? `\`${basis.slug}\` was modified ${changed}, after this claim was last verified ${verified}`
+        : `\`${basis.slug}\` was modified ${changed} and this claim has no \`last_verified\``, {
+        page: page.id,
+        file: page.relFile,
+        hint: 'check the claim still follows from its Basis, then update `last_verified`',
+      });
+    }
+  }
+}
+
 // ── entry point ──────────────────────────────────────────────────────────────
 
 /** Pages exempt from the provenance checks — named in the report, never silent. */
@@ -663,6 +748,8 @@ export function runChecks({ pages, known, config, manifest, index, challenges, r
   checkProvenance(pages, config, manifest, index, repoRoot, out);
   checkCanonical(challenges, config, repoRoot, out);
   checkStale(pages, config, today, out);
+  checkDuplicates(pages, out);
+  checkBasis(pages, known, out);
 
   const order = new Map(CATEGORIES.map((c, i) => [c.key, i]));
   out.list.sort((a, b) => {

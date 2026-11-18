@@ -31,8 +31,9 @@ import { asArray, safeFrontmatter } from '../../../tools/lib/wiki-core.mjs';
 import { serviceActor } from '../core/auth.mjs';
 import { modelForTier } from '../core/config.mjs';
 import { gitIdentity, WorktreeTamperedError } from '../core/git.mjs';
-import { ingestBranch, nowIso, slugify, validateRunReport } from '../core/schemas.mjs';
+import { ingestBranch, learningsBranch, nowIso, slugify, validateRunReport } from '../core/schemas.mjs';
 import { canonicalAt } from '../governance/canonical.mjs';
+import { basisOf, createRejectedMemory, distinctSources, readPage, synthesisSettings } from '../governance/learnings.mjs';
 import { agentInstructionPath, writableMatcher } from '../governance/paths.mjs';
 import { LIVE } from '../governance/policy.mjs';
 import { auditSummary, runAudit, wrapperIntact, writeAuditWrapper } from './audit.mjs';
@@ -113,6 +114,7 @@ function tamperedJob(err, wt) {
 export function createRunner(ctx, { driver, logsDir }) {
   const { config, git, log } = ctx;
   const branchLocks = new Map();
+  const turnedDown = createRejectedMemory({ store: ctx.store, git, config });
 
   /** Jobs on one branch run one at a time, whatever ingest.concurrency says. */
   async function withBranchLock(branch, fn) {
@@ -147,6 +149,17 @@ export function createRunner(ctx, { driver, logsDir }) {
       return { proposal, branch: proposal.branch, source: job.source || proposal.source || null };
     }
     if (proposal) return { proposal, branch: proposal.branch, source: job.source || proposal.source || null };
+    if (job.kind === 'synthesize') {
+      // No source: the branch is named for the commit of main it reads. A
+      // retry keeps the branch the first attempt made (patchJob stored it).
+      let branch = job.branch;
+      if (!branch) {
+        const mainSha = await git.revParse(config.service.git.main);
+        branch = learningsBranch(mainSha);
+        if (await git.branchExists(branch)) branch = learningsBranch(mainSha, { unique: true });
+      }
+      return { proposal: null, branch, source: job.source || null };
+    }
     const source = job.source || { id: `${job.kind}-${slugify(job.slug || job.instructions || 'pages')}`, sha256: (await git.revParse(config.service.git.main)).slice(0, 12) };
     return { proposal: null, branch: job.branch || ingestBranch(source), source: job.source || null };
   }
@@ -229,11 +242,12 @@ export function createRunner(ctx, { driver, logsDir }) {
    */
   async function collectPending(job, t, wt) {
     if (job.kind !== 'ingest' && job.kind !== 'revise') return [];
+    if (t.proposal?.kind === 'learnings') return [];   // a learning rests on pages on main, not on pending ones
     let proposals;
     try { proposals = await ctx.governance.listProposals({ status: LIVE }); }
     catch (err) { log.warn('could not list open proposals, running without the pending set', { job: job.id, error: err.message }); return []; }
     const others = (proposals || [])
-      .filter((p) => p && p.kind !== 'tier' && LIVE.includes(p.status) && p.id !== t.proposal?.id && p.branch !== t.branch && SAFE_NAME.test(String(p.id)))
+      .filter((p) => p && p.kind !== 'tier' && p.kind !== 'learnings' && LIVE.includes(p.status) && p.id !== t.proposal?.id && p.branch !== t.branch && SAFE_NAME.test(String(p.id)))
       .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
     const root = path.join(wt, PENDING_DIR);
     const pages = [];
@@ -360,6 +374,100 @@ export function createRunner(ctx, { driver, logsDir }) {
     return touched;
   }
 
+  /**
+   * The write guard for a learnings run: a synthesize job, or a revise of a
+   * learnings proposal. The brain may add new claim pages and the bookkeeping
+   * they need, and nothing else. Everything is compared with `main`, so a
+   * revise may still rework the claim pages its own branch added.
+   *
+   *   - no page on main is edited, renamed or deleted; no other file changes
+   *     (the manifest, sidecars, the challenges ledger and tools included)
+   *   - at most synthesis.max_claims new pages
+   *   - each new page is `type: claim`, `origin: self`, not canonical, and its
+   *     `## Basis` names at least two pages on main that are `origin: source`
+   *     and between them cite at least two different sources
+   *   - not a learning a person turned down, unless a Basis page changed since
+   */
+  async function guardLearnings(wt, wtPath, startSha) {
+    const brain = config.v1.brainDir.replace(/\/+$/, '');
+    const wikiPrefix = `${brain}/wiki/`;
+    const main = config.service.git.main;
+    const indexDir = String(config.v1.indexDir || `${brain}/.index`).replace(/\/+$/, '');
+    const bookkeeping = new Set([`${brain}/index.md`, `${brain}/log.md`]);
+    const refuse = (message) => new JobError(`${message}; not committed`);
+
+    const changes = [];
+    const named = (await wt.run(['diff', '--name-status', '-z', '--no-renames', startSha, '--'])).split('\0').filter(Boolean);
+    for (let i = 0; i + 1 < named.length; i += 2) changes.push({ status: named[i][0], path: named[i + 1] });
+    for (const p of (await wt.run(['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean)) changes.push({ status: 'A', path: p });
+
+    const edited = [];
+    const deleted = [];
+    const elsewhere = [];
+    for (const { status, path: p } of changes) {
+      const isPage = p.startsWith(wikiPrefix) && p.endsWith('.md') && !p.slice(wikiPrefix.length).includes('/');
+      if (isPage) {
+        const onMain = (await git.show(main, p)) !== null;
+        if (status === 'D') { if (onMain) deleted.push(p); }
+        else if (onMain) edited.push(p);
+      } else if (bookkeeping.has(p) || (p.startsWith(`${indexDir}/`) && p.endsWith('.tsv') && !p.slice(indexDir.length + 1).includes('/'))) {
+        if (status === 'D') elsewhere.push(p);
+      } else {
+        elsewhere.push(p);
+      }
+    }
+    const list = (xs) => `${xs.slice(0, 10).join(', ')}${xs.length > 10 ? ', …' : ''}`;
+    if (edited.length) throw refuse(`learnings run edited existing page(s) ${list(edited)} — it may only add new claim pages and may not edit, rename or delete a page that is on ${main}`);
+    if (deleted.length) throw refuse(`learnings run deleted or renamed existing page(s) ${list(deleted)} — it may only add new claim pages and may not edit, rename or delete a page that is on ${main}`);
+    if (elsewhere.length) throw refuse(`learnings run changed ${list(elsewhere)} — it may write only new claim pages under ${wikiPrefix} and the index, the log and the derived index; the manifest, sources and every other file are off limits`);
+
+    const onMain = new Set((await git.run(['ls-tree', '--name-only', main, '--', wikiPrefix])).split('\n').filter((f) => f.endsWith('.md')).map((f) => path.posix.basename(f, '.md')));
+    const wikiAbs = path.join(wtPath, wikiPrefix);
+    const fresh = (fs.existsSync(wikiAbs) ? fs.readdirSync(wikiAbs) : []).filter((f) => f.endsWith('.md') && !onMain.has(f.slice(0, -3))).map((f) => f.slice(0, -3)).sort();
+    const cap = synthesisSettings(config).maxClaims;
+    if (fresh.length > cap) throw refuse(`learnings run wrote ${fresh.length} new pages (${list(fresh)}) but synthesis.max_claims is ${cap}`);
+
+    const basisPages = new Map();
+    const basisPage = async (slug) => {
+      if (!basisPages.has(slug)) {
+        const text = await git.show(main, `${wikiPrefix}${slug}.md`);
+        let page = null;
+        try { page = typeof text === 'string' ? readPage(text) : null; } catch { page = null; }
+        basisPages.set(slug, page);
+      }
+      return basisPages.get(slug);
+    };
+
+    for (const slug of fresh) {
+      const file = path.join(wikiAbs, `${slug}.md`);
+      let page;
+      try { page = readPage(fs.readFileSync(file, 'utf-8')); }
+      catch (err) { throw refuse(`learnings run wrote ${slug}.md, whose front matter cannot be read (${String(err.message).split('\n')[0].slice(0, 120)})`); }
+      if (page.type !== 'claim' || page.origin !== 'self') {
+        throw refuse(`learnings run wrote ${slug}.md as type: ${page.type || 'none'}, origin: ${page.origin} — a learnings run writes only claim pages with origin: self`);
+      }
+      if (page.tier === 'canonical') throw refuse(`learnings run wrote ${slug}.md with tier: canonical — only a person makes a page canonical, in the review inbox (non-negotiable 4)`);
+      const { slugs, missing } = basisOf(page.body, onMain);
+      if (missing.length) throw refuse(`learnings run wrote ${slug}.md with Basis link(s) to ${list(missing)}, which are not pages on ${main} — a Basis names pages that already exist on ${main}`);
+      const sourcePages = [];
+      for (const s of slugs) {
+        const bp = await basisPage(s);
+        if (bp?.origin === 'source') sourcePages.push({ slug: s, ...bp });
+      }
+      if (sourcePages.length < 2) {
+        throw refuse(`learnings run wrote ${slug}.md whose Basis has ${sourcePages.length} origin: source page${sourcePages.length === 1 ? '' : 's'} on ${main} (${slugs.length ? list(slugs) : 'none'}) — a learning rests on at least two source pages, never only on other claim pages`);
+      }
+      if (distinctSources(sourcePages) < 2) {
+        throw refuse(`learnings run wrote ${slug}.md whose Basis pages (${list(sourcePages.map((b) => b.slug))}) cite one source between them — a learning needs at least two different sources`);
+      }
+      const hit = await turnedDown.blocking(slugs);
+      if (hit) {
+        throw refuse(`learnings run wrote ${slug}.md on a Basis (${list(hit.basis)}) that a person already turned down${hit.title ? ` as “${hit.title}”` : ''}, and none of those pages has changed since`);
+      }
+    }
+    return { changes: changes.length, pages: fresh };
+  }
+
   async function audit(wt, write) {
     const result = await runAudit(wt, { log: write, demandFile: config.paths.demand });
     if (result.exit !== 0) {
@@ -419,7 +527,11 @@ export function createRunner(ctx, { driver, logsDir }) {
   // ── agent jobs: ingest / revise / reverify ────────────────────────────────
 
   async function runAgentJob(job, { signal, write, timeoutMs, patchJob }) {
+    if (job.kind === 'synthesize' && !synthesisSettings(config).enabled) {
+      throw new JobError('synthesis is turned off (synthesis.enabled: false) — nothing was run');
+    }
     const t = await target(job);
+    const learningsRun = job.kind === 'synthesize' || t.proposal?.kind === 'learnings';
     return withBranchLock(t.branch, async () => {
       write(`step 1: branch ${t.branch}${t.proposal ? ` (proposal ${t.proposal.id})` : ''}`);
       const { worktree: wt, wt: repo, startSha, createdBranch } = await prepareWorktree(t.branch);
@@ -452,6 +564,7 @@ export function createRunner(ctx, { driver, logsDir }) {
         const { prompt, systemPrompt } = buildPrompt({
           job, source: t.source, placed, branch: t.branch, proposal: t.proposal,
           auditCommand: wrapper.path, allowedTools: tools, pending,
+          learnings: learningsRun ? { cap: synthesisSettings(config).maxClaims, turnedDown: await turnedDown.standing() } : null,
         });
         write(`step 3: driver ${driver.name}, model ${modelFor(config, driver.name) || '(default)'}, budget $${config.ingest.budget_usd_per_job}`);
         result = await runDriver(job, {
@@ -497,6 +610,10 @@ export function createRunner(ctx, { driver, logsDir }) {
 
       const touched = await guardPaths(repo, startSha, placed);
       write(`path guard: ${touched.length} path(s), all writable`);
+      if (learningsRun) {
+        const learned = await guardLearnings(repo, wt, startSha);
+        write(`learnings guard: ${learned.pages.length} new claim page(s), no existing page touched`);
+      }
       const auditResult = await audit(wt, write);
 
       const headBefore = await repo.revParse('HEAD');
@@ -606,7 +723,9 @@ function commitMessage(job, t, report, driverName) {
   const src = t.source;
   const subject = job.kind === 'ingest'
     ? `ingest: ${src?.title || src?.id || 'source'}${src?.sha256 ? ` (${src.sha256.slice(0, 7)})` : ''}`
-    : `${job.kind}: ${t.proposal?.id || src?.id || job.id}`;
+    : job.kind === 'synthesize'
+      ? `synthesize: learnings from ${t.branch.replace(/^ingest\/learnings-/, '')}`
+      : `${job.kind}: ${t.proposal?.id || src?.id || job.id}`;
   const lines = [
     subject, '',
     `Job: ${job.id} (trigger ${job.trigger}, attempt ${job.attempts || 1})`,

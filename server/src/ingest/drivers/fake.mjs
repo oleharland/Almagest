@@ -34,6 +34,15 @@
  * where `pending` maps each file under `.almagest/pending/` to its text as the
  * agent saw it; `ingest.fake.extends` is the `extends` list its run report carries.
  *
+ * A `synthesize` job (and a `revise` when `ingest.fake.synth` is set) takes its
+ * orders from `ingest.fake.synth`, read on every run:
+ *
+ *   pages    [{ slug, title, basis: [slugs], type, origin, tier, confidence }] claim pages to write;
+ *            absent: one claim over the first two source pages that cite different sources
+ *   files    { 'rel/path': 'text' }   written as they are (an edit to an existing page, the manifest …)
+ *   remove   ['rel/path']              deleted
+ *   outcome  overrides `written` · blocked  [...]  goes in the report
+ *
  * The page it writes is the smallest one the clean fixture's audit accepts.
  */
 import fs from 'node:fs';
@@ -43,6 +52,7 @@ import YAML from 'yaml';
 
 import { loadConfig } from '../../../../tools/lib/config.mjs';
 import { slugify } from '../../core/schemas.mjs';
+import { readPage } from '../../governance/learnings.mjs';
 import { appendTableRow } from '../md.mjs';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -64,6 +74,59 @@ function upsertManifest(file, entry) {
     items[i] = doc.createNode({ ...prev, ...entry, first_ingested: prev.first_ingested || entry.first_ingested, pages: [...new Set([...(prev.pages || []), ...entry.pages])] });
   }
   fs.writeFileSync(file, doc.toString());
+}
+
+function claimText({ title, basis, type = 'claim', origin = 'self', tier = 'curated', confidence = 'medium' }) {
+  return `---
+title: ${JSON.stringify(title)}
+type: ${type}
+tier: ${tier}
+origin: ${origin}
+status: draft
+confidence: ${confidence}
+tags: []
+aliases: []
+owner: ""
+date_created: "${today()}"
+date_modified: "${today()}"
+last_verified: "${today()}"
+sources: []
+related: []
+relations:
+  supports: []
+  contradicts: []
+  supersedes: []
+  depends_on: []
+---
+
+## Summary
+
+${title}.
+
+## Basis
+
+${basis.map((b) => `- [[${b}]]`).join('\n')}
+
+## Argument
+
+What these pages say together is more than any of them says alone.
+`;
+}
+
+/** Two origin: source pages on this branch that cite different sources, for a default learning. */
+function defaultBasis(cwd, brain) {
+  const dir = path.join(cwd, brain, 'wiki');
+  const found = [];
+  for (const f of fs.existsSync(dir) ? fs.readdirSync(dir).sort() : []) {
+    if (!f.endsWith('.md') || f.startsWith('_')) continue;
+    let page;
+    try { page = readPage(fs.readFileSync(path.join(dir, f), 'utf-8')); } catch { continue; }
+    if (page.origin !== 'source') continue;
+    const ids = page.sources.map((s) => s.id);
+    if (found.every((x) => !x.ids.some((id) => ids.includes(id)))) found.push({ slug: f.slice(0, -3), ids });
+    if (found.length === 2) break;
+  }
+  return found.length === 2 ? found.map((x) => x.slug) : [];
 }
 
 function pageText({ title, type, source, citeId, citePath, sha, idForCitation, claim, line }) {
@@ -159,6 +222,31 @@ export function createFakeDriver(ctx, options = {}) {
       };
 
       if (m === 'unchanged') return report({ outcome: 'unchanged', pages: [], blocked: [], notes: 'fake: unchanged' });
+
+      const synth = ctx.config.ingest.fake?.synth;
+      if (job?.kind === 'synthesize' || (synth && job?.kind === 'revise')) {
+        const orders = synth || {};
+        const basis = orders.pages ? null : defaultBasis(cwd, brain);
+        const pages = orders.pages || (basis?.length ? [{ slug: `${basis.join('-and-')}-together`, title: `${titleCase(basis[0])} and ${titleCase(basis[1])} point the same way`, basis }] : []);
+        const written = [];
+        for (const pg of pages) {
+          const file = path.join(cwd, brain, 'wiki', `${pg.slug}.md`);
+          fs.mkdirSync(path.dirname(file), { recursive: true });
+          fs.writeFileSync(file, claimText(pg));
+          let idx = fs.readFileSync(path.join(cwd, brain, 'index.md'), 'utf-8');
+          idx = appendTableRow(idx, /^##\s+Wiki pages/i, '## Wiki pages\n\n| Page | Type | Tier | Status | Last modified |\n|------|------|------|--------|---------------|', `| [[${pg.slug}]] | ${pg.type || 'claim'} | ${pg.tier || 'curated'} | draft | ${today()} |`);
+          fs.writeFileSync(path.join(cwd, brain, 'index.md'), idx);
+          written.push({ slug: pg.slug, action: 'create', tier: pg.tier || 'curated', summary: pg.title });
+        }
+        for (const [rel, text] of Object.entries(orders.files || {})) {
+          fs.mkdirSync(path.dirname(path.join(cwd, rel)), { recursive: true });
+          fs.writeFileSync(path.join(cwd, rel), text);
+        }
+        for (const rel of orders.remove || []) fs.rmSync(path.join(cwd, rel), { force: true });
+        if (written.length) logLine(`synthesize: ${written.map((w) => `[[${w.slug}]]`).join(', ')}`);
+        const wrote = written.length || Object.keys(orders.files || {}).length || (orders.remove || []).length;
+        return report({ outcome: orders.outcome || (wrote ? 'written' : 'unchanged'), pages: written, blocked: orders.blocked || [], notes: `fake: ${job.kind}` });
+      }
 
       if (job?.kind === 'revise' || job?.kind === 'reverify') {
         logLine(`${job.kind} ${source?.id || ''}: ${String(job.instructions || '').replace(/\|/g, '/').slice(0, 120)}`);

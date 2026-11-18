@@ -12,7 +12,7 @@
 import { html, raw, safeUrl } from '../html.mjs';
 import { locatorWords } from '../excerpt.mjs';
 import { hintWords } from '../hints.mjs';
-import { ACTION_WORDS, auditWords, DECISION_WORDS, describe, OP_WORDS, sourceName, STATUS_HEADLINE, TIER_WORDS } from '../summary.mjs';
+import { ACTION_WORDS, auditWords, DECISION_WORDS, describe, LEARNINGS_EXPLANATION, OP_WORDS, sourceName, STATUS_HEADLINE, TIER_WORDS } from '../summary.mjs';
 import { layout, timeAgo } from './layout.mjs';
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -196,6 +196,16 @@ function extendsNote(e) {
   return html`<p class="faint">This page adds to one that is waiting in another proposal, ${e.proposalId ? html`<a href="/inbox/p/${encodeURIComponent(e.proposalId)}">${e.title || 'that proposal'}</a>` : 'that proposal'}. When both are approved, the service combines the two versions section by section. If they disagree anywhere, the agent is asked to redo this page on top of what is already there.</p>`;
 }
 
+/** A learning: the conclusion in the agent's words, and the pages it rests on as links. */
+function learningBody(change) {
+  const basis = change.basis || [];
+  return html`<p class="faint">What it rests on</p>
+    ${basis.length
+      ? html`<ul class="basis">${basis.map((b) => html`<li><a href="/inbox/pages/${encodeURIComponent(b.slug)}">${b.title || b.slug}</a></li>`)}</ul>`
+      : html`<p class="missing">This page names no pages it rests on. Do not accept it as it is.</p>`}
+    ${change.preview ? html`<p class="faint">The conclusion</p><pre class="preview">${change.preview}</pre>` : ''}`;
+}
+
 function pageCard(p, change, { canAct, csrf, required, why = null, tiers = null }) {
   const req = required?.pages?.[change.slug];
   const rejected = change.pageStatus === 'rejected';
@@ -234,9 +244,10 @@ function pageCard(p, change, { canAct, csrf, required, why = null, tiers = null 
           </details></div>` : ''}
       ${(p.extends || []).filter((e) => e.slug === change.slug).map(extendsNote)}
       ${change.hot ? hotWhy(why) : ''}
-      ${change.needsManualLook ? html`<p class="missing">This new page has no facts the inbox could pair with a source, so nothing below has been checked for you. Read the whole page before you approve.</p>
+      ${p.kind === 'learnings' ? learningBody(change) : ''}
+      ${p.kind === 'learnings' ? '' : change.needsManualLook ? html`<p class="missing">This new page has no facts the inbox could pair with a source, so nothing below has been checked for you. Read the whole page before you approve.</p>
         <pre class="preview">${change.preview || ''}</pre>` : ''}
-      ${change.needsManualLook ? '' : change.claims.length === 0 && !(change.fields || []).length
+      ${p.kind === 'learnings' || change.needsManualLook ? '' : change.claims.length === 0 && !(change.fields || []).length
         ? html`<p class="muted">${change.action === 'delete' ? 'The whole page would be removed.' : 'No facts changed — only formatting or wording without a source.'}</p>`
         : change.claims.map(claimCard)}
       ${(change.fields || []).length ? html`<details><summary>${plural(change.fields.length, 'detail')} changed</summary>
@@ -348,6 +359,7 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
     ${flashBox(flash)}
     <h1>${info.title}</h1>
     <p class="lede">${info.line}. Sent ${timeAgo(p.createdAt, now)}${p.revision > 1 ? ` · revised ${plural(p.revision - 1, 'time')}` : ''}.</p>
+    ${p.kind === 'learnings' ? html`<p class="status">${LEARNINGS_EXPLANATION}</p>` : ''}
     <p class="status"><strong>${STATUS_HEADLINE[p.status] || p.status}.</strong> ${audit.text}
       ${findings.length ? html`<details><summary>${audit.ok ? 'See the notes' : 'What the checks found'}</summary><ul>${findings.slice(0, 50).map((f) => html`<li>${f.slug ? html`<strong>${f.slug}</strong>: ` : ''}${f.message}${f.count > 1 ? ` (×${f.count})` : ''}</li>`)}</ul></details>` : ''}
     </p>

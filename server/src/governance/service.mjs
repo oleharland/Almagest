@@ -32,12 +32,13 @@ import { ingestBranch, newId, nowIso, ROLES } from '../core/schemas.mjs';
 import { NotFoundError } from '../core/store/index.mjs';
 import { attachDemand, buildChanges } from './builder.mjs';
 import { canonicalAt } from './canonical.mjs';
+import { basisOf, createRejectedMemory, readPage } from './learnings.mjs';
 import { appendChallenge, challengeFrom, challengeRow } from './challenges.mjs';
 import { normalizeAudit, runAudit } from './merge.mjs';
 import { listChanges, outsideFiles } from './paths.mjs';
 import * as policy from './policy.mjs';
 import { assertMayAct, vouchedAs } from './trust.mjs';
-import { describe, lookupQuestionOf, tierTitle, titleFor } from './summary.mjs';
+import { describe, learningsTitle, lookupQuestionOf, tierTitle, titleFor } from './summary.mjs';
 
 /** Front matter is YAML and nothing else (tools/lib/wiki-core.mjs → safeFrontmatter). */
 const parseFrontmatter = safeFrontmatter(matter);
@@ -104,6 +105,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
   const tokens = () => parseTokens(process.env[config.service.auth.tokens_env || 'ALMAGEST_TOKENS'] || '');
   const wikiDir = `${config.v1.brainDir}/wiki`;
   const svc = serviceActor('governance');
+  const turnedDown = createRejectedMemory({ store, git, config });
 
   const labelFor = (source) => (config.sources.connectors || []).find((c) => c.id === source?.connector)?.label || '';
 
@@ -196,6 +198,62 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     };
   }
 
+  // ── learnings ──────────────────────────────────────────────────────────────
+
+  /** The slugs of the pages on main, for resolving a Basis. */
+  async function pagesOnMain() {
+    const out = await git.tryRun(['ls-tree', '--name-only', config.service.git.main, '--', `${wikiDir}/`]);
+    return new Set(String(out || '').split('\n').filter((f) => f.endsWith('.md')).map((f) => path.posix.basename(f, '.md')));
+  }
+
+  /** What each learning in a proposal rests on: its Basis pages, as slugs and titles, for the inbox to link. */
+  async function attachBasis(changes, headSha) {
+    const known = await pagesOnMain();
+    const titles = new Map();
+    const titleOf = async (slug) => {
+      if (!titles.has(slug)) {
+        const text = await git.show(config.service.git.main, `${wikiDir}/${slug}.md`);
+        let title = slug;
+        try { title = (typeof text === 'string' && readPage(text).title) || slug; } catch { /* a page the parser cannot read is still linked by name */ }
+        titles.set(slug, title);
+      }
+      return titles.get(slug);
+    };
+    for (const c of changes) {
+      if (c.action === 'delete') continue;
+      const text = await git.show(headSha, c.path);
+      let page = null;
+      try { page = typeof text === 'string' ? readPage(text) : null; } catch { page = null; }
+      c.basis = [];
+      if (!page) continue;
+      for (const slug of basisOf(page.body, known).slugs) c.basis.push({ slug, title: await titleOf(slug) });
+    }
+  }
+
+  /**
+   * A person turned a learning down: keep its Basis set, its title and the
+   * content hash of each Basis page, so the same conclusion is not proposed
+   * again until one of those pages changes. Never blocks the rejection.
+   */
+  async function rememberTurnedDown(p, slugs) {
+    if (p.kind !== 'learnings') return;
+    try {
+      const known = await pagesOnMain();
+      for (const slug of slugs) {
+        const change = (p.changes || []).find((c) => c.slug === slug && c.action !== 'delete');
+        if (!change) continue;
+        const text = await git.show(p.headSha, change.path);
+        if (typeof text !== 'string') continue;
+        const page = readPage(text);
+        const { slugs: basis } = basisOf(page.body, known);
+        const entry = await turnedDown.remember({ basis, title: page.title || change.title });
+        if (entry) await record('learning.turned_down', svc, p.id, 'cli', { slug, basis: entry.basis });
+      }
+    } catch (err) {
+      log.warn('could not remember a learning that was turned down', { proposal: p.id, error: err.message });
+    }
+  }
+
   // ── proposals ──────────────────────────────────────────────────────────────
 
   /** createFromJob without the lock — also used to refresh after a service commit. */
@@ -221,7 +279,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     // A tier proposal changes the tier line of one page, which is "canonical" on
     // one side of it. The merge proves the diff is only that line; here the
     // page just must not read as a forbidden change to a locked page.
-    const kind = live?.kind || (job.tierChange ? 'tier' : '');
+    const kind = live?.kind || (job.tierChange ? 'tier' : job.kind === 'synthesize' ? 'learnings' : '');
     const tier = live?.tier || job.tierChange || null;
     if (kind === 'tier') {
       for (const c of changes) if (c.slug === tier?.slug) { c.canonical = false; delete c.promotes; c.tierChange = { from: tier.from, to: tier.to }; }
@@ -247,7 +305,10 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     }
 
     const runReport = info.runReport || job.runReport || {};
-    const source = job.source || live?.source || null;
+    // A learnings proposal has no source file: it stands for the commit of main it read.
+    const source = job.source || live?.source
+      || (kind === 'learnings' ? { kind: 'synthesis', id: `learnings-${String(baseSha).slice(0, 7)}`, title: 'the pages the brain already holds', sha256: baseSha } : null);
+    if (kind === 'learnings') await attachBasis(changes, headSha);
     const proposalId = live?.id || newId('prp');
     const prior = live ? await store.decisions.listByProposal(live.id) : [];
     const created = [];
@@ -284,8 +345,10 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       ...(lookupQuestion ? { lookupQuestion } : {}),
       jobId: job.id || live?.jobId || '', branch, baseSha, headSha,
       worktree: info.worktree || job.worktree || live?.worktree || '',
-      ...(kind === 'tier' ? { kind: 'tier', tier } : {}),
-      title: kind === 'tier' ? (live?.title || tierTitle(job.tierWho || 'Someone', tier.title || tier.slug, tier.to)) : titleFor(source), source,
+      ...(kind === 'tier' ? { kind: 'tier', tier } : kind === 'learnings' ? { kind: 'learnings' } : {}),
+      title: kind === 'tier' ? (live?.title || tierTitle(job.tierWho || 'Someone', tier.title || tier.slug, tier.to))
+        : kind === 'learnings' ? learningsTitle(changes.filter((c) => c.action === 'create' && c.pageStatus !== 'rejected').length)
+          : titleFor(source), source,
       audit: normalizeAudit(info.audit ?? job.audit),
       changes, otherFiles, files, outside,
       decisions: decisions.map((d) => d.id),
@@ -481,6 +544,8 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
         rejection: { by: actor.id, display: actor.display, at: nowIso(), reason: String(reason || '').slice(0, 5000) },
       });
       await record('proposal.reject', actor, p.id, channel, { reason: String(reason || '').slice(0, 500), headSha: p.headSha });
+      // Read the learnings before cleanup removes the branch they are on.
+      await rememberTurnedDown(p, (p.changes || []).filter((c) => c.action === 'create' && c.pageStatus !== 'rejected').map((c) => c.slug));
       await cleanupClosed(p);
       bus.emit('proposal.rejected', { proposal: updated, actor });
       return updated;
@@ -510,6 +575,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       const required = requirementsFor(p, { changes, decisions });
       const updated = await store.proposals.update(p.id, { changes, required, updatedAt: nowIso() });
       await record('page.reject', actor, p.id, channel, { slug, headSha: p.headSha, jobId: job.id || null });
+      await rememberTurnedDown(p, [slug]);
       bus.emit('proposal.updated', { proposal: updated });
       return updated;
     });

@@ -38,6 +38,8 @@ By hand:
 ```bash
 node server/bin/almagest.mjs ingest brain/raw/q3-board-deck.pdf          # queue it
 node server/bin/almagest.mjs ingest brain/raw/q3-board-deck.pdf --wait   # queue it and run it here
+node server/bin/almagest.mjs synthesize                                 # look across the brain for conclusions
+node server/bin/almagest.mjs synthesize --force                         # same, without the changed-pages threshold
 node server/bin/almagest.mjs jobs                                       # recent jobs
 node server/bin/almagest.mjs jobs job_01m5…                             # one job, as JSON
 ```
@@ -76,6 +78,13 @@ ingest:
   spool_interval_seconds: 15     # how often the hook spool is drained (0 = on start only)
   poll_ms: 2000                  # idle workers re-check the store (jobs enqueued by another process)
   manual_rate_per_hour: 30       # POST /api/jobs per actor per hour (0 = no limit)
+
+synthesis:                       # see "Learnings" below
+  enabled: true
+  min_changed_pages: 5           # source pages added or changed on main since the last run
+  max_runs_per_day: 1            # runs per UTC day, counted from the jobs in the store
+  max_claims: 5                  # new claim pages one run may add
+  schedule: ""                   # cron expression that also checks; empty = after merges only
 ```
 
 `model_tier` resolves through the profile of the harness the **driver** runs,
@@ -90,6 +99,7 @@ background with Claude Code, and a Codex model name would break it.
 | `revise` | Apply a decision's `effect` or a reviewer's requested changes | the proposal's |
 | `reverify` | Re-check a page (telemetry `auto_reverify`) against its sidecars | new `ingest/reverify-<slug>-<sha7 of main>`, or a proposal's |
 | `drop-page` | Undo one page on a proposal — mechanical, no agent | the proposal's |
+| `synthesize` | Draw conclusions from pages already on `main`. No source | new `ingest/learnings-<sha7 of main>` |
 
 Status: `queued → running → succeeded | blocked | failed | cancelled`.
 `blocked` means the run produced decisions and nothing else. A run with nothing
@@ -137,6 +147,9 @@ Vixie day-of-month/day-of-week OR semantics, `@hourly`-style macros) gets
 `ctx.connectors.sync(id)` when it fires; every returned SourceRef becomes one
 job. A connector whose last sync is still running is skipped, not stacked.
 
+**Synthesis.** Queues a `synthesize` job after merges, on a cron expression, or
+by hand. See Learnings below for what it does and what bounds it.
+
 **Spool.** `.almagest/spool/*.json`, written by `hook enqueue` when the service
 is not listening, drained on start and every `spool_interval_seconds`. A bad
 entry is renamed `.failed` and left for a person.
@@ -157,6 +170,66 @@ run report or the model's output. The API only ever enqueues `ingest`: `revise` 
 governance through `ctx`, never from a request body. MCP `submit_source`
 writes into `.almagest/submissions/` and enqueues a local source from there,
 with `onBehalfOf` the human; that person co-authors the commit.
+
+## Learnings
+
+As pages pile up, the brain looks across them for conclusions and proposes
+them. It is on by default (`synthesis.enabled`). Nothing it writes reaches
+`main` without a person approving it in the inbox.
+
+A learning is a `claim` page: `origin: self`, a title that is a sentence, no
+inline citations, and a `## Basis` of wikilinks to the `origin: source` pages
+it rests on. The rules the agent follows are in `agent/rules/ingest.md` →
+Runner mode → Learnings. The agent reads the wiki on `main` and nothing else.
+The job has no source.
+
+### When it runs
+
+Every route goes through one function (`server/src/ingest/synthesis.mjs`,
+`request`), so every route meets the same bounds.
+
+| Route | When |
+|---|---|
+| After a merge | A proposal is merged, and the count of changed source pages has reached `min_changed_pages` |
+| On a schedule | `synthesis.schedule` (five-field cron) fires and the same check passes. Use it to catch a run that a bound held back earlier in the day |
+| By hand | `almagest synthesize`. `--force` skips the changed-pages threshold and nothing else |
+
+The count is the `origin: source` pages added or changed on `main` since the
+last run. The service remembers the commit of `main` at the last run in the
+store (namespace `synthesis`, key `last-run`). Before the first run it counts
+every source page. Claim pages never count, and the merge of a learnings
+proposal is skipped, so a merged learning cannot start the next run by itself.
+
+### Bounds
+
+Checked in this order. A route that is stopped says which bound stopped it.
+
+1. `synthesis.enabled` is false: nothing runs. The runner refuses a queued job too.
+2. At most one `synthesize` job is queued or running.
+3. No new run while a learnings proposal is open (any status the inbox still works on).
+4. At most `max_runs_per_day` runs per UTC day, counted from the `synthesize` jobs in the store.
+5. At least `min_changed_pages` changed source pages since the last run (`--force` skips this one).
+
+A failed enqueue is logged and never breaks the merge that triggered it.
+
+### What the runner enforces
+
+The agent is told the rules, and the runner checks them against `main`. A run
+that breaks one fails as a whole and nothing is committed. A revise of a
+learnings proposal is held to the same limits.
+
+- Every change is a new file under `brain/wiki/`, or `brain/index.md`, `brain/log.md` or `brain/.index/*.tsv`. No existing page is edited, renamed or deleted. The manifest, sidecars and every other file are off limits.
+- At most `max_claims` new pages.
+- Each new page is `type: claim`, `origin: self`, and not canonical.
+- Its `## Basis` links at least two pages that exist on `main` and are `origin: source`, and those pages cite at least two different sources. Two source entries count as one source when they share an id or a sha256. Links to other pages are allowed in addition.
+- It is not a learning a person turned down, unless a Basis page changed since (see governance.md, Learnings).
+
+The agent also writes bookkeeping the audit needs, so the audit runs as for any
+job. With `anonymization.enabled`, the job follows the same anonymization rules
+as ingest.
+
+If two existing pages contradict each other, the agent writes no claim about
+it. It reports a `contradiction` in `blocked`, which becomes a decision card.
 
 ## Drivers
 

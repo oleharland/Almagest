@@ -101,6 +101,8 @@ const EXPECTED = {
   'PROV-005': 'warning',
   'CANON-001': 'warning',
   'STALE-001': 'warning',
+  'DUP-001': 'warning',
+  'BASIS-001': 'warning',
 };
 
 console.log('\ndirty fixture — every check ID fires at its documented severity');
@@ -136,6 +138,16 @@ console.log('\ndirty fixture — every check ID fires at its documented severity
     'PROV-003 catches a commit the manifest has moved past',
     json.findings.some((f) => f.id === 'PROV-003' && f.message.includes('deadbee'))
   );
+
+  // DUP-001 compares case-insensitively and trimmed, reports a pair once, and names both pages.
+  const dups = json.findings.filter((f) => f.id === 'DUP-001');
+  check('DUP-001 reports the pair once and names both pages',
+    dups.length === 1 && dups[0].message.includes('`dup-title`') && dups[0].message.includes('`orphan`'), JSON.stringify(dups.map((f) => f.message)));
+  // BASIS-001 names the page that changed.
+  check('BASIS-001 names the Basis page that changed after last_verified',
+    json.findings.some((f) => f.id === 'BASIS-001' && f.slug === 'basis-moved' && f.message.includes('`orphan`')));
+  check('BASIS-001 stays quiet for a Basis page not modified after last_verified',
+    !json.findings.some((f) => f.id === 'BASIS-001' && f.slug === 'bad-basis'));
 
   // The finding shape docs/audit.md documents.
   const sample = json.findings[0];
@@ -325,6 +337,54 @@ console.log('\nderived index — deterministic bytes, and drift is caught');
   }
 
   check('the committed clean-fixture index is current', audit(['--repo', CLEAN, '--check-index']).code === 0);
+}
+
+// ── DUP-001 and BASIS-001, edge by edge ──────────────────────────────────────
+
+console.log('\nDUP-001 and BASIS-001 — what fires and what stays quiet');
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'almagest-dup-'));
+  try {
+    fs.cpSync(CLEAN, tmp, { recursive: true });
+    const wiki = (name) => path.join(tmp, 'brain', 'wiki', name);
+    const read = (name) => fs.readFileSync(wiki(name), 'utf-8');
+    const found = (id) => auditJson(tmp).json.findings.filter((f) => f.id === id);
+
+    check('clean control: neither check fires', found('DUP-001').length === 0 && found('BASIS-001').length === 0);
+
+    // An alias on one page equal to another page's title, apart from case and spaces.
+    fs.writeFileSync(wiki('beta.md'), read('beta.md').replace('aliases: ["B-1"]', 'aliases: ["B-1", "  ALPHA system "]'));
+    const alias = found('DUP-001');
+    check('DUP-001: an alias equal to another title fires once, naming both pages',
+      alias.length === 1 && alias[0].message.includes('`alpha`') && alias[0].message.includes('`beta`'), JSON.stringify(alias.map((f) => f.message)));
+
+    // A template page with the same title is exempt.
+    fs.writeFileSync(wiki('beta.md'), read('beta.md').replace('"  ALPHA system "', '"Beta"'));
+    fs.writeFileSync(wiki('_template.md'), read('alpha.md'));
+    check('DUP-001: a template page is left out of the comparison', found('DUP-001').length === 0);
+    fs.rmSync(wiki('_template.md'));
+
+    // Two pages sharing both a title and an alias are one pair, not two findings.
+    fs.writeFileSync(wiki('alpha-copy.md'), read('alpha.md'));
+    check('DUP-001: a pair that shares a title and an alias is reported once', found('DUP-001').length === 1, JSON.stringify(found('DUP-001').map((f) => f.message)));
+    fs.rmSync(wiki('alpha-copy.md'));
+
+    // A claim verified on the day its Basis page last changed is fine; the day after is not.
+    const claim = read('gamma-claim.md');
+    fs.writeFileSync(wiki('alpha.md'), read('alpha.md').replace('date_modified: "2026-01-05"', 'date_modified: "2026-01-06"'));
+    const moved = found('BASIS-001');
+    check('BASIS-001: a Basis page modified after last_verified fires and names it',
+      moved.length === 1 && moved[0].slug === 'gamma-claim' && moved[0].message.includes('`alpha`') && moved[0].message.includes('2026-01-06'), JSON.stringify(moved.map((f) => f.message)));
+    fs.writeFileSync(wiki('gamma-claim.md'), claim.replace('last_verified: "2026-01-05"', 'last_verified: "2026-01-06"'));
+    check('BASIS-001: updating last_verified clears it', found('BASIS-001').length === 0);
+    fs.writeFileSync(wiki('gamma-claim.md'), claim.replace('last_verified: "2026-01-05"\n', ''));
+    const unverified = found('BASIS-001');
+    check('BASIS-001: a claim with no last_verified fires for each Basis page that has a date',
+      unverified.length === 2 && unverified.every((f) => f.message.includes('no `last_verified`')), JSON.stringify(unverified.map((f) => f.message)));
+    check('BASIS-001 and DUP-001 are warnings: the run still exits 0', audit(['--repo', tmp, '--json']).code === 0);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 // ── the audit never writes to the wiki ───────────────────────────────────────
