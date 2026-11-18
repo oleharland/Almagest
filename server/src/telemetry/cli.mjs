@@ -82,14 +82,16 @@ export const commands = {
       if (opts.json) return out(JSON.stringify({ gaps }, null, 2) + '\n');
       if (gaps.length === 0) return out('No open gaps.\n');
       const anyLookup = gaps.some((g) => g.lookup?.served);
+      const anyCovered = gaps.some((g) => g.coveredBy?.length);
       const rows = gaps.map((g) => ({
         count: g.count,
         sessions: g.distinctSessions,
         'last seen': g.lastSeen.slice(0, 10),
         ...(anyLookup ? { lookup: g.lookup?.served ? `served ${g.lookup.served}, ${g.lookup.jobs.length ? 'queued' : 'not queued'}` : '' } : {}),
         question: g.representative ?? `(hashed) ${g.cluster}`,
+        ...(anyCovered ? { 'wiki answers now': g.coveredBy?.[0]?.title || '' } : {}),
       }));
-      out(`${table(rows, ['count', 'sessions', 'last seen', ...(anyLookup ? ['lookup'] : []), 'question'], { right: ['count', 'sessions'] })}\n\n` +
+      out(`${table(rows, ['count', 'sessions', 'last seen', ...(anyLookup ? ['lookup'] : []), 'question', ...(anyCovered ? ['wiki answers now'] : [])], { right: ['count', 'sessions'] })}\n\n` +
         gaps.map((g) => `→ ${g.suggestion}`).join('\n') + '\n');
     }),
   },

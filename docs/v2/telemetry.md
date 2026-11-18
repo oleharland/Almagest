@@ -255,6 +255,16 @@ In hashed mode `queries` is empty and `representative` is built from the
 tokens; with hashed tokens it is `null` and the suggestion names the cluster
 size instead.
 
+A gap closes only when someone asks again, so a question asked before its page
+existed stays on the list after the page is merged. To cover that, `gaps()`
+asks the live wiki's search once for each gap with a plain-text representative
+query, using the same search and thresholds `ask` uses. A gap it can answer
+carries `coveredBy` (its top one or two `{ slug, title }`), is shown as
+"probably answered since" on the gaps page and in `almagest gaps`, and sorts
+after the open gaps. Nothing is removed from the list, and a gap built from
+hashed tokens is never asked. The check is skipped when the MCP module is not
+loaded, and a failed search leaves the gap unmarked.
+
 ## Configuration
 
 All optional; every key falls back to the default shown. None of these is in
