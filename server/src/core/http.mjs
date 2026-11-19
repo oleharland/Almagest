@@ -94,13 +94,20 @@ export function createRouter({ auth, log } = {}) {
     }
   }
 
+  /** Run `fn` once the server is listening. Only a server that serves HTTP fires these. */
+  const listenHooks = [];
+  function onListen(fn) { listenHooks.push(fn); }
+
   function listen({ host = '127.0.0.1', port = 4747 } = {}) {
     const server = http.createServer(handle);
     return new Promise((resolve, reject) => {
       server.once('error', reject);
-      server.listen(port, host, () => resolve(server));
+      server.listen(port, host, () => {
+        for (const fn of listenHooks) fn();
+        resolve(server);
+      });
     });
   }
 
-  return { route, handle, listen, routes };
+  return { route, handle, listen, onListen, routes };
 }

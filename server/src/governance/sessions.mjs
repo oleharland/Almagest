@@ -132,11 +132,14 @@ export function createSessions(ctx, { secret, identities = null, ttlHours = 12, 
   const credOf = (loginSecret) => hmac(secret, `login.${loginSecret}`);
 
   if (mode !== 'oidc') {
-    const { usable, problems } = loginState();   // a malformed entry stops startup here, not at the first sign-in
+    const { problems } = loginState();   // a malformed entry stops startup here, not at the first sign-in
     for (const p of problems) log?.warn(p);
-    if (!usable.length) {
-      log?.warn(`nobody can sign in to the review inbox: API tokens in ${tokensEnv} do not sign in. Give each reviewer a sign-in secret in ${loginsEnv} ("<name>:<secret>"), or run \`almagest login <name>\` for a one-time link`);
-    }
+  }
+
+  /** Only a server that serves the inbox can be signed into, so this runs when it starts listening (see routes). */
+  function warnIfNobodyCanSignIn() {
+    if (mode === 'oidc' || currentLogins().length) return;
+    log?.warn(`nobody can sign in to the review inbox: API tokens in ${tokensEnv} do not sign in. Give each reviewer a sign-in secret in ${loginsEnv} ("<name>:<secret>"), or run \`almagest login <name>\` for a one-time link`);
   }
 
   function readSigned(req) {
@@ -327,6 +330,7 @@ export function createSessions(ctx, { secret, identities = null, ttlHours = 12, 
   }
 
   function routes(http) {
+    http.onListen(warnIfNobodyCanSignIn);
     http.route('GET', '/inbox/login', async (req, res, { query, actor }) => {
       // m=reauth: the service asked for a fresh sign-in, so the page shows even to a signed-in browser.
       if (actor?.kind === 'human' && actor.session && query.m !== 'reauth') { redirect(res, safeNext(query.next)); return undefined; }
@@ -419,5 +423,5 @@ export function createSessions(ctx, { secret, identities = null, ttlHours = 12, 
     });
   }
 
-  return { provider, issue, revoke, csrfToken, checkCsrf, sameOrigin, routes, loginPage, mode, oidc, humanActor };
+  return { provider, issue, revoke, csrfToken, checkCsrf, sameOrigin, routes, loginPage, mode, oidc, humanActor, warnIfNobodyCanSignIn };
 }
