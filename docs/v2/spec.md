@@ -247,6 +247,7 @@ cannot change it.
   extends?: [{ slug, proposalId, title }],   // pages written as additions to pages pending in other proposals
   kind?: 'tier' | 'learnings', tier?: { slug, from, to, title },   // a tier proposal: one page, one `tier:` line (governance.md, Tiers in the inbox)
   tierEdits?: { [slug]: { from, to, by, at, headSha, blob } },   // a person's tier choice on a page in this proposal
+  work?: [{ jobId, kind: 'decision' | 'feedback' | 'page' | 'conflict', decisionId?, slug?, headSha, at }],   // jobs asked for on this proposal; a pointer only, the job store holds how each ended
   createdAt, updatedAt }
 
 ProposalChange =
@@ -274,13 +275,20 @@ Decision card the runner records instead of stopping.
   slug, question, context: { claimA, sourceA, claimB, sourceB },
   options: [{ id, label, effect }],       // effect: prose instruction for the revise job
   status: 'open' | 'resolved',
-  resolution?: { optionId, note, actorId, at } }
+  resolution?: { optionId, note, actorId, at, notApplied?: { by, display, at } } }   // notApplied: the agent could not apply the answer and this person went on without it
 ```
 
 Resolving a decision enqueues a `revise` job (trigger `decision`) on the
 proposal's branch with the chosen option's `effect` as `instructions`. A
 `canonical_conflict` has exactly one non-dismiss effect: append to
 `brain/canonical-challenges.md`. A proposal with open decisions cannot merge.
+
+The job a decision, a request for changes, a page removal or a merge clash
+queues is recorded in the proposal's `work`. While that job is queued or running
+(`agent-working`), or after it failed or was cancelled (`agent-failed`), the
+proposal cannot be approved, and the decision reads as answered, not applied
+yet. An answer or a request for changes counts as applied only when its job ended well and moved the branch. A reviewer can run a failed one again (`retryWork`) or go on without it (`dismissWork`, not for page removals). Proposals made before this field existed carry no `work` and are not blocked. See
+`docs/v2/governance.md`, Agent work.
 
 ### Event (telemetry owns)
 
@@ -308,7 +316,8 @@ Full field semantics: `docs/v2/telemetry.md`.
 
 ```js
 { id: 'aud_…', ts, actorId, action: 'proposal.approve' | 'proposal.reject' | 'proposal.merge'
-  | 'decision.resolve' | 'page.reject' | 'connector.login' | 'policy.override' | …,
+  | 'decision.resolve' | 'page.reject' | 'proposal.retry_agent' | 'proposal.dismiss_agent' | 'proposal.agent_failed'
+  | 'connector.login' | 'policy.override' | …,
   target: 'prp_…' | 'dec_…' | …, channel, detail: {} }
 ```
 
@@ -345,7 +354,8 @@ demand.updated                                  { hot: [slug] }
 ```
 
 Channels (governance) subscribe to these to notify; telemetry subscribes to `proposal.merged`
-to invalidate its page cache.
+to invalidate its page cache. Governance subscribes to `job.finished`: a job for a proposal that
+ended `failed` or `cancelled` is written to the audit log and announced with `proposal.updated`.
 
 ## Cross-module service objects
 
@@ -374,6 +384,8 @@ ctx.governance  .listProposals(filter) .getProposal(id)
                 .reject(prpId, actor, { reason, channel })
                 .rejectPage(prpId, slug, actor, { channel })
                 .requestChanges(prpId, actor, { feedback, channel })
+                .retryWork(prpId, jobId, actor, { channel })   // ask the agent again for a failed request; never approves
+                .dismissWork(prpId, jobId, actor, { channel }) // go on without a failed request (not a page removal)
                 .resolveDecision(decId, actor, { optionId, note, channel })
                 .createConfirmation(prpId, onBehalfOf, action) → { url, code, expiresAt }   // chat channel
 

@@ -80,6 +80,15 @@ export async function govApp(repoRoot, { overrides = {}, ingest = fakeIngest(), 
     modules: { ingest: { create: async () => ingest }, ...modules },
     overrides,
   });
+  // Governance reads how a job ended from the job store (service.mjs → workFor).
+  // The fake agent does what it is asked at once: each job it takes is recorded there as succeeded.
+  // A test about a job that fails or is still running sets its status with setJobStatus.
+  const enqueue = ingest.enqueue.bind(ingest);
+  ingest.enqueue = async (spec) => {
+    const job = await enqueue(spec);
+    await app.ctx.store.jobs.enqueue({ ...job, status: 'succeeded', startSha: `${job.id}-start`, headSha: `${job.id}-end` });   // it moved the branch
+    return job;
+  };
   app.ingest = ingest;
   return app;
 }
@@ -133,6 +142,13 @@ export async function proposalBranch(app, branch, files, { message = 'ingest' } 
   }
   const headSha = await g.commitAll(worktree, { message, author: { name: 'svc:ingest', email: 'ingest@almagest.local' } });
   return { branch, worktree, baseSha, headSha };
+}
+
+/** Set how a job the fake agent took ended: 'queued', 'running', 'failed', 'cancelled', 'succeeded', 'blocked'. */
+// `moved` says whether the job moved the branch: true gives it a different start and end, false the same one.
+export async function setJobStatus(app, id, status, error = null, { moved } = {}) {
+  const sha = moved === undefined ? {} : { startSha: `${id}-start`, headSha: moved ? `${id}-end` : `${id}-start` };
+  return app.ctx.store.jobs.update(id, { status, ...(error ? { error } : {}), ...sha });
 }
 
 export function job(branch, extra = {}) {

@@ -640,7 +640,7 @@ export function createRunner(ctx, { driver, logsDir }) {
       const refsBefore = await watchedRefs();
       const baseSha = await baseShaFor(t.branch, t.proposal);
       const created = job.createdBranch ?? createdBranch;
-      job = await patchJob({ branch: t.branch, worktree: wt, baseSha, createdBranch: created });
+      job = await patchJob({ branch: t.branch, worktree: wt, baseSha, createdBranch: created, startSha });
 
       let placed = null;
       if (job.kind === 'ingest' && t.source && !t.proposal) {

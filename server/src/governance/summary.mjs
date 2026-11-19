@@ -96,9 +96,29 @@ export function changeLine(changes = []) {
   return `${facts.join(', ')} about ${about}${pagesNote}`;
 }
 
-/** The headline sentence for notifications and the queue. */
-export function describe(proposal, decisions = []) {
+/**
+ * What the agent was asked, as a phrase that follows "The agent is" or "could
+ * not finish". `work` is one unsettled entry of a proposal's work list.
+ */
+export function workAsked(w, { decisions = [], changes = [] } = {}) {
+  if (w.kind === 'decision') {
+    const d = decisions.find((x) => x.id === w.decisionId);
+    return d ? `applying your answer to “${oneLine(d.question, 120)}”` : 'applying your answer to a question';
+  }
+  if (w.kind === 'page') {
+    const c = changes.find((x) => x.slug === w.slug);
+    return `taking out the page “${oneLine(c?.title || w.slug, 120)}”`;
+  }
+  if (w.kind === 'conflict') return 'redoing this after a clash with recent changes';
+  return 'making the requested changes';
+}
+
+/** The headline sentence for notifications and the queue. `work` is the unsettled work list (service.workOf), when the caller has it. */
+export function describe(proposal, decisions = [], work = []) {
   const open = decisions.filter((d) => d.status === 'open').length;
+  // Answers the agent has not applied yet: the question reads as answered, never as settled.
+  const unapplied = new Set(work.filter((w) => w.decisionId && decisions.some((d) => d.id === w.decisionId && d.status !== 'open')).map((w) => w.decisionId)).size;
+  const tail = `${open ? ` · ${plural(open, 'question')} ${open === 1 ? 'needs' : 'need'} you` : ''}${unapplied ? ` · ${plural(unapplied, 'answer')} not applied yet` : ''}`;
   const hot = (proposal.changes || []).filter((c) => c.hot && c.pageStatus !== 'rejected').length;
   const tier = proposal.kind === 'tier' ? proposal.tier : null;
   const learnings = proposal.kind === 'learnings';
@@ -117,8 +137,9 @@ export function describe(proposal, decisions = []) {
     lookup: lookupSentence(proposal),
     tier,
     learnings,
-    sentence: learnings ? `${proposal.title || learningsTitle(concluded)}${open ? ` · ${plural(open, 'question')} ${open === 1 ? 'needs' : 'need'} you` : ''}` : tier ? `${proposal.title}${open ? ` · ${plural(open, 'question')} ${open === 1 ? 'needs' : 'need'} you` : ''}` : `${line} from “${sourceName(proposal.source)}”${proposal.trigger === 'lookup' ? ' · fetched by live lookup' : ''}${open ? ` · ${plural(open, 'question')} ${open === 1 ? 'needs' : 'need'} you` : ''}`,
+    sentence: learnings ? `${proposal.title || learningsTitle(concluded)}${tail}` : tier ? `${proposal.title}${tail}` : `${line} from “${sourceName(proposal.source)}”${proposal.trigger === 'lookup' ? ' · fetched by live lookup' : ''}${tail}`,
     openDecisions: open,
+    unappliedAnswers: unapplied,
     hot,
     counts: counts(proposal.changes),
   };
