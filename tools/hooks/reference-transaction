@@ -14,6 +14,20 @@
 #   - the update changes <brain_dir>/wiki/ on main — the old and new trees
 #     for that directory differ — or deletes main outright.
 #
+# One deletion is let through: git's own ref packing. `git pack-refs --prune`
+# (which `git gc`, `git maintenance` and automatic maintenance after a fetch
+# or merge run) first writes main into packed-refs, then deletes only the loose
+# file, a transaction of `<sha> 0000… refs/heads/main`. Main still resolves to
+# the same commit afterwards. The hook accepts a deletion of main only when
+# packed-refs already lists the ref with exactly the commit it holds now AND
+# nothing holds packed-refs.lock. A real deletion (`branch -D`, `update-ref -d`,
+# `push . :main`, a rename away, a delete in a larger transaction) must also
+# remove the entry from packed-refs, so git takes packed-refs.lock before it
+# calls this hook, and the deletion is refused. Only the internal prune is
+# exempt from that lock. Packing first and deleting second does not help: the
+# delete still holds the lock. No environment variable or process name is
+# consulted.
+#
 # A person running git in their own terminal carries none of the variables and
 # is never blocked: a human merging a reviewed diff is the gate. Code-only moves
 # of main are left alone too; pre-commit and the review cover those.
@@ -83,6 +97,16 @@ wiki_tree() {   # <commit> <brain_dir> → tree id of <brain_dir>/wiki at that c
     git rev-parse -q --verify "$1^{commit}:$2/wiki" 2>/dev/null || true
 }
 
+pruned_loose() {  # <old> <ref> <cur>: a loose copy is dropped while packed-refs keeps the same commit
+    local common
+    [ -n "$3" ] || return 1
+    [ "$1" = "$ZERO" ] || [ "$1" = "$3" ] || return 1
+    common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+    [ -f "$common/packed-refs" ] || return 1
+    [ ! -e "$common/packed-refs.lock" ] || return 1
+    awk -v s="$3" -v r="$2" '$1 == s && $2 == r { f = 1 } END { exit !f }' "$common/packed-refs"
+}
+
 authorized() {  # <old> <new> <ref>
     local common file
     common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
@@ -92,7 +116,7 @@ authorized() {  # <old> <new> <ref>
     [ "$(cat "$file")" = "$1 $2 $3" ]
 }
 
-while read -r _old NEW REF; do
+while read -r OLD NEW REF; do
     [ -n "${REF:-}" ] || continue
     IS_MAIN=""
     for m in $MAINS; do [ "$REF" = "refs/heads/$m" ] && IS_MAIN=1; done
@@ -104,6 +128,7 @@ while read -r _old NEW REF; do
 
     WHY=""
     if [ "$NEW" = "$ZERO" ]; then
+        pruned_loose "$OLD" "$REF" "$CUR" && continue
         WHY="it deletes $REF"
     else
         BRAINS="brain $BRAIN_DIR $(committed "$CUR" | cfg_brain) $(committed "$NEW" | cfg_brain)"

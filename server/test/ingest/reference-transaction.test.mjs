@@ -132,6 +132,143 @@ describe('tools/hooks/reference-transaction', () => {
   });
 });
 
+describe('tools/hooks/reference-transaction and git packing refs', () => {
+  /** No global or system git config: the tests set what they need themselves. */
+  const iso = (env) => ({ ...env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' });
+  const packedFile = (r) => path.join(r, '.git', 'packed-refs');
+  const looseMain = (r) => path.join(r, '.git', 'refs', 'heads', 'main');
+  const packedMain = (r) => {
+    try { return fs.readFileSync(packedFile(r), 'utf-8').split('\n').filter((l) => l.endsWith(' refs/heads/main')).map((l) => l.split(' ')[0]); }
+    catch { return []; }
+  };
+  /** A hooked repo with main checked out nowhere, and an agent that may not move it. */
+  function repo() {
+    const r = hookedRepo();
+    git(r, 'switch', '-q', '--detach');
+    return r;
+  }
+  /** Pack with the hook off (this is the setup, not the thing under test). */
+  const packQuietly = (r, ...flags) => {
+    const res = run(r, iso(human()), '-c', 'core.hooksPath=/dev/null', 'pack-refs', '--all', ...flags);
+    assert.equal(res.status, 0, res.stderr);
+  };
+  const stillThere = (r, before, what) => {
+    assert.equal(mainSha(r), before, `${what}: main still resolves to the same commit`);
+  };
+  const refused = (r, res, before, what) => {
+    assert.notEqual(res.status, 0, `${what} should be refused: ${res.stdout}${res.stderr}`);
+    assert.match(res.stderr, /refusing to move refs\/heads\/main from an agent environment/, what);
+    stillThere(r, before, what);
+  };
+
+  it('lets pack-refs, gc and maintenance fold main into packed-refs from an agent environment', () => {
+    const jobs = [
+      ['pack-refs --all', ['pack-refs', '--all']],
+      ['pack-refs --all --prune', ['pack-refs', '--all', '--prune']],
+      ['gc', ['gc', '-q']],
+      ['maintenance run --task=pack-refs', ['maintenance', 'run', '--task=pack-refs']],
+      ['maintenance run --task=gc', ['maintenance', 'run', '--task=gc']],
+    ];
+    for (const [what, args] of jobs) {
+      const r = repo();
+      const before = mainSha(r);
+      assert.equal(fs.existsSync(looseMain(r)), true, `${what}: main starts as a loose ref`);
+      const res = run(r, iso(agent()), '-c', 'gc.autoDetach=false', ...args);
+      assert.equal(res.status, 0, `${what}: ${res.stderr}`);
+      assert.doesNotMatch(res.stderr, /refusing|aborted by the reference-transaction hook/, what);
+      stillThere(r, before, what);
+      assert.deepEqual(packedMain(r), [before], `${what}: packed-refs holds main`);
+      assert.equal(fs.existsSync(looseMain(r)), false, `${what}: the loose file is gone`);
+      const person = run(r, iso(human()), 'update-ref', 'refs/heads/main', before);
+      assert.equal(person.status, 0, person.stderr);
+    }
+  });
+
+  it('refuses every real deletion of main, whether main is loose, packed, or both', () => {
+    const states = {
+      'loose only': () => {},
+      'loose and packed': (r) => packQuietly(r, '--no-prune'),
+      'packed only': (r) => packQuietly(r),
+    };
+    const routes = (sha) => ({
+      'branch -D': [['branch', '-D', 'main']],
+      'update-ref -d': [['update-ref', '-d', 'refs/heads/main']],
+      'update-ref -d with the old value': [['update-ref', '-d', 'refs/heads/main', sha]],
+      'push . :main': [['push', '-q', '.', ':main']],
+      'push . :main with a lease': [['push', '-q', `--force-with-lease=main:${sha}`, '.', ':main']],
+      'branch -m (rename away)': [['branch', '-m', 'main', 'renamed']],
+      'delete inside a larger transaction': [['update-ref', '--stdin'], 'start\ncreate refs/heads/other HEAD\ndelete refs/heads/main\nprepare\ncommit\n'],
+      'delete with the old value in --stdin': [['update-ref', '--stdin'], `delete refs/heads/main ${sha}\n`],
+    });
+    for (const [state, setup] of Object.entries(states)) {
+      for (const route of Object.keys(routes('0'.repeat(40)))) {
+        const r = repo();
+        setup(r);
+        const before = mainSha(r);
+        const [args, input] = routes(before)[route];
+        const res = spawnSync('git', args, { cwd: r, env: iso(agent()), encoding: 'utf-8', input });
+        refused(r, res, before, `${route} (${state})`);
+        for (const side of ['other', 'renamed']) {
+          assert.equal(run(r, iso(human()), 'rev-parse', '--verify', '-q', `refs/heads/${side}`).status, 1, `${route} (${state}): ${side} was not created`);
+        }
+      }
+    }
+  });
+
+  it('refuses packing followed by a deletion: the delete still holds packed-refs.lock', () => {
+    const r = repo();
+    const before = mainSha(r);
+    const packed = run(r, iso(agent()), 'pack-refs', '--all', '--no-prune');
+    assert.equal(packed.status, 0, packed.stderr);
+    assert.deepEqual(packedMain(r), [before]);
+    refused(r, run(r, iso(agent()), 'update-ref', '-d', 'refs/heads/main', before), before, 'delete after pack-refs --no-prune');
+
+    const r2 = repo();
+    const before2 = mainSha(r2);
+    assert.equal(run(r2, iso(agent()), 'pack-refs', '--all').status, 0);
+    assert.equal(fs.existsSync(looseMain(r2)), false);
+    refused(r2, run(r2, iso(agent()), 'update-ref', '-d', 'refs/heads/main', before2), before2, 'delete after pack-refs --prune');
+    refused(r2, run(r2, iso(agent()), 'branch', '-D', 'main'), before2, 'branch -D after pack-refs --prune');
+  });
+
+  it('refuses a deletion whose packed entry holds a different commit', () => {
+    const r = repo();
+    const old = git(r, 'rev-parse', 'HEAD~1').trim();
+    fs.writeFileSync(packedFile(r), `# pack-refs with: peeled fully-peeled sorted \n${old} refs/heads/main\n`);
+    const before = mainSha(r);
+    assert.notEqual(before, old);
+    refused(r, run(r, iso(agent()), 'update-ref', '-d', 'refs/heads/main'), before, 'update-ref -d with a stale packed entry');
+  });
+
+  it('still refuses a wiki-changing move of main after main was packed', () => {
+    const r = repo();
+    const wiki = branchWith(r, 'ingest/wiki-1111111', 'brain/wiki/new-page.md', '# new\n');
+    git(r, 'switch', '-q', '--detach', 'main');
+    packQuietly(r);
+    const before = mainSha(r);
+    refused(r, run(r, iso(agent()), 'update-ref', 'refs/heads/main', wiki), before, 'update-ref of a packed main');
+    refused(r, run(r, iso(agent()), 'branch', '-f', 'main', wiki), before, 'branch -f of a packed main');
+    const code = branchWith(r, 'dev/notes', 'NOTES.txt');
+    git(r, 'switch', '-q', '--detach', 'main');
+    assert.equal(run(r, iso(agent()), 'update-ref', 'refs/heads/main', code).status, 0, 'a code-only move is still allowed');
+  });
+
+  it('lets a person delete main, packed or not', () => {
+    const r = repo();
+    packQuietly(r, '--no-prune');
+    const res = run(r, iso(human()), 'update-ref', '-d', 'refs/heads/main');
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(run(r, iso(human()), 'rev-parse', '--verify', '-q', 'refs/heads/main').status, 1);
+  });
+
+  it('the installed hook is what doctor compares against main, so a changed hook reads as outdated', () => {
+    const r = hookedRepo();
+    assert.equal(hooksInstalled(r).ok, true, hooksInstalled(r).problems.join('\n'));
+    fs.writeFileSync(path.join(hooksDir(r), 'reference-transaction'), fs.readFileSync(path.join(hooksDir(r), 'reference-transaction'), 'utf-8').replace('pruned_loose "$OLD"', 'false "$OLD"'));
+    assert.match(hooksInstalled(r).problems.join('\n'), /reference-transaction is outdated/);
+  });
+});
+
 describe('the service merge path with the hook installed', () => {
   async function approveUnderAgentEnv(detach) {
     const r = hookedRepo();
