@@ -269,6 +269,81 @@ describe('tools/hooks/reference-transaction and git packing refs', () => {
   });
 });
 
+/** Does this temp directory treat `main` and `MAIN` as one file (the macOS default)? */
+function caseInsensitiveTmp() {
+  const probe = makeTempRepo();
+  tmp.push(probe);
+  const lower = path.join(probe, 'case-probe.txt');
+  fs.writeFileSync(lower, 'x');
+  return fs.existsSync(path.join(probe, 'CASE-PROBE.TXT'));
+}
+const SKIP_CASE = caseInsensitiveTmp() ? false : 'the temp directory is case sensitive, so MAIN is a different branch from main here';
+
+describe('tools/hooks/reference-transaction on a case-insensitive filesystem', { skip: SKIP_CASE }, () => {
+  const iso = (env) => ({ ...env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' });
+  const UPPER = 'refs/heads/MAIN';
+  const refused = (r, res, before, what) => {
+    assert.notEqual(res.status, 0, `${what} should be refused: ${res.stdout}${res.stderr}`);
+    assert.match(res.stderr, /refusing to move refs\/heads\/MAIN from an agent environment/, what);
+    assert.equal(mainSha(r), before, `${what} left main where it was`);
+  };
+  const repo = () => {
+    const r = hookedRepo();
+    git(r, 'switch', '-q', '--detach');
+    return r;
+  };
+
+  it('refuses a wiki-changing move of main written under another case', () => {
+    const r = repo();
+    const wiki = branchWith(r, 'ingest/wiki-1111111', 'brain/wiki/new-page.md', '# new\n');
+    git(r, 'switch', '-q', '--detach', 'main');
+    const before = mainSha(r);
+    refused(r, run(r, iso(agent()), 'update-ref', UPPER, wiki), before, 'update-ref MAIN');
+    refused(r, run(r, iso(agent()), 'branch', '-f', 'MAIN', wiki), before, 'branch -f MAIN');
+    refused(r, run(r, iso(agent()), 'push', '-q', '.', 'ingest/wiki-1111111:refs/heads/MAIN'), before, 'push . x:MAIN');
+  });
+
+  it('refuses deleting main through another case, loose or packed', () => {
+    for (const packed of [false, true]) {
+      const r = repo();
+      if (packed) assert.equal(run(r, iso(human()), '-c', 'core.hooksPath=/dev/null', 'pack-refs', '--all', '--no-prune').status, 0);
+      const before = mainSha(r);
+      refused(r, run(r, iso(agent()), 'update-ref', '-d', UPPER), before, `update-ref -d MAIN (packed: ${packed})`);
+      refused(r, run(r, iso(agent()), 'branch', '-D', 'MAIN'), before, `branch -D MAIN (packed: ${packed})`);
+    }
+  });
+
+  it('does not let a case variant reach the packing exemption', () => {
+    const r = repo();
+    const before = mainSha(r);
+    assert.equal(run(r, iso(agent()), 'pack-refs', '--all').status, 0, 'real packing still passes');
+    assert.equal(mainSha(r), before);
+    // Packed only: git cannot resolve the other spelling there, so it fails before any hook runs.
+    const packedOnly = run(r, iso(agent()), 'update-ref', '-d', UPPER, before);
+    assert.notEqual(packedOnly.status, 0);
+    assert.equal(mainSha(r), before);
+
+    // Loose and packed: the hook sees the other spelling, finds no exact packed entry, and refuses.
+    const r2 = repo();
+    const before2 = mainSha(r2);
+    assert.equal(run(r2, iso(agent()), 'pack-refs', '--all', '--no-prune').status, 0);
+    refused(r2, run(r2, iso(agent()), 'update-ref', '-d', UPPER, before2), before2, 'update-ref -d MAIN <sha> after packing');
+  });
+
+  it('lets a code-only move through, and lets a person move main', () => {
+    const r = repo();
+    const wiki = branchWith(r, 'ingest/wiki-1111111', 'brain/wiki/new-page.md', '# new\n');
+    const code = branchWith(r, 'dev/notes', 'NOTES.txt');
+    git(r, 'switch', '-q', '--detach', 'main');
+    const ok = run(r, iso(agent()), 'update-ref', UPPER, code);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(mainSha(r), code);
+    const person = run(r, iso(human()), 'update-ref', UPPER, wiki);
+    assert.equal(person.status, 0, person.stderr);
+    assert.equal(mainSha(r), wiki);
+  });
+});
+
 describe('the service merge path with the hook installed', () => {
   async function approveUnderAgentEnv(detach) {
     const r = hookedRepo();

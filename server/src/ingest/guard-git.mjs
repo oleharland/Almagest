@@ -237,7 +237,10 @@ function affectedPaths(repo, sub, args) {
 /** Does `name` (a branch name or full ref, possibly `+`-forced) denote refs/heads/<main>? */
 function namesMain(name, main) {
   const n = String(name || '').replace(/^\+/, '');
-  return n === main || n === `refs/heads/${main}` || n === `heads/${main}`;
+  // Ignoring case: on a case-insensitive filesystem the upper-case spelling is the same ref file.
+  const low = n.toLowerCase();
+  const m = main.toLowerCase();
+  return low === m || low === `refs/heads/${m}` || low === `heads/${m}`;
 }
 
 /** Does a refspec destination (fetch DWIMs a bare name to refs/heads/) cover refs/heads/<main>? Globs included. */
@@ -246,7 +249,7 @@ function destCoversMain(dst, main) {
   const d = dst.replace(/^\+/, '');
   const full = d.startsWith('refs/') ? d : `refs/heads/${d}`;
   if (!full.includes('*')) return namesMain(full, main);
-  const re = new RegExp(`^${full.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
+  const re = new RegExp(`^${full.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i');
   return re.test(`refs/heads/${main}`);
 }
 
@@ -470,7 +473,7 @@ const GIT_SUBCOMMANDS = new Set(('add am annotate apply archive bisect blame bra
 
 function refTextPattern(main) {
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`refs/heads/(${esc(main)}|main)(?![\\w./-])|\\.git/refs|packed-refs`);
+  return new RegExp(`refs/heads/(${esc(main)}|main)(?![\\w./-])|\\.git/refs|packed-refs`, 'i');
 }
 
 /** Does this simple command clear an agent-environment variable that tools/hooks/reference-transaction reads? */

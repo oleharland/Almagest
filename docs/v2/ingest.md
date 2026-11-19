@@ -416,6 +416,13 @@ compares only the `brain_dir` each side of the update commits to, which can add
 directories to check but never remove one. Editing the working-tree
 `brain.config.yaml` or `tools/hooks/` changes nothing.
 
+Branch names are compared ignoring case, because on a case-insensitive
+filesystem (the macOS default) the upper-case spelling of the branch is the same
+loose file as the real one, and `git branch -f` or `update-ref` through it would
+move main. On a case-sensitive filesystem that spelling is a different branch;
+the hook guards it anyway, which is stricter than needed and harmless. The
+`guard-git` Claude Code guard compares names the same way.
+
 Git's own ref packing is the one deletion the hook lets through. `git
 pack-refs --prune`, which `git gc`, `git maintenance` and automatic maintenance
 after a fetch or merge all run, first writes main into `packed-refs` and then

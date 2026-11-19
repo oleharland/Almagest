@@ -28,6 +28,13 @@
 # delete still holds the lock. No environment variable or process name is
 # consulted.
 #
+# Branch names are compared ignoring case, because on a case-insensitive
+# filesystem (the macOS default) the upper-case spelling of the branch is the
+# same file as the real one. On a case-sensitive filesystem that spelling is a
+# different branch and is guarded too: stricter than needed, and harmless. The
+# packing exemption below looks packed-refs up by the exact name git sent, so a
+# case variant never qualifies for it.
+#
 # A person running git in their own terminal carries none of the variables and
 # is never blocked: a human merging a reviewed diff is the gate. Code-only moves
 # of main are left alone too; pre-commit and the review cover those.
@@ -118,13 +125,21 @@ authorized() {  # <old> <new> <ref>
 
 while read -r OLD NEW REF; do
     [ -n "${REF:-}" ] || continue
+    # Names are compared ignoring case: on a case-insensitive filesystem the
+    # upper-case spelling of the branch is the same loose file as the real one.
     IS_MAIN=""
-    for m in $MAINS; do [ "$REF" = "refs/heads/$m" ] && IS_MAIN=1; done
+    LOWER_REF="$(printf '%s' "$REF" | tr '[:upper:]' '[:lower:]')"
+    for m in $MAINS; do
+        canon="refs/heads/$m"
+        if [ "$LOWER_REF" = "$(printf '%s' "$canon" | tr '[:upper:]' '[:lower:]')" ]; then IS_MAIN=1; CANON="$canon"; fi
+    done
     [ -n "$IS_MAIN" ] || continue
 
     # The old value on stdin is all zeroes for a forced update, so read the
     # ref itself: in `prepared` it is locked but still holds the old value.
+    # Read it as git named it, and under the canonical name when that does not resolve.
     CUR="$(git rev-parse -q --verify "$REF^{commit}" 2>/dev/null || true)"
+    [ -n "$CUR" ] || CUR="$(git rev-parse -q --verify "$CANON^{commit}" 2>/dev/null || true)"
 
     WHY=""
     if [ "$NEW" = "$ZERO" ]; then
