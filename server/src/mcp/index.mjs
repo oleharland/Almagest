@@ -18,6 +18,8 @@
  */
 import os from 'node:os';
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
 import '../core/auth-oidc.mjs';
@@ -111,9 +113,33 @@ export async function create(ctx) {
     return { server, transport, close: () => server.close() };
   }
 
+  /**
+   * One tool call, as `almagest search|get|ask` makes it: the same server a
+   * stdio client gets, reached through an in-memory client. The session is
+   * recorded on channel `cli` and speaks the CLI surface in its text. Transport
+   * is 'stdio', the most restrictive case, so live lookup treats it as a local
+   * client. Resolves to { text, data, isError }; never throws for a tool error.
+   */
+  async function callTool(name, args = {}, { env = process.env } = {}) {
+    const human = await stdioHuman(env);
+    const server = build({ human, sessionId: newSessionId('cli'), transport: 'stdio', channel: 'cli', surface: 'cli' });
+    const client = new Client({ name: 'almagest-cli', version: '1.0.0' });
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverSide);
+      await client.connect(clientSide);
+      const r = await client.callTool({ name, arguments: args });
+      return { text: (r.content || []).map((c) => c.text).join('\n'), data: r.structuredContent, isError: Boolean(r.isError) };
+    } finally {
+      await client.close().catch(() => {});
+      await server.close().catch(() => {});
+    }
+  }
+
   return {
     config: cfg,
     serveStdio,
+    callTool,
     handleHttp: (req, res) => endpoint.handle(req, res),
     /** In-process server for one human (tests, embedding). */
     createServer: (session) => build({ transport: 'memory', ...session, sessionId: session.sessionId || newSessionId('mem') }),
@@ -130,4 +156,4 @@ export async function create(ctx) {
   };
 }
 
-export const commands = {};
+export { commands } from './cli.mjs';

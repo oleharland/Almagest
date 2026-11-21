@@ -191,7 +191,7 @@ What that looks like in practice:
 
 - **Mechanical audit**: `tools/audit.mjs` (Node 22+) checks schema, links, citation grammar, citation targets, provenance against the manifest, orphans, and staleness. Findings carry stable IDs (`CITE-002`, `LINK-001`, …) that the rule files reference by name. Exit `0` clean, `1` violations, `2` tool error. It shares one parser with the site (`tools/lib/wiki-core.mjs`, which both `tools/audit.mjs` and `site/src/lib/wiki.ts` are thin callers of), so what the audit certifies is exactly what the site renders. Full check list in [The Audit](docs/audit.md).
 - **Audit in CI**: the same run on every push, plus `--check-index` to prove the derived index is current. A page that fails does not merge.
-- **AI-assisted ingest**: drop files in `brain/raw/` or pull from GitHub/GitLab repos over MCP. The agent extracts entities, proposes pages, handles contradictions, and cites sources.
+- **AI-assisted ingest**: drop files in `brain/raw/` or pull from GitHub/GitLab repos with `gh`/`glab` or over MCP. The agent extracts entities, proposes pages, handles contradictions, and cites sources.
 - **Branch-based review**: ingest happens on `ingest/<source-slug>-<sha7>`. You get a git diff, not a terminal summary. Unattended ingest onto a branch is supported; an unattended merge to `main` is not, and there is no flag for it.
 - **Structured wiki**: flat markdown with typed frontmatter, three content tiers (canonical / curated / evidence), `origin: source | self`, and automatic `[[wikilink]]` cross-linking.
 - **Typed relations**: `supports`, `contradicts`, `supersedes`, `depends_on` alongside the untyped `related`. An argument graph, not just a link graph: you can ask what a claim rests on and what disagrees with it, and the audit checks that every edge resolves.
@@ -236,7 +236,7 @@ Full walkthrough in [Getting Started](docs/getting-started.md).
 - [The Audit](docs/audit.md): every check, what it means, and how to fix it
 - [Page Types](docs/page-types.md): defining custom wiki page types
 - [Terminal Output](docs/terminal-output.md): what a run prints, and why
-- [Remote Sources](docs/remote-sources.md): ingesting from GitHub or GitLab over MCP
+- [Remote Sources](docs/remote-sources.md): ingesting from GitHub or GitLab with `gh`/`glab` or over MCP
 - [The Ingest Manifest](docs/manifest.md): how re-ingest stays incremental
 - [Benchmarks](docs/benchmarks.md): measuring whether the wiki actually helps
 - [Multi-Brain](docs/multi-brain.md): running several knowledge domains side by side

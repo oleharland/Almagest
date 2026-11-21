@@ -230,7 +230,7 @@ sha256sum  "brain/raw/system-overview.pdf" | cut -d' ' -f1      # Linux
 
 Binary sources are hashed twice, because two different files matter. The original's digest goes in `sha256` and is what change detection compares. The sidecar's digest goes in `extracted_sha256`, and that is the one wiki pages carry, because a page cites the file its locators point into, which is the sidecar.
 
-Remote sources are not hashed. The fingerprint is the commit SHA the file was read at, which the provider supplies over MCP.
+Remote sources are not hashed. The fingerprint is the commit SHA the file was read at, which the provider supplies.
 
 Connector sources are hashed by the **service**: sha256 of the rendered snapshot bytes. The snapshot holds nothing volatile (no fetch time, no provider revision), so the same upstream content always produces the same digest, and `shasum -a 256` on the committed snapshot reproduces `extracted_sha256`. The provider's `version` only lets a sync skip re-fetching an item; it never decides that something is unchanged.
 

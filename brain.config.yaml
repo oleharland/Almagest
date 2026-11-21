@@ -304,7 +304,7 @@ sources:
   local:
     path: brain/raw
 
-  # Remote repositories pulled via MCP. See docs/remote-sources.md for setup.
+  # Remote repositories read with gh/glab or over MCP. See docs/remote-sources.md for setup.
   #
   # Fields per entry:
   #   provider — github | gitlab — which MCP server reads this repo
