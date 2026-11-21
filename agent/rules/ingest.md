@@ -165,7 +165,7 @@ wc -c < "brain/raw/system-overview.pdf" | tr -d ' '             # bytes
 
 Binary sources are hashed **twice**: the original's digest goes in `sha256` and is what change detection compares; the sidecar's digest goes in `extracted_sha256` and is what pages cite in `sources[].sha256`. They are different files and never share a digest.
 
-Remote sources — no hashing. The fingerprint is the commit SHA the file was read at, taken from the MCP file listing.
+Remote sources — no hashing. The fingerprint is the commit SHA the file was read at, taken from the provider.
 
 **Never fingerprint by filename, mtime, or size.** A file that was ingested, edited, and dropped back into `raw/` keeps its name and often its size. Filename matching is exactly what silently loses those edits.
 
@@ -313,19 +313,41 @@ When new files appear in `raw/`:
 12. **Log** the action in `log.md` (date, what was processed, pages created/updated, sources skipped as unchanged, anything blocked)
 13. **Commit to the ingest branch** and hand the user the branch name. Merging to `main` is theirs
 
-## Remote ingest (via MCP)
+## Remote ingest
 
-Remote sources are read over MCP — no files are downloaded into `raw/`. Each entry in `sources.remote` names its `provider` (`github` or `gitlab`); see `docs/remote-sources.md` for server setup.
+Remote sources are read through the provider's transport — no files are downloaded into `raw/`. Each entry in `sources.remote` names its `provider` (`github` or `gitlab`); see `docs/remote-sources.md` for setup. This section governs an agent session with network access. Runner mode, below, has none and never reads a remote source.
+
+**Transport rule.** For each entry, pick the first transport that is available:
+
+1. **Command line tool.** Use `gh` for `github` or `glab` for `gitlab` when the tool is installed and `gh auth status` (or `glab auth status`) succeeds.
+2. **MCP server.** Use the provider's server in `.mcp.json`, matched by the entry's `provider` field.
+3. **Neither available.** Stop and tell the user which tool or server is missing. Do not guess at repository contents or commit SHAs.
+
+Both transports return the same facts, and the fingerprint is the same. The agent uses these calls read-only. It never uses them to push, merge, comment or change anything on the remote.
+
+Read-only calls with `gh` (`<ref>` is a branch, tag or commit SHA; quote the URL so zsh does not expand `?`):
+
+- List files in a path at a ref: `gh api "repos/<owner>/<repo>/contents/<path>?ref=<ref>"`
+- Read one file at a ref: `gh api -H "Accept: application/vnd.github.raw" "repos/<owner>/<repo>/contents/<path>?ref=<ref>"`
+- Get the commit SHA a file was last changed at: `gh api "repos/<owner>/<repo>/commits?path=<path>&sha=<ref>&per_page=1" --jq '.[0].sha'`
+- Compare between two commits: `gh api "repos/<owner>/<repo>/compare/<base>...<head>"` (read `files[]` for the path)
+
+Read-only calls with `glab` (`<id>` is the project path URL-encoded, e.g. `acme%2Fapi-specs`; `<file_path>` is URL-encoded too):
+
+- List files in a path at a ref: `glab api "projects/<id>/repository/tree?path=<path>&ref=<ref>&per_page=100"`
+- Read one file at a ref: `glab api "projects/<id>/repository/files/<file_path>/raw?ref=<ref>"`
+- Get the commit SHA a file was last changed at: `glab api "projects/<id>/repository/commits?path=<path>&ref_name=<ref>&per_page=1"` (read `[0].id`)
+- Compare between two commits: `glab api "projects/<id>/repository/compare?from=<base>&to=<head>"` (read `diffs[]` for the path)
 
 When the user requests remote ingest, or asks to "check [repo] for changes":
 
 1. **Read `brain.config.yaml` → `sources.remote`** for configured repositories
 2. **Read `manifest.yaml`** — the commit SHA each remote file was last read at
-3. **Connect via the provider's MCP server** — match the entry's `provider` field to the corresponding server in `.mcp.json`
-4. **List files** in the configured paths/branches for each remote source
+3. **Pick the transport** for each entry's provider (see the transport rule above)
+4. **List files** in the configured paths/branches for each remote source, via the transport
 5. **Compare commit SHAs against the manifest** — resolve every file to new / unchanged / changed (see *The three outcomes* above). `index.md` → Remote sources stays the human-readable view of the same facts; the manifest is what the comparison reads
-6. **For new files** → read via MCP and extract entities using the same flow as local ingest (steps 4b, 6-7 above)
-7. **For changed files** → diff re-ingest (see *Diff re-ingest* above). No previous copy exists locally, so diff via the provider — compare the file between the recorded `commit` and the current one over MCP — and fall back to comparing against the recorded pages if that is unavailable
+6. **For new files** → read via the transport and extract entities using the same flow as local ingest (steps 4b, 6-7 above)
+7. **For changed files** → diff re-ingest (see *Diff re-ingest* above). No previous copy exists locally, so diff via the provider — compare the file between the recorded `commit` and the current one via the transport — and fall back to comparing against the recorded pages if that is unavailable
 8. **Instead of moving files**, log the source reference in `index.md` → Remote sources table:
    - Provider and repo path (e.g., `github:acme/platform-docs`)
    - File path within the repo

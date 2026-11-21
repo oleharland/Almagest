@@ -150,10 +150,10 @@ almagest/
 7. Agent commits to the branch, updates `index.md`, `manifest.yaml`, `log.md`, and `brain/.index/`. **You review the diff and merge.** Nothing reaches `main` any other way
 8. `site/` builds from `brain/wiki/` — `npm run build` in `site/`
 
-### Remote ingest (GitHub / GitLab over MCP)
+### Remote ingest (GitHub / GitLab)
 
 1. Agent reads `brain.config.yaml` → `sources.remote` for configured repos
-2. Agent connects via the MCP server matching each entry's `provider` (`.mcp.json`)
+2. Agent reads the repos with `gh` or `glab` when installed and signed in, otherwise through the MCP server matching each entry's `provider` (`.mcp.json`)
 3. Agent reads files from remote repos, runs the same extraction flow
 4. Source reference logged in `index.md` and `manifest.yaml` (provider, repo, path, commit SHA, date) — no local copy. The recorded commit SHA is what makes the next run incremental
 5. Same branch, audit, and merge flow as local ingest. This is the one path that can run unattended end to end: a scheduled sync ingests onto a branch and leaves you a diff

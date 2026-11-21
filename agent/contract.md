@@ -115,8 +115,8 @@ intact. Requirements 8-10 are optional and each degrades in a stated way.
    *Without it:* the routing table in the always-on file does the same job by
    instruction rather than enforcement. Weaker, still correct. The agent must be
    told to read the rule file, and must actually do it before the operation.
-9. **MCP client** — required only for remote sources.
-   *Without it:* `sources.remote` in `brain.config.yaml` cannot be ingested.
+9. **Remote-source access.** Required only for remote sources. Either the provider's command line tool (`gh` for GitHub, `glab` for GitLab) in the agent's shell, signed in, or an MCP client that reaches the provider's MCP server.
+   *Without either:* `sources.remote` in `brain.config.yaml` cannot be ingested.
    Local ingest from `brain/raw/` is unaffected, and every other guarantee holds.
 10. **Mid-session model switching** — the harness can raise or lower the model
     per step.
@@ -126,7 +126,7 @@ intact. Requirements 8-10 are optional and each degrades in a stated way.
 
 ## What requirement 5 unlocks
 
-Remote sources (`sources.remote`, GitHub/GitLab over MCP) were the feature the
+Remote sources (`sources.remote`, GitHub/GitLab via `gh`/`glab` or over MCP) were the feature the
 old gate quietly broke. A sync you have to sit and babysit is not a sync — it is
 a manual ingest with extra network. Under the branch model a scheduled job can
 poll a repo, ingest what changed onto `ingest/<slug>-<sha7>`, run the audit, and

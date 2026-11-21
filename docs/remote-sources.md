@@ -1,6 +1,6 @@
 # Remote Sources
 
-Almagest can read content directly from remote repositories over MCP (Model Context Protocol). No files are downloaded into `brain/raw/`. Two providers ship out of the box: GitHub and GitLab.
+Almagest can read content directly from remote repositories, through the provider's command line tool (`gh`, `glab`) or over MCP (Model Context Protocol). No files are downloaded into `brain/raw/`. Two providers ship out of the box: GitHub and GitLab.
 
 Remote sources are entirely optional. If you only ever drop files into `brain/raw/`, skip this page.
 
@@ -13,7 +13,7 @@ and syncs like any other MCP source ([v2/connectors.md](v2/connectors.md)):
 
 | | v1 agent-driven remote ingest (below) | v2 connector |
 |---|---|---|
-| Who reads the repo | the agent, over MCP | the service, over MCP; the agent has no network |
+| Who reads the repo | the agent, with `gh`/`glab` or over MCP | the service, over MCP; the agent has no network |
 | Change detection | commit SHA | sha256 of the rendered snapshot; the blob SHA only skips fetches |
 | What pages cite | `github:owner/repo/path@sha` | a committed snapshot under `brain/raw/extracted/<connector-id>/` |
 | Manifest entry | `kind: remote` | `kind: connector` (the commit is kept in `commit`) |
@@ -71,6 +71,33 @@ run reports them unwritten. You resolve those interactively on the next pass.
 | `agent/rules/ingest.md` | The ingest protocol itself — identical for local and remote sources. |
 
 You only need to configure the provider you actually use. An unconfigured server simply fails to connect; you can ignore it or delete its entry from `.mcp.json`.
+
+## Command line path (gh, glab)
+
+The agent prefers the provider's command line tool when it is installed and
+signed in. It runs `gh auth status` or `glab auth status` to check, and reads
+the repositories through `gh api` or `glab api`. This path needs no entry in
+`.mcp.json`, and the agent loads no MCP tool list, so a session uses fewer
+tokens.
+
+Sign in once, as yourself. A person does this step; the agent does not:
+
+```bash
+gh auth login      # GitHub
+glab auth login    # GitLab; for a self-hosted instance, give its hostname
+```
+
+Sign in with an account that can read the repositories listed in
+`sources.remote`. The rules tell the agent to read only, and never to push,
+merge or comment. An ordinary sign-in can still write, so that limit is an
+instruction and nothing enforces it. For a hard limit, give the tool a
+read-only token instead of a sign-in: set `GH_TOKEN` or `GITLAB_TOKEN` to a
+token with the scopes listed under [Security](#security).
+
+If the tool is missing or signed out, the agent falls back to MCP, when a server
+is configured. MCP setup, below, stays the alternative: use it on a harness with
+an MCP client but no shell, or where a token in `.mcp.json` suits you better
+than a sign-in.
 
 ## GitHub
 
@@ -197,7 +224,7 @@ Ask your agent:
 ### What happens
 
 1. Agent reads `brain.config.yaml` → `sources.remote`
-2. Connects via the MCP server matching each entry's `provider`
+2. Reads via `gh` or `glab` when installed and signed in, otherwise via the MCP server matching each entry's `provider`
 3. Lists files in the configured paths, compares against the last ingested commit SHA
 4. Reads changed files and extracts entities
 5. Writes pages on an `ingest/<source-slug>-<sha7>` branch (same branch, audit, and merge flow as local ingest)
@@ -249,5 +276,6 @@ Note that the desktop config does not expand environment variables: the token go
 
 - Give tokens the minimum scope that works: read-only contents on GitHub, `read_repository` on GitLab.
 - Each person uses their own token. Never share one.
+- A `gh` or `glab` sign-in usually carries write access. Use a read-only token in `GH_TOKEN` or `GITLAB_TOKEN` where the agent must not be able to write.
 - Tokens never enter git: `.mcp.json` references environment variables, and `.env` is gitignored.
 - Review approved MCP servers periodically: `/mcp` in Claude Code, the equivalent in your harness.
