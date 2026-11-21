@@ -71,7 +71,7 @@ refuses to start (`configErrors` in `core/config.mjs`; `doctor` reports it).
 ```
 server/                       its own package, like site/ — plain ESM .mjs + JSDoc, Node 22.13+
   package.json
-  bin/almagest.mjs            CLI: serve · ingestd · mcp · hook <name> · connectors <cmd> · doctor
+  bin/almagest.mjs            CLI: serve · ingestd · mcp · search · get · ask · hook <name> · connectors <cmd> · doctor
   src/
     app.mjs                   composition root: builds ctx, calls each module's create(ctx)
     core/                     shared contracts. Change only with a spec change.
@@ -682,6 +682,8 @@ Tools (all read-only except where noted, all recorded via `ctx.telemetry.record`
 | `list_proposals`, `get_proposal`, `request_approval` | governance via chat (`request_approval` returns a confirmation link) |
 
 Resources: `almagest://page/{slug}`, `almagest://index`. Prompts: `answer-from-brain`.
+
+The read tools also run from a terminal as `almagest search`, `get` and `ask`, recorded on channel `cli`; see [mcp.md](mcp.md#from-the-command-line).
 
 Transports: stdio (`almagest mcp`) for a local clone; Streamable HTTP at `/mcp`
 for remote use with no clone. `submit_source` enqueues with

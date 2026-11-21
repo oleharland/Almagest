@@ -94,6 +94,35 @@ sign-in takes a separate sign-in secret (`ALMAGEST_LOGINS`) or a one-time
 config is no way into the inbox. See [governance.md](governance.md) →
 *Sign-in* and *What cannot be configured away*.
 
+## From the command line
+
+`almagest search`, `almagest get` and `almagest ask` query the brain from a
+terminal. Each one calls the MCP tool of the same name in the same process, so
+the answer, the role checks and the snapshot match what an MCP client gets.
+
+```
+almagest search <words...> [--limit <n>] [--type <t>] [--tier <canonical|curated|evidence>] [--json]
+almagest get <slug> [--no-body] [--no-citations] [--json]
+almagest ask <question...> [--json]
+```
+
+Words after the command are joined with a space. `--no-body` and
+`--no-citations` map to `include_body: false` and `resolve_citations: false` on
+`get_page`. `--json` prints the tool's structured result instead of its text.
+
+Exit codes: 0 when a page is found or the brain answers. 1 when the tool worked
+and found nothing: no matching page, no answer, or no page with that slug. 2 for
+a usage error or any other error, which goes to stderr.
+
+The commands act as the local user with `mcp.stdio_role`, or as the owner of
+`ALMAGEST_TOKEN` when it is set, the same as `almagest mcp`. They read main's
+snapshot and start no ingest runner or background timers. Each call is recorded
+in telemetry with channel `cli` and client `almagest-cli`, the way any other
+read is recorded.
+
+With live lookup on, `almagest ask` counts as a local client, like `almagest
+mcp`: a miss does not send the question to the connectors.
+
 ## Configuration
 
 All optional. Defaults shown.

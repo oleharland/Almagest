@@ -241,11 +241,14 @@ function lookupTelemetry(found) {
  * @param {object} session.human        the human this connection acts for
  * @param {string} session.sessionId
  * @param {string} [session.transport]  'stdio' | 'http' | 'memory'
+ * @param {string} [session.channel]    telemetry channel for this session's events (default 'mcp')
+ * @param {string} [session.surface]    'mcp' (default) or 'cli': the text hints name CLI commands instead of MCP tools
  * @param {object} [hooks]
  * @param {(ip: string) => boolean} [hooks.fetchPolicy]  narrows the URL-fetch address policy (tests)
  * @param {{ find: Function }|null} [lookup]  createLookup(ctx, cfg, brain); `ask` uses it on a miss when `mcp.lookup.enabled`
  */
-export function buildServer(ctx, cfg, brain, { human, sessionId, transport = 'memory' }, hooks = {}, lookup = null) {
+export function buildServer(ctx, cfg, brain, { human, sessionId, transport = 'memory', channel = 'mcp', surface = 'mcp' }, hooks = {}, lookup = null) {
+  const cli = surface === 'cli';
   const server = new McpServer(SERVER_INFO, {
     instructions: INSTRUCTIONS,
     capabilities: { tools: {}, resources: {}, prompts: {} },
@@ -263,7 +266,7 @@ export function buildServer(ctx, cfg, brain, { human, sessionId, transport = 'me
 
   function record(evt) {
     try {
-      const pending = ctx.telemetry.record({ channel: 'mcp', client: clientName(), sessionId, actorId: human.id, ...evt });
+      const pending = ctx.telemetry.record({ channel, client: clientName(), sessionId, actorId: human.id, ...evt });
       pending?.catch?.((err) => ctx.log.warn('telemetry.record failed', { error: err.message }));
     } catch (err) {
       ctx.log.warn('telemetry.record threw', { error: err.message });
@@ -325,8 +328,12 @@ export function buildServer(ctx, cfg, brain, { human, sessionId, transport = 'me
     const lines = r.results.length
       ? [`${r.results.length} result(s) for "${query}" (main @ ${r.sha.slice(0, 7)})${r.answered ? '' : ' — weak matches only; the brain may not cover this'}:`,
         ...r.results.map((x) => `${x.rank}. ${`[[${x.slug}]]`} ${x.title} — ${x.type} · ${x.tier} · confidence ${x.confidence || 'n/a'} · score ${x.score}${x.match !== 'text' ? ` · ${x.match} match` : ''}\n   ${x.snippet}`),
-        '', 'Next: get_page { slug } for the full page with resolved citations, or ask { question } for an answer-ready bundle.']
-      : [`No page in the brain matches "${query}". Tell the user the brain does not cover it; offer report_gap.`];
+        '', cli
+          ? 'Next: almagest get <slug> for the full page with resolved citations, or almagest ask "<question>" for an answer-ready bundle.'
+          : 'Next: get_page { slug } for the full page with resolved citations, or ask { question } for an answer-ready bundle.']
+      : [cli
+        ? `No page in the brain matches "${query}".`
+        : `No page in the brain matches "${query}". Tell the user the brain does not cover it; offer report_gap.`];
     return {
       text: lines.join('\n'),
       data: { query, sha: r.sha, answered: r.answered, results: r.results },
@@ -446,7 +453,9 @@ export function buildServer(ctx, cfg, brain, { human, sessionId, transport = 'me
       packed = packSections(b, { ...r, results: r.results.filter((x) => !shown.has(x.slug)) }, Math.floor(budget * LOOKUP_BUDGET_SPLIT.weak));
     }
     const lines = [`# Almagest — context for: ${question}`, `main @ ${b.sha.slice(0, 7)} · ${packed.pages.length} page(s) · ~${packed.tokens} tokens${packed.truncated ? ' · truncated to budget' : ''}`, ''];
-    lines.push('## How to answer', '', b.rules.text, '');
+    // The CLI has no report_gap command; an unanswered ask is still recorded as one.
+    const rulesText = cli ? b.rules.text.replace(' — and offer to call `report_gap`', '') : b.rules.text;
+    lines.push('## How to answer', '', rulesText, '');
     if (hasPassages) {
       lines.push('## Context', '', `The brain has no reviewed page that answers this well${r.results.length ? ` (best page match: [[${r.results[0].slug}]], weak)` : ''}. `
         + 'Text from outside the wiki follows, labelled by what it is. Answer from it only as the rules below say, and tell the user which parts are reviewed and which are not.', '');
@@ -456,10 +465,10 @@ export function buildServer(ctx, cfg, brain, { human, sessionId, transport = 'me
       // Unreviewed text is never shown without the canonical text that outranks it.
       const pages = found.canonicalUnpacked.map((c) => `${pageRef({ id: oneLine(c.slug, 120) })}${c.title ? ` "${oneLine(c.title)}"` : ''}`).join(', ');
       lines.push('## Context', '', `A canonical page covers this topic: ${pages}. Its text did not fit in the token budget, so nothing from outside the wiki is shown, because it must not appear without the canonical text that outranks it. `
-        + 'Call get_page for that page, or ask again with a larger max_tokens.');
+        + (cli ? 'Run almagest get <slug> for that page.' : 'Call get_page for that page, or ask again with a larger max_tokens.'));
     } else if (!answered) {
       lines.push('## Context', '', `The brain has no page that answers this well${r.results.length ? ` (best match: [[${r.results[0].slug}]], weak)` : ''}. `
-        + 'Tell the user plainly that the brain does not cover it. Do not present general knowledge as if it came from the brain. Offer to call report_gap.');
+        + 'Tell the user plainly that the brain does not cover it. Do not present general knowledge as if it came from the brain.' + (cli ? '' : ' Offer to call report_gap.'));
       // A lookup that was cut short and found nothing says so, so the chat can retry. A complete one stays silent.
       const notes = found ? lookupNotes(found) : [];
       if (notes.length) lines.push('', `Lookup incomplete: ${notes.join('; ')}. The sources outside the wiki may not have been searched fully; asking again may find more.`);
