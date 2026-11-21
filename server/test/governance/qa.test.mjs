@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { after, before, describe, it } from 'node:test';
 
 import YAML from 'yaml';
@@ -13,12 +14,15 @@ import YAML from 'yaml';
 import { isPlaceholderRow, mergeManifest, stripRemovedPlaceholders } from '../../src/governance/bookkeeping.mjs';
 import { MAX_CONFLICT_REVISES } from '../../src/governance/service.mjs';
 import { dedupeFindings } from '../../src/governance/web/views.mjs';
-import { FIXTURES, REPO_ROOT } from '../helpers.mjs';
+import { FIXTURES } from '../helpers.mjs';
 import { ada, ALPHA_V2, CLEAN_AUDIT, cleanup, client, DELTA, G, git, govApp, job, page, proposalBranch, repo } from './fixtures.mjs';
 
-const REAL_LOG = fs.readFileSync(path.join(REPO_ROOT, 'brain/log.md'), 'utf-8');
-const REAL_INDEX = fs.readFileSync(path.join(REPO_ROOT, 'brain/index.md'), 'utf-8');
-const REAL_MANIFEST = fs.readFileSync(path.join(REPO_ROOT, 'brain/manifest.yaml'), 'utf-8');
+// Fixture copies of the shipped, empty bookkeeping files. Never read the live
+// brain/ here: once a real action or source is logged, its placeholder rows go.
+const EMPTY_BRAIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'empty-brain', 'brain');
+const REAL_LOG = fs.readFileSync(path.join(EMPTY_BRAIN, 'log.md'), 'utf-8');
+const REAL_INDEX = fs.readFileSync(path.join(EMPTY_BRAIN, 'index.md'), 'utf-8');
+const REAL_MANIFEST = fs.readFileSync(path.join(EMPTY_BRAIN, 'manifest.yaml'), 'utf-8');
 const FIXTURE_MANIFEST = YAML.parse(fs.readFileSync(path.join(FIXTURES, 'clean/brain/manifest.yaml'), 'utf-8'));
 const FIXTURE_INDEX = fs.readFileSync(path.join(FIXTURES, 'clean/brain/index.md'), 'utf-8');
 

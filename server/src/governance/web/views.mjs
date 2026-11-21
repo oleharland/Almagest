@@ -12,7 +12,7 @@
 import { html, raw, safeUrl } from '../html.mjs';
 import { locatorWords } from '../excerpt.mjs';
 import { hintWords } from '../hints.mjs';
-import { ACTION_WORDS, auditWords, counts as factCounts, DECISION_WORDS, describe, LEARNINGS_EXPLANATION, OP_WORDS, sourceName, STATUS_HEADLINE, TIER_WORDS } from '../summary.mjs';
+import { ACTION_WORDS, auditWords, counts as factCounts, DECISION_WORDS, describe, LEARNINGS_EXPLANATION, OP_WORDS, sourceName, STATUS_HEADLINE, TIER_WORDS, workAsked } from '../summary.mjs';
 import { frontMatterLines, layoutDiff, parseDiff, splitFront } from '../diff.mjs';
 import { layout, timeAgo } from './layout.mjs';
 import { groupClaims, supportFor } from './passages.mjs';
@@ -49,6 +49,8 @@ export const MESSAGES = {
   rejected: 'Turned down. Nothing from this proposal was added.',
   resolved: 'Answer recorded.',
   retried: 'Tried again.',
+  agent_dismissed: 'Going on without it. Nothing was applied for that request, and the page says so.',
+  agent_retried: 'Sent to the agent again. It will come back to you when it is done.',
   confirmed: 'Confirmed.',
 };
 
@@ -151,6 +153,7 @@ export function queuePage({ items, filters, actor, csrf, nonce, now = Date.now()
           <div class="al-queuerow__counts">${c.pages ? plural(c.pages, 'page') : 'No pages'}${facts ? html`<span class="al-delta"><span class="al-delta__add">+${c.added}</span> <span class="al-delta__chg">~${c.changed}</span> <span class="al-delta__del">-${c.removed}</span></span>` : ''}</div>
           <div class="al-queuerow__state al-cluster">
             ${info.openDecisions ? html`<span class="al-chip al-chip--warning">${plural(info.openDecisions, 'question')} for you</span>` : ''}
+            ${info.unappliedAnswers ? html`<span class="al-chip al-chip--warning">${plural(info.unappliedAnswers, 'answer')} not applied yet</span>` : ''}
             ${info.hot ? html`<span class="al-chip al-chip--info">${info.hot === 1 ? 'Frequently read page' : `${info.hot} frequently read pages`}</span>` : ''}
             ${statusChip(p)}
           </div>
@@ -483,13 +486,17 @@ function sourceWords(text, titles) {
   return `${titles.get(m[1]) || m[1]}, ${locatorWords(m[2].trim())}`;
 }
 
-function decisionCard(p, d, { canAct, csrf, keep = '' }) {
+function decisionCard(p, d, { canAct, csrf, keep = '', work = [] }) {
   const c = d.context || {};
   const titles = sourceTitles(p);
   if (d.status !== 'open') {
+    // An answer the agent has not applied yet reads as answered and not done, never as settled.
+    const unapplied = work.find((w) => w.decisionId === d.id);
     return html`<div class="al-decision al-decision--resolved"><h3>${DECISION_WORDS[d.kind] || d.kind}</h3>
       <p class="al-text-secondary">${d.question}</p>
-      <p>Answered by ${d.resolution?.display || d.resolution?.actorId}: <strong>${d.resolution?.label || d.resolution?.optionId}</strong>${d.resolution?.note ? html` — “${d.resolution.note}”` : ''}</p></div>`;
+      <p>Answered by ${d.resolution?.display || d.resolution?.actorId}: <strong>${d.resolution?.label || d.resolution?.optionId}</strong>${d.resolution?.note ? html` — “${d.resolution.note}”` : ''}</p>
+      ${d.resolution?.notApplied ? html`<p><strong>Not applied.</strong> The agent did not apply this answer. ${d.resolution.notApplied.display} chose to continue without it.</p>` : ''}
+      ${unapplied ? html`<p><strong>Not applied yet.</strong> ${unapplied.status === 'failed' ? 'The agent could not apply this answer. See "The agent" above to run it again.' : 'The agent is working on it.'}</p>` : ''}</div>`;
   }
   return html`<div class="al-decision" id="decision-${d.id}">
     <h3>${DECISION_WORDS[d.kind] || d.kind}</h3>
@@ -520,6 +527,33 @@ function needsBox(evaluation, p) {
   if (evaluation.ready) return html`<div class="al-panel al-panel--success"><h2>Ready</h2><p>${evaluation.explanation}</p></div>`;
   const items = [...evaluation.blockers, ...evaluation.missing];
   return html`<div class="al-panel"><h2>Before this can be added</h2><ul>${items.map((x) => html`<li>${x.message}</li>`)}</ul></div>`;
+}
+
+/**
+ * What the agent was asked to do and has not finished: still working, or could
+ * not. A failed one says what was asked, that it could not be done, the job's
+ * error in one line, and offers to run it again (a reviewer only).
+ */
+const DISMISS_WORDS = {
+  decision: 'Go on without it: the proposal can be approved as it is, and the answer stays marked as not applied.',
+  feedback: 'Go on without it: the proposal goes back to waiting for review as it is, and your request stays marked as not applied.',
+  conflict: 'Go on without it: the proposal can be approved as it is, and it may clash with recent changes when it is added.',
+};
+
+function agentWork(p, work, decisions, { canReview, csrf, keep }) {
+  if (!work.length) return '';
+  const id = encodeURIComponent(p.id);
+  return html`<section class="al-flow" id="agent-work" aria-label="The agent">${work.map((w) => {
+    const asked = workAsked(w, { decisions, changes: p.changes || [] });
+    if (w.status !== 'failed') return html`<div class="al-callout" role="status">The agent is ${asked}.</div>`;
+    return html`<div class="al-callout al-callout--danger" role="alert">
+      <p><strong>The agent could not finish ${asked}.</strong></p>
+      <p class="al-text-secondary">${w.error || 'The job did not finish.'}</p>
+      ${canReview ? html`<div class="al-cluster"><form method="post" action="/inbox/p/${id}/work/${encodeURIComponent(w.jobId)}/retry">${csrfField(csrf)}${keep}<button class="al-btn" type="submit">Run it again</button></form>
+        ${w.kind !== 'page' ? html`<form method="post" action="/inbox/p/${id}/work/${encodeURIComponent(w.jobId)}/dismiss">${csrfField(csrf)}${keep}<button class="al-btn" type="submit">Go on without it</button></form>` : ''}</div>
+        ${w.kind !== 'page' ? html`<p class="al-text-secondary">${DISMISS_WORDS[w.kind] || DISMISS_WORDS.feedback}</p>` : ''}` : ''}
+    </div>`;
+  })}</section>`;
 }
 
 const FILE_STATUS = { A: 'New file', M: 'Changed', D: 'Removed', R: 'Renamed' };
@@ -602,7 +636,7 @@ function summaryLine(p, info, now) {
   return `${[pages || 'No pages change', facts].filter(Boolean).join(' · ')} · ${when}`;
 }
 
-function railHtml(p, changes, open, done, files) {
+function railHtml(p, changes, open, done, files, unapplied = 0) {
   const live = changes.filter((c) => c.pageStatus !== 'rejected');
   const accepted = live.filter((c) => c.pageStatus === 'accepted').length;
   const item = (c) => {
@@ -618,7 +652,7 @@ function railHtml(p, changes, open, done, files) {
     ${changes.length ? html`<h2>Pages</h2>
       <p class="al-rail__progress"><progress class="al-progress" max="${live.length}" value="${accepted}">${accepted} of ${live.length}</progress><span>${accepted} of ${plural(live.length, 'page')} accepted</span></p>
       <ul class="al-rail__list" role="list">${orderedChanges(changes).map(item)}</ul>` : ''}
-    ${done.length ? html`<ul class="al-rail__list" role="list"><li><a class="al-rail__link" href="#answered" data-rail="answered"><span class="al-rail__name">Answered questions (${done.length})</span></a></li></ul>` : ''}
+    ${done.length ? html`<ul class="al-rail__list" role="list"><li><a class="al-rail__link" href="#answered" data-rail="answered"><span class="al-rail__name">Answered questions (${done.length}${unapplied ? `, ${unapplied} not applied yet` : ''})</span></a></li></ul>` : ''}
     ${files.length ? html`<details class="al-rail__group"><summary>Other files (${files.length})</summary>
       <ul class="al-rail__list" role="list">${files.map((f, i) => html`<li><a class="al-rail__link" href="#file-${i}" data-rail="file-${i}"><span class="al-rail__name al-mono">${f.path.split('/').pop()}</span><span class="al-rail__meta"><span class="al-rail__kind">${FILE_STATUS[f.status] || f.status}</span></span></a></li>`)}</ul></details>` : ''}
   </nav>`;
@@ -645,10 +679,10 @@ function statusStrip(evaluation, p, audit, findings, live) {
 
 const KEYS_HELP = [['j', 'Next fact'], ['k', 'Previous fact'], ['n', 'Next page'], ['p', 'Previous page'], ['v', 'Switch between compare and whole page'], ['?', 'Show or hide this list']];
 
-export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, nonce, canAct, flash = null, now = Date.now(), why = {}, chat = null, navCounts = {}, tiers = null, view = 'compare', diffMode = 'unified', pageTexts = null }) {
+export function proposalPage({ proposal: p, decisions, evaluation, work = [], actor, csrf, nonce, canAct, flash = null, now = Date.now(), why = {}, chat = null, navCounts = {}, tiers = null, view = 'compare', diffMode = 'unified', pageTexts = null }) {
   view = pickView(view);
   diffMode = pickDiff(diffMode);
-  const info = describe(p, decisions);
+  const info = describe(p, decisions, work);
   const name = proposalName(p, info);
   const open = decisions.filter((d) => d.status === 'open');
   const done = decisions.filter((d) => d.status !== 'open');
@@ -667,6 +701,8 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
   const rv = { p, canAct: live ? canAct : { ok: false }, csrf, required: p.required, tiers: live && canAct.canReview ? tiers : null, keep, view, diffMode, texts: pageTexts, titles: sourceTitles(p) };
   const items = [...evaluation.blockers || [], ...evaluation.missing || []];
   const needsShort = !live ? '' : open.length ? `${plural(open.length, 'question')} to answer first`
+    : work.some((w) => w.status === 'failed') ? 'The agent could not finish'
+      : work.length ? 'The agent is working'
     : mine ? 'You approved this version' : evaluation.ready ? 'Ready to add' : `${plural(items.length || 1, 'thing')} still needed`;
 
   const header = html`<header class="al-reviewhead">
@@ -693,11 +729,12 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
     <div class="al-review">
     ${header}
     <div class="al-twopane al-twopane--left al-review__grid">
-    <aside class="al-twopane__side">${railHtml(p, changes, open, done, files)}</aside>
+    <aside class="al-twopane__side">${railHtml(p, changes, open, done, files, info.unappliedAnswers)}</aside>
     <div class="al-twopane__main al-review__main al-flow">
     ${flashBox(flash)}
     ${p.kind === 'learnings' ? html`<p class="al-text-secondary">${LEARNINGS_EXPLANATION}</p>` : ''}
     ${statusStrip(evaluation, p, audit, findings, live)}
+    ${live ? agentWork(p, work, decisions, { canReview: canAct.canReview, csrf, keep }) : ''}
     ${info.lookup ? html`<p class="al-text-secondary">${info.lookup}${p.lookupQuestion ? html` The question was “${p.lookupQuestion}”.` : ''}</p>` : ''}
     ${p.mergeError ? html`<div class="al-callout al-callout--danger" role="alert">${p.mergeError.message}${p.mergeError.slug ? html` <a href="/inbox/pages/${encodeURIComponent(p.mergeError.slug)}">Open the page</a>` : ''}</div>` : ''}
     ${chat ? html`<div class="al-callout al-callout--success" role="status">A chat assistant asked${chat.onBehalfOf ? ` on behalf of ${chat.onBehalfOf.display}` : ''} for this to be ${chat.action === 'reject' ? 'turned down' : 'approved'}. It can't do that itself — read it below and decide.${chat.headSha && chat.headSha !== p.headSha ? ' The proposal changed after the chat asked; this is the current version.' : ''}</div>` : ''}
@@ -713,7 +750,7 @@ export function proposalPage({ proposal: p, decisions, evaluation, actor, csrf, 
     ${orderedChanges(changes).map((c) => pageSection(c, { ...rv, why: why[c.slug] }))}
     ${otherFilesSection(files)}
 
-    ${done.length ? html`<section id="answered" class="al-flow"><h2>Answered questions</h2>${done.map((d) => decisionCard(p, d, { canAct, csrf, keep }))}</section>` : ''}
+    ${done.length ? html`<section id="answered" class="al-flow"><h2>Answered questions</h2>${done.map((d) => decisionCard(p, d, { canAct, csrf, keep, work }))}</section>` : ''}
 
     ${live && canAct.canReview ? html`<section class="al-section al-stack" id="request-changes">
       <h2>Something not right?</h2>
@@ -798,6 +835,9 @@ const ACTIVITY_WORDS = {
   'proposal.merge_failed': "couldn't be added yet",
   'proposal.request_changes': 'asked for changes',
   'proposal.retry': 'tried adding again',
+  'proposal.dismiss_agent': 'went on without a request the agent could not finish on',
+  'proposal.retry_agent': 'asked the agent to run a request again on',
+  'proposal.agent_failed': 'saw the agent fail a job on',
   'proposal.supersede': 'replaced by a newer version',
   'page.reject': 'took a page out',
   'decision.resolve': 'answered a question',
@@ -817,6 +857,7 @@ export function activityPage({ entries, titles, actor, csrf, nonce, now = Date.n
       <td><strong>${e.detail?.actor || e.actorId}</strong> ${ACTIVITY_WORDS[e.action] || e.action}${e.detail?.scope && e.detail.scope !== 'all' ? html` (page ${e.detail.scope})` : ''}
         ${titles.get(e.target) ? html` — <a href="/inbox/p/${encodeURIComponent(e.target)}">${titles.get(e.target)}</a>` : ''}
         ${e.action === 'proposal.merge' && e.detail?.combined?.length ? html`<div class="al-source">Combined with what was already there: ${e.detail.combined.join(', ')}.</div>` : ''}
+        ${e.action === 'proposal.agent_failed' ? html`<div class="al-source al-source--missing">${e.detail?.error || ''}</div>` : ''}
         ${e.action === 'policy.violation' ? html`<div class="al-source al-source--missing">${e.detail?.reason || ''}</div>` : ''}</td>
       <td class="al-text-tertiary">${e.channel}</td><td class="al-text-tertiary">${timeAgo(e.ts, now)}</td></tr>`)}</tbody></table></div>`}`;
   return layout({ title: 'Activity', actor, nonce, csrf, current: 'activity', body, navCounts });

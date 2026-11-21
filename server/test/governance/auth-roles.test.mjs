@@ -230,7 +230,11 @@ describe('B2a · Slack approvals need recently confirmed roles', () => {
     const rec = await app.ctx.store.kv.get('governance.identity', 'id:usr_sub-ada');
     await app.ctx.store.kv.set('governance.identity', 'id:usr_sub-ada', { ...rec, confirmedAt: hoursAgo(25) });
 
-    const press = async (ts = Math.floor(Date.now() / 1000)) => {
+    // One timestamp for both presses: a second boundary between two calls would
+    // give the second press the same ts and body, hence the same signature, and
+    // the replay check would reject it.
+    const t0 = Math.floor(Date.now() / 1000);
+    const press = async (ts = t0) => {
       const body = `payload=${encodeURIComponent(JSON.stringify({ type: 'block_actions', user: { id: 'U_ADA' }, actions: [{ action_id: 'almagest_approve', value: JSON.stringify({ p: p.id, h: p.headSha }) }] }))}`;
       const sig = `v0=${crypto.createHmac('sha256', ENV.T_SLACK_SECRET).update(`v0:${ts}:${body}`).digest('hex')}`;
       const res = await fetch(`${base}/channels/slack/actions`, { method: 'POST', headers: { 'x-slack-request-timestamp': String(ts), 'x-slack-signature': sig, 'content-type': 'application/x-www-form-urlencoded' }, body });
@@ -242,7 +246,7 @@ describe('B2a · Slack approvals need recently confirmed roles', () => {
 
     // Signing in again refreshes them; then the same button works.
     await reg.remember({ id: 'usr_sub-ada', kind: 'human', email: 'ada@acme.test', display: 'Ada', roles: ['owner'], idp: 'oidc' });
-    assert.match((await press(Math.floor(Date.now() / 1000) - 1)).text, /Approved/);   // a new request, not a replay
+    assert.match((await press(t0 - 1)).text, /Approved/);   // a new request, not a replay
     assert.equal((await app.ctx.governance.getProposal(p.id)).approvals[0].channel, 'slack');
   });
 

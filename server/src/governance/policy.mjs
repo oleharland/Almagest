@@ -29,12 +29,16 @@
  *     takes their pending approvals' weight away
  *   - a proposal that changes anything outside the knowledge base's writable
  *     files (paths.mjs) can never be approved
+ *   - work the agent was asked to do on a proposal (`options.work`, each entry
+ *     pending or failed) blocks approval until it is done: the version on
+ *     screen is not the version the reviewer's last request was about
  */
 import { assertCanApprove, ForbiddenError, hasRole } from '../core/auth.mjs';
 import { HttpError } from '../core/http.mjs';
 import { APPROVER_ROLES, DECISION_KINDS, ROLES } from '../core/schemas.mjs';
 import { keysFor } from './identity.mjs';
 import { describeOutside, outsideFiles } from './paths.mjs';
+import { workAsked } from './summary.mjs';
 
 export const PAGE_CONDITIONS = ['hot', 'tier', 'action', 'page', 'owner'];
 export const PROPOSAL_CONDITIONS = ['decision', 'label', 'connector', 'source_kind'];
@@ -274,7 +278,7 @@ export const EMPTY_MESSAGE = 'Nothing is left to add — every page was taken ou
  */
 export function assertMayApprove(proposal, actor, {
   separationOfDuties = false, requireSso = false, scope = 'all', channel = 'web',
-  headSha, requireHead = false, actorKeys = null, submitterKeys = null, allowed = null,
+  headSha, requireHead = false, actorKeys = null, submitterKeys = null, allowed = null, work = [],
 } = {}) {
   assertCanApprove(actor);   // human + approver role — core, unconditional
   const mine = actorKeys || keysFor(actor.id, actor.email);
@@ -287,6 +291,7 @@ export function assertMayApprove(proposal, actor, {
   if (!APPROVABLE.includes(proposal.status)) {
     throw new HttpError(409, `This proposal can't be approved — it is ${STATUS_WORDS[proposal.status] || proposal.status}.`);
   }
+  if (work.length) throw new HttpError(409, work.some((w) => w.status === 'failed') ? (work.every((w) => w.status !== 'failed' || w.kind === 'page') ? WORK_FAILED_PAGE_MESSAGE : WORK_FAILED_MESSAGE) : WORK_PENDING_MESSAGE);
   const outside = outsideOf(proposal, allowed);
   if (outside.length) throw new HttpError(409, describeOutside(outside));
   if (isEmpty(proposal)) throw new HttpError(409, EMPTY_MESSAGE);
@@ -295,6 +300,10 @@ export function assertMayApprove(proposal, actor, {
   }
   if (requireHead || headSha !== undefined) assertSameHead(proposal, headSha);
 }
+
+export const WORK_PENDING_MESSAGE = 'The agent has not finished what it was asked to do on this proposal. Wait for it, then review the new version.';
+export const WORK_FAILED_PAGE_MESSAGE = 'The agent could not finish taking a page out of this proposal. Run it again.';
+export const WORK_FAILED_MESSAGE = 'The agent could not finish what it was asked to do on this proposal. Run it again, or go on without it.';
 
 /** The version a person acted on must be the current one. */
 export function assertSameHead(proposal, headSha) {
@@ -412,12 +421,13 @@ function gaps(req, who, { forPage = null } = {}) {
  * @param {object} input.proposal    the Proposal (headSha, status, audit, changes, approvals, required)
  * @param {Array}  [input.decisions] its Decision records
  * @param {object} [input.options]   { separationOfDuties, keyring, submitterKeys, allowed,
- *                                     currentRoles: Map actorId → roles now (identity.mjs) }
+ *                                     currentRoles: Map actorId → roles now (identity.mjs),
+ *                                     work: unsettled agent work, each { jobId, kind, decisionId?, slug?, status: 'pending' | 'failed' } }
  * @returns {{ ready: boolean, blockers: Array<{code,message}>, missing: Array<{code,message,slug?}>,
  *             approvers: Array, explanation: string }}
  */
 export function evaluate({ proposal, decisions = [], options = {} }) {
-  const { separationOfDuties = false, keyring = null, submitterKeys = null, allowed = null, currentRoles = null } = options;
+  const { separationOfDuties = false, keyring = null, submitterKeys = null, allowed = null, currentRoles = null, work = [] } = options;
   const required = proposal.required || computeRequirements({ changes: proposal.changes });
   const subKeys = submitterKeysOf(proposal, submitterKeys);
   // One person is one approver, whichever ids and channels they used.
@@ -441,6 +451,13 @@ export function evaluate({ proposal, decisions = [], options = {} }) {
   const open = decisions.filter((d) => d.status === 'open');
   if (open.length) {
     blockers.push({ code: 'decisions', message: `${plural(open.length, 'question')} ${open.length === 1 ? 'needs' : 'need'} an answer first.` });
+  }
+  // Work the agent was asked to do and has not finished (pending) or could not finish (failed).
+  for (const w of work) {
+    const asked = workAsked(w, { decisions, changes: proposal.changes || [] });
+    blockers.push(w.status === 'failed'
+      ? { code: 'agent-failed', jobId: w.jobId, message: `The agent could not finish ${asked}. ${w.kind === 'page' ? 'Run it again.' : 'Run it again, or go on without it.'}` }
+      : { code: 'agent-working', jobId: w.jobId, message: `The agent is ${asked}. Wait for it to finish.` });
   }
   const exit = proposal.audit?.exit;
   if (exit !== 0) {

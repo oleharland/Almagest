@@ -170,6 +170,8 @@ describe('guard-git: moving main without a commit (any branch)', () => {
     branchWith(r, 'ingest/wiki-1111111', 'brain/wiki/new-page.md', '# new\n');
     git(r, 'switch', '-q', 'ingest/wiki-1111111');
     for (const cmd of [
+      'git branch -f MAIN ingest/wiki-1111111', 'git update-ref refs/heads/MAIN HEAD', 'git update-ref -d refs/heads/Main',
+      'git push . ingest/wiki-1111111:MAIN', 'git fetch . ingest/wiki-1111111:refs/heads/MAIN', 'bash -c "git update-ref refs/heads/MAIN HEAD"',
       'git checkout -B main ingest/wiki-1111111', 'git switch -C main ingest/wiki-1111111', 'git switch --force-create main HEAD',
       'git branch -f main ingest/wiki-1111111', 'git branch --force main HEAD', 'git branch -M ingest/wiki-1111111 main',
       'git branch -M main', 'git branch -C ingest/wiki-1111111 main', 'git branch -D main', 'git branch -m main old-main',

@@ -584,6 +584,27 @@ export function createRunner(ctx, { driver, logsDir }) {
     } catch (err) { log.warn('could not discard empty ingest branch', { branch, error: err.message }); }
   }
 
+  /**
+   * A synthesize job that throws before it committed anything leaves no
+   * worktree and no empty branch behind: nothing in them is worth keeping, and
+   * the next run would otherwise find a stale `ingest/learnings_<sha7>`.
+   * `discard` removes the branch only when this job created it and its head is
+   * still where the branch started, so a branch with a commit (or one that was
+   * there before) stays, and so does the worktree of a tampered checkout.
+   * Other kinds keep their worktree for inspection, as before.
+   */
+  async function cleaningUp(job, branch, body) {
+    const state = {};
+    try { return await body(state); }
+    catch (err) {
+      if (job.kind === 'synthesize' && state.wt && !(err instanceof WorktreeTamperedError)) {
+        await discard(state.wt, branch, state.created, state.startSha)
+          .catch((e) => log.warn('could not clean up after a failed synthesize job', { branch, error: e.message }));
+      }
+      throw err;
+    }
+  }
+
   async function runDriver(job, args, timeoutMs, signal, write) {
     const timeout = AbortSignal.timeout(Math.max(1, timeoutMs));
     const both = AbortSignal.any([signal, timeout]);
@@ -612,13 +633,14 @@ export function createRunner(ctx, { driver, logsDir }) {
     }
     const t = await target(job);
     const learningsRun = job.kind === 'synthesize' || t.proposal?.kind === 'learnings';
-    return withBranchLock(t.branch, async () => {
+    return withBranchLock(t.branch, () => cleaningUp(job, t.branch, async (state) => {
       write(`step 1: branch ${t.branch}${t.proposal ? ` (proposal ${t.proposal.id})` : ''}`);
       const { worktree: wt, wt: repo, startSha, createdBranch } = await prepareWorktree(t.branch);
+      Object.assign(state, { wt, startSha, created: job.createdBranch ?? createdBranch });
       const refsBefore = await watchedRefs();
       const baseSha = await baseShaFor(t.branch, t.proposal);
       const created = job.createdBranch ?? createdBranch;
-      job = await patchJob({ branch: t.branch, worktree: wt, baseSha, createdBranch: created });
+      job = await patchJob({ branch: t.branch, worktree: wt, baseSha, createdBranch: created, startSha });
 
       let placed = null;
       if (job.kind === 'ingest' && t.source && !t.proposal) {
@@ -713,7 +735,7 @@ export function createRunner(ctx, { driver, logsDir }) {
         status: report.outcome === 'blocked-only' ? 'blocked' : 'succeeded',
         proposalId: proposal?.id || job.proposalId, headSha, audit: auditResult,
       };
-    });
+    }));
   }
 
   // ── drop-page: mechanical, no agent ───────────────────────────────────────

@@ -88,7 +88,8 @@ describe('synthesize: what the runner refuses', () => {
     assert.match(done.error, /not committed/);
     assert.equal(t.governance.calls.length, 0, `${why}: no proposal`);
     const branch = done.branch;
-    assert.equal(t.git('rev-list', '--count', `main..${branch}`).trim(), '0', `${why}: nothing was committed`);
+    // A refused run commits nothing, and its empty branch is removed with its worktree.
+    assert.equal(t.git('branch', '--list', branch).trim(), '', `${why}: nothing was committed, so no branch is left`);
     return done;
   };
 

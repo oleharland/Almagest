@@ -132,6 +132,63 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     }
   }
 
+  // ── agent work ─────────────────────────────────────────────────────────────
+
+  /** Jobs that end in one of these have done what they were asked; every other end, or no record at all, is a failure. */
+  const SETTLED_JOB = new Set(['succeeded', 'blocked']);
+  const RUNNING_JOB = new Set(['queued', 'running']);
+
+  /** A pointer from a proposal to a job it asked for. It holds no status: the job store is the truth. */
+  const workEntry = (job, kind, headSha, extra = {}) => (job?.id ? [{ jobId: job.id, kind, ...extra, headSha, at: nowIso() }] : []);
+
+  /**
+   * The unsettled entries of a proposal's `work` list, each with a status
+   * derived from its job as the store has it now: `pending` (queued or
+   * running) or `failed` (failed, cancelled, or no record of it), plus the
+   * job's error text for a failed one. An entry whose job ended well is
+   * settled and not returned. Two entries may point at one job (the queue
+   * folds a second revise into a queued one); each is read on its own.
+   */
+  async function workFor(p) {
+    const out = [];
+    const jobs = new Map();
+    for (const w of p.work || []) {
+      if (!jobs.has(w.jobId)) jobs.set(w.jobId, await store.jobs.get(w.jobId).catch(() => null));
+      const job = jobs.get(w.jobId);
+      if (job && RUNNING_JOB.has(job.status)) { out.push({ ...w, status: 'pending' }); continue; }
+      if (job && SETTLED_JOB.has(job.status)) {
+        // An answer or a request for changes is applied only when the branch moved.
+        if ((w.kind !== 'decision' && w.kind !== 'feedback') || movedBranch(job, w, p)) continue;
+        out.push({ ...w, status: 'failed', error: 'The agent finished without changing anything.' });
+        continue;
+      }
+      const error = !job ? 'There is no record of the job.' : oneLine(job.error || job.lastError || (job.status === 'cancelled' ? 'The job was cancelled.' : 'The job did not finish.'), 300);
+      out.push({ ...w, status: 'failed', error });
+    }
+    return out;
+  }
+
+  /**
+   * Did a job that ended well move the proposal's branch? The runner records
+   * where the job started (`startSha`) and where it ended (`headSha`). A job
+   * without a start (older jobs) is compared by its end, or failing that the
+   * proposal's current head, with the head the request was made on.
+   */
+  function movedBranch(job, w, p) {
+    if (job.startSha) return Boolean(job.headSha) && job.headSha !== job.startSha;
+    return (job.headSha || p.headSha) !== w.headSha;
+  }
+
+  const dropPageInstructions = (slug, reason = '') =>
+    `A reviewer took the page "${slug}" out of this proposal${reason ? `: ${reason}` : '.'} Remove every change to brain/wiki/${slug}.md from this branch (restore it as it is on main, or delete it if it is new) and update index.md, manifest.yaml and log.md to match.`;
+
+  /** `work` without the entries whose job ended well. Written back whenever the proposal is rewritten from a run. */
+  async function prunedWork(p) {
+    if (!p?.work?.length) return null;
+    const unsettled = new Set((await workFor(p)).map((w) => w.jobId));
+    return p.work.filter((w) => unsettled.has(w.jobId));
+  }
+
   /** Identity-aware policy options: who the approvers and submitters are, as people. */
   async function policyOptions(p, actor = null) {
     const approvals = p.approvals || [];
@@ -142,7 +199,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     const submitterKeys = new Set(subs.flatMap((id) => [...(keyring.get(id)?.keys || [`id:${id}`])]));
     const actorKeys = actor ? keyring.get(actor.id)?.keys : null;
     const currentRoles = await identities.currentRoles(approvals.map((a) => a.actorId), { mode, tokens: mode === 'oidc' ? [] : tokens() });
-    return { ...options, keyring, submitterKeys, actorKeys, allowed, currentRoles };
+    return { ...options, keyring, submitterKeys, actorKeys, allowed, currentRoles, work: await workFor(p) };
   }
 
   /**
@@ -367,6 +424,8 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     };
     fields.required = requirementsFor({ kind, tier, source }, { changes, decisions });
     fields.summary = describe(fields, decisions).sentence;
+    const work = live ? await prunedWork(live) : null;
+    if (work) fields.work = work;
 
     let proposal;
     if (live) {
@@ -480,6 +539,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     // proposal — after that a person has to look.
     let message = result.message;
     let conflictRevise = p.conflictRevise || { count: 0, headSha: '' };
+    let work = null;
     if (status === 'conflicted' && p.kind === 'tier' && result.benign) {
       message = result.message;
     } else if (status === 'conflicted' && p.kind === 'tier') {
@@ -501,13 +561,14 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
         });
         if (job) {
           conflictRevise = { count: conflictRevise.count + 1, headSha: p.headSha, at: nowIso(), jobId: job.id || null };
+          work = [...(p.work || []), ...workEntry(job, 'conflict', p.headSha)];
           message = `The knowledge base changed while this waited, so it is being redone on top of the current version. ${result.message}`;
         } else {
           message = `${result.message} (The request to the agent could not be queued — ask an administrator.)`;
         }
       }
     }
-    const updated = await store.proposals.update(p.id, { status, conflictRevise, mergeError: { reason: result.reason, message, at: nowIso(), ...(result.files ? { files: result.files } : {}), ...(result.slug ? { slug: result.slug } : {}) }, updatedAt: nowIso() });
+    const updated = await store.proposals.update(p.id, { status, conflictRevise, ...(work ? { work } : {}), mergeError: { reason: result.reason, message, at: nowIso(), ...(result.files ? { files: result.files } : {}), ...(result.slug ? { slug: result.slug } : {}) }, updatedAt: nowIso() });
     await record('proposal.merge_failed', actor, p.id, channel, { reason: result.reason, headSha: p.headSha, jobId: job?.id || null });
     bus.emit('proposal.updated', { proposal: updated });
     return updated;
@@ -579,13 +640,13 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       if (change.pageStatus === 'rejected') return p;
       const job = await enqueue({
         kind: 'drop-page', source: p.source, trigger: 'feedback', requestedBy: actor.id, proposalId: p.id, slug,
-        instructions: `A reviewer took the page "${slug}" out of this proposal${reason ? `: ${reason}` : '.'} Remove every change to brain/wiki/${slug}.md from this branch (restore it as it is on main, or delete it if it is new) and update index.md, manifest.yaml and log.md to match.`,
+        instructions: dropPageInstructions(slug, reason),
       });
       if (!job) throw new HttpError(503, "The page couldn't be taken out right now — the agent queue isn't reachable. Nothing was changed.");
       const changes = p.changes.map((c) => (c.slug === slug ? { ...c, pageStatus: 'rejected' } : c));
       const decisions = await store.decisions.listByProposal(p.id);
       const required = requirementsFor(p, { changes, decisions });
-      const updated = await store.proposals.update(p.id, { changes, required, updatedAt: nowIso() });
+      const updated = await store.proposals.update(p.id, { changes, required, work: [...(p.work || []), ...workEntry(job, 'page', p.headSha, { slug })], updatedAt: nowIso() });
       await record('page.reject', actor, p.id, channel, { slug, headSha: p.headSha, jobId: job.id || null });
       await rememberTurnedDown(p, [slug]);
       bus.emit('proposal.updated', { proposal: updated });
@@ -610,8 +671,98 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
         status: 'changes_requested', updatedAt: nowIso(),
         feedback: [...(p.feedback || []), { by: actor.id, display: actor.display, at: nowIso(), text, headSha: p.headSha, jobId: job.id || null }],
         conflictRevise: { count: 0, headSha: '' },
+        work: [...(p.work || []), ...workEntry(job, 'feedback', p.headSha)],
       });
       await record('proposal.request_changes', actor, p.id, channel, { headSha: p.headSha, jobId: job.id || null });
+      bus.emit('proposal.updated', { proposal: updated });
+      return updated;
+    });
+  }
+
+  /**
+   * Ask the agent again for something that failed: a new job with the failed
+   * job's kind, source, trigger, instructions and the rest, in place of it.
+   * Only a failed entry can be run again. Entries that share the failed job
+   * (a coalesced revise) move to the new job together. Never approves or merges.
+   */
+  async function retryWork(prpId, jobId, actor, { channel = 'web' } = {}) {
+    assertReviewer(actor, channel);
+    return lock(async () => {
+      const p = await load(prpId);
+      assertLive(p);
+      const entries = (p.work || []).filter((w) => w.jobId === jobId);
+      if (!entries.length) throw new HttpError(404, 'This proposal has no such request to the agent.');
+      const states = (await workFor(p)).filter((w) => w.jobId === jobId);
+      if (!states.length) throw new HttpError(409, 'The agent has already finished that, so there is nothing to run again.');
+      if (!states.some((w) => w.status === 'failed')) throw new HttpError(409, 'The agent is still working on that. Wait for it to end.');
+      const old = await store.jobs.get(jobId).catch(() => null);
+      let spec;
+      if (old) {
+        spec = {
+          kind: old.kind, source: old.source, trigger: old.trigger, requestedBy: actor.id, proposalId: p.id,
+          ...(old.decisionId ? { decisionId: old.decisionId } : {}),
+          ...(old.slug ? { slug: old.slug } : {}),
+          ...(old.slugs ? { slugs: old.slugs } : {}),
+          ...(old.instructions ? { instructions: old.instructions } : {}),
+        };
+      } else if (entries.every((w) => w.kind === 'page' && w.slug)) {
+        // No record of the job, but taking a page out needs nothing else than the page.
+        spec = { kind: 'drop-page', source: p.source, trigger: 'feedback', requestedBy: actor.id, proposalId: p.id, slug: entries[0].slug, instructions: dropPageInstructions(entries[0].slug) };
+      } else {
+        throw new HttpError(409, 'There is no record of that job to run again. Go on without it, then ask for the change again.');
+      }
+      const job = await enqueue(spec);
+      if (!job?.id) throw new HttpError(503, "The agent couldn't be asked again because the agent queue isn't reachable. Nothing was changed.");
+      const updated = await store.proposals.update(p.id, {
+        work: p.work.map((w) => (w.jobId === jobId ? { ...w, jobId: job.id, headSha: p.headSha } : w)),
+        ...(p.feedback?.some((f) => f.jobId === jobId) ? { feedback: p.feedback.map((f) => (f.jobId === jobId ? { ...f, jobId: job.id } : f)) } : {}),
+        updatedAt: nowIso(),
+      });
+      await record('proposal.retry_agent', actor, p.id, channel, { oldJobId: jobId, jobId: job.id, headSha: p.headSha });
+      bus.emit('proposal.updated', { proposal: updated });
+      return updated;
+    });
+  }
+
+  /**
+   * Go on without a request the agent could not finish. Only a failed entry
+   * can be dismissed, and never a page removal (the page is marked as taken
+   * out, so that request is only run again). The entries for that job are
+   * removed, and what was left unapplied is marked for good: on the decision's
+   * resolution, or on the feedback item. If the last failed request for
+   * changes goes, a proposal waiting on them is open for review again.
+   * Approving still needs a person, as always.
+   */
+  async function dismissWork(prpId, jobId, actor, { channel = 'web' } = {}) {
+    assertReviewer(actor, channel);
+    return lock(async () => {
+      const p = await load(prpId);
+      assertLive(p);
+      if (!(p.work || []).some((w) => w.jobId === jobId)) throw new HttpError(404, 'This proposal has no such request to the agent.');
+      const states = await workFor(p);
+      const mine = states.filter((w) => w.jobId === jobId);
+      if (!mine.length) throw new HttpError(409, 'The agent has already finished that, so there is nothing to go on without.');
+      const failed = mine.filter((w) => w.status === 'failed');
+      if (!failed.length) throw new HttpError(409, 'The agent is still working on that. Wait for it to end.');
+      if (failed.some((w) => w.kind === 'page')) throw new HttpError(409, 'That page has to be taken out. Run it again.');
+      const note = { by: actor.id, display: actor.display || actor.id, at: nowIso() };
+      const gone = new Set(failed.map((w) => w.at + w.kind + (w.decisionId || '')));
+      const isGone = (w) => w.jobId === jobId && gone.has(w.at + w.kind + (w.decisionId || ''));
+      const work = p.work.filter((w) => !isGone(w));
+      const decisionIds = failed.filter((w) => w.kind === 'decision').map((w) => w.decisionId);
+      for (const id of decisionIds) {
+        const d = await store.decisions.get(id);
+        if (d?.resolution) await store.decisions.update(id, { resolution: { ...d.resolution, notApplied: note } });
+      }
+      const droppedFeedback = failed.some((w) => w.kind === 'feedback');
+      const feedbackLeft = states.some((w) => w.kind === 'feedback' && !isGone(w));
+      const patch = { work, updatedAt: nowIso() };
+      if (droppedFeedback) {
+        patch.feedback = (p.feedback || []).map((f) => (f.jobId === jobId ? { ...f, notApplied: note } : f));
+        if (!feedbackLeft && p.status === 'changes_requested') patch.status = 'open';
+      }
+      const updated = await store.proposals.update(p.id, patch);
+      await record('proposal.dismiss_agent', actor, p.id, channel, { jobId, kinds: failed.map((w) => w.kind), decisionIds, headSha: p.headSha });
       bus.emit('proposal.updated', { proposal: updated });
       return updated;
     });
@@ -828,6 +979,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       policy.assertSameHead(p, headSha);   // the answer is about the version the person was shown
       const cleanNote = String(note || '').trim().slice(0, 2000);
       const detail = { optionId, headSha: p.headSha };
+      const newWork = [];
 
       if (d.kind === 'canonical_conflict') {
         const touches = (p.changes || []).find((c) => c.slug === d.slug && c.canonical && c.pageStatus !== 'rejected');
@@ -838,6 +990,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
           });
           if (!job) throw new HttpError(503, "This couldn't be done right now — the agent queue isn't reachable. Nothing was changed.");
           detail.jobId = job.id || null;
+          newWork.push(...workEntry(job, 'page', detail.headSha, { slug: d.slug, decisionId: d.id }));
           p = await store.proposals.update(p.id, { changes: p.changes.map((c) => (c.slug === d.slug ? { ...c, pageStatus: 'rejected' } : c)) });
         }
         if (option.id === 'record') {
@@ -855,6 +1008,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
         });
         if (!job) throw new HttpError(503, "Your answer couldn't be passed on — the agent queue isn't reachable. Nothing was changed.");
         detail.jobId = job.id || null;
+        newWork.push(...workEntry(job, 'decision', detail.headSha, { decisionId: d.id }));
       }
 
       const resolved = await store.decisions.update(d.id, {
@@ -866,7 +1020,8 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
       const decisions = await store.decisions.listByProposal(p.id);
       p = await store.proposals.update(p.id, {
         required: requirementsFor(p, { changes: p.changes, decisions }),
-        summary: describe(p, decisions).sentence,
+        summary: describe(p, decisions, [...(await workFor(p)), ...newWork.map((w) => ({ ...w, status: 'pending' }))]).sentence,
+        ...(newWork.length ? { work: [...(p.work || []), ...newWork] } : {}),
         updatedAt: nowIso(),
       });
       bus.emit('decision.resolved', { decision: resolved, proposal: p });
@@ -961,6 +1116,25 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     });
   }
 
+  // A job for a proposal that ends badly is written in the audit log and the live views are told.
+  // Nothing is stored on the proposal: its `work` list points at the job, and the job store is the truth.
+  const MAX_ERROR = 300;
+  let stopped = false;
+  const offFinished = bus.on('job.finished', async ({ job }) => {
+    if (stopped || !job?.proposalId || !['failed', 'cancelled'].includes(job.status)) return;
+    const p = await store.proposals.get(job.proposalId);
+    if (!p || !policy.LIVE.includes(p.status)) return;
+    await record('proposal.agent_failed', svc, p.id, 'cli', {
+      jobId: job.id, kind: job.kind, status: job.status, error: oneLine(job.error || job.lastError || job.status, MAX_ERROR),
+    });
+    bus.emit('proposal.updated', { proposal: p });
+  });
+  /** Stop listening for finished jobs. */
+  function stop() {
+    stopped = true;
+    offFinished();
+  }
+
   return {
     // spec surface
     listProposals: (filter = {}) => store.proposals.list(filter),
@@ -974,6 +1148,10 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     createConfirmation,
     // extras (documented in docs/v2/governance.md)
     retryMerge,
+    retryWork,
+    dismissWork,
+    workOf: workFor,
+    stop,
     recordExternalMerge,
     setPageTier,
     proposeTier,
@@ -1011,7 +1189,7 @@ export function createService(ctx, { merger, confirmations, lock, identities, al
     },
     async evaluate(prpId) {
       const p = await load(prpId);
-      return { proposal: p, ...(await evaluateProposal(p)) };
+      return { proposal: p, ...(await evaluateProposal(p)), work: await workFor(p) };
     },
     /** Can `actor` approve this proposal right now? For showing or hiding buttons — the actions re-check. */
     async mayApprove(p, actor) {

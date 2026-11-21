@@ -101,6 +101,8 @@ left alone while you type in a field.
 | **Accept page** | Approves one page. Some pages (frequently read, or owned by a team) need this explicit look. Accepting every page one by one is the same as approving all. |
 | **Take this page out** | The agent removes that page from the proposal; the rest stays. |
 | **Ask for changes** | Write what's wrong. The agent revises and the proposal comes back to you. |
+| **Run it again** | Shown under "The agent" when the agent could not finish something it was asked to do: it says what was asked and why the job failed, in one line. The button asks the agent again with the same instructions. |
+| **Go on without it** | Beside Run it again, for a failed answer, request for changes or clash redo (never for a page removal, which must be done). The request is dropped and the proposal can be reviewed as it is. The answer or request stays marked as not applied, with your name, for good. |
 | **Turn down** | Nothing from this proposal is added. |
 | A question's answer buttons | When the agent hit something it may not decide alone — two sources disagree, a page would be deleted or merged, it isn't sure — it asks. Your answer goes to the agent, which revises. |
 
@@ -125,6 +127,14 @@ page “Pricing”."*
   wiki pages, sources and the knowledge base's own records (the audit tool,
   the service, the configuration, git settings …) can never be approved.
 - **Questions first.** A proposal with an unanswered question can't be added.
+- **The agent finishes first.** When you answer a question, ask for changes,
+  take a page out, or a merge clashes with recent changes, the agent is asked
+  to do something on the proposal. Until that job ends well, the proposal can't
+  be approved, so you never approve the version from before your own request.
+  An answer the agent has not applied yet reads as "answered, not applied yet",
+  never as settled. If the job fails, the page says what was asked and why it
+  failed, and offers **Run it again** and, for answers, requests for changes
+  and clash redos, **Go on without it**.
 - **The automatic checks must pass**: on the proposal, and again on the result
   of combining it with the current knowledge base.
 - **Locked reference pages** (canonical pages) are never changed by a proposal.
@@ -357,7 +367,8 @@ These are code, not config. No rule, profile or flag changes them.
    an agent acting for someone.
 3. With **separation of duties** on, the submitter, and the human an agent
    submitted for (`onBehalfOf`), cannot approve.
-4. **Open questions block the merge.**
+4. **Open questions block the merge.** So does work the agent was asked to do
+   on the proposal and has not finished, or failed at (*Agent work* below).
 5. **The automatic checks gate twice**: the runner's audit must have exit 0,
    and the service re-runs its *own* `tools/audit.mjs` on the merge result in a
    throwaway worktree; anything but exit 0 means main does not move. Two of
@@ -375,8 +386,8 @@ These are code, not config. No rule, profile or flag changes them.
    merge, a policy violation) is written to the **append-only audit log**
    (`/inbox/activity`) with who, which channel and which version.
 8. **Review actions need a verified path, never a token.** Approve, accept a
-   page, reject, take a page out, answer a question, ask for changes and retry
-   all require a signed-in browser session with its CSRF token (on the inbox
+   page, reject, take a page out, answer a question, ask for changes, retry, run an
+   agent request again and go on without one all require a signed-in browser session with its CSRF token (on the inbox
    forms and on the JSON API alike) or the signed Slack / GitHub webhook
    path. Bearer tokens (`ALMAGEST_TOKENS`, OIDC access tokens, MCP OAuth
    tokens) can read proposals and nothing more, and an API token cannot sign
@@ -419,6 +430,93 @@ These are code, not config. No rule, profile or flag changes them.
     (`governance/paths.mjs`), so such a run fails before it is committed.
 12. **A proposal with nothing left in it** (every page taken out) can't be
     approved; turn it down to close it.
+
+### Agent work
+
+Four things queue a job for a proposal: answering a question whose option has
+an effect, asking for changes, taking a page out (also the answer to a
+canonical conflict), and the redo after a merge clash. Each appends an entry to
+the proposal's `work` list:
+
+```js
+work: [{ jobId, kind: 'decision' | 'feedback' | 'page' | 'conflict', decisionId?, slug?, headSha, at }]
+```
+
+An entry is a pointer and holds no status. `headSha` is the version the
+request was made on. The job store is the truth, so `workOf(proposal)` reads
+each entry's job and returns the entries that are not settled, each with a
+status derived from the job:
+
+| Job | Entry |
+|---|---|
+| `queued`, `running` | `pending` |
+| `failed`, `cancelled`, or no record of the job | `failed`, with the job's error |
+| `succeeded` or `blocked`, kind `page` or `conflict` | settled |
+| `succeeded` or `blocked`, kind `decision` or `feedback`, and the branch moved | settled |
+| `succeeded` or `blocked`, kind `decision` or `feedback`, and the branch did not move | `failed`, with "The agent finished without changing anything." |
+
+The branch moved when the job has a `headSha` that differs from its `startSha`
+(the runner records where an agent job started). For a job with no `startSha`
+(older jobs), the job's `headSha`, or failing that the proposal's current head,
+is compared with the entry's `headSha`. This closes two holes: an agent that
+raises the same question again with no commit (`blocked`), and a run that ends
+`succeeded` with "unchanged" or "no changes", must not count as an applied
+answer. A settled entry is dropped from `work` the next time a run rewrites the
+proposal.
+
+The queue folds a second `revise` into one still queued, so two entries can
+point at one job id. Each entry is read on its own.
+
+Each unsettled entry gives one blocker in the evaluation: `agent-working`
+(pending) or `agent-failed` (failed), with a sentence that names what was asked
+and the ways out: "Run it again, or go on without it." (only "Run it again."
+for a page). `assertMayApprove` refuses with a 409 while any entry is
+unsettled, on every path that approves (inbox, API, chat confirmation, Slack,
+email, the GitHub PR merge and the tier actions), because every caller gets the
+entries through `policyOptions`. `policy.mjs` stays pure: it receives the list
+as `options.work`. A later successful job does not clear an earlier failed
+entry, because it is no evidence that the earlier request was applied.
+
+`retryWork(prpId, jobId, actor, { channel })` asks the agent again. It takes
+a reviewer in a signed-in session, a live proposal and an entry that is
+`failed`. It queues a new job with the failed job's kind, source, trigger,
+instructions and the rest, with the actor as the requester, and puts the new job
+id and the current version in the entry (and in any other entry that pointed at
+the old job). If the job record is gone, a page removal is rebuilt from the
+entry (the page, the proposal's source and the usual instructions); any other
+kind is refused with the way out, which is to go on without it and ask again. It
+writes a `proposal.retry_agent` audit event with both job ids and the version,
+and emits `proposal.updated`. If the queue cannot be reached it answers 503 and
+changes nothing. A job result never approves or merges anything.
+
+`dismissWork(prpId, jobId, actor, { channel })` goes on without a failed
+request. It has the same assertions, lock and live check as `retryWork`. Only a
+`failed` entry can be dismissed, never a `page` entry (the page is already
+marked as taken out, so it only has retry). It removes the failed entries for
+that job and writes a `proposal.dismiss_agent` audit event (job id, kinds,
+decision ids, version). For a `decision` entry it sets `resolution.notApplied:
+{ by, display, at }` on the decision, and the answered card says for good that
+the agent did not apply the answer and who chose to continue without it. For a
+`feedback` entry it sets the same `notApplied` note on the item in `feedback`,
+and when no other unsettled `feedback` entry is left and the status is
+`changes_requested`, the status goes back to `open`. A `conflict` entry is just
+removed and the status stays. Approving afterwards is still a person's act.
+
+Governance listens for `job.finished`. When a job for a proposal ends `failed`
+or `cancelled`, it writes a `proposal.agent_failed` audit event (job id, kind,
+the error cut to 300 characters) and emits `proposal.updated`, so the open page
+and the notification channels refresh. Nothing is stored on the proposal for
+this.
+
+Known limits:
+
+- Proposals created before this change carry no `work` list and are not
+  blocked retroactively. They behave as they did.
+- The queue folds a second `revise` into a queued job without a check that a
+  worker has not claimed it in between. An instruction folded in at that moment
+  can be lost while both entries point at the one job. This is open.
+- The stored `summary` of a proposal is computed when it is written and says
+  "not applied yet" only for work known then. The inbox computes the live text.
 
 ### How a merge happens
 
@@ -569,8 +667,10 @@ action that caused it.
 **web**: the inbox (`/inbox`, `/inbox/p/:id`, `/inbox/reverify`,
 `/inbox/gaps`, `/inbox/activity`) and a JSON mirror:
 `GET /api/proposals[?status=open,approved&limit=50]`, `GET /api/proposals/:id`
-(any signed-in actor, agents included), and `POST /api/proposals/:id/approve |
-reject | request-changes | retry`, `POST /api/proposals/:id/pages/:slug/reject`,
+(any signed-in actor, agents included; it also returns `work`, the unsettled entries with their status), and `POST /api/proposals/:id/approve |
+reject | request-changes | retry`, `POST /api/proposals/:id/work/:jobId/retry |
+dismiss`,
+`POST /api/proposals/:id/pages/:slug/reject`,
 `POST /api/decisions/:id/resolve`. Every action, form or JSON, needs a
 signed-in browser session plus its CSRF token (`csrf` form field, or the
 `x-almagest-csrf` header), and approve / accept / resolve need the `headSha`
@@ -868,7 +968,10 @@ Spec surface: `listProposals`, `getProposal`, `createFromJob`, `approve`,
 `reject`, `rejectPage`, `requestChanges`, `resolveDecision`,
 `createConfirmation`. Extras: `evaluate(prpId)` → `{ proposal, decisions,
 evaluation: { ready, blockers, missing, approvers, explanation } }`,
-`retryMerge`, `recordExternalMerge`, `getDecision`, `listDecisions`,
+`retryMerge`, `retryWork(prpId, jobId, actor, { channel })`,
+`dismissWork(prpId, jobId, actor, { channel })`, `workOf(proposal)`
+(the unsettled agent work, see *Agent work*), `stop()` (stops listening for
+finished jobs), `recordExternalMerge`, `getDecision`, `listDecisions`,
 `mayApprove(proposal, actor)`, `channel(kind)`, `identities`. `approve(prpId,
 actor, { scope, channel, headSha })` and `resolveDecision(decId, actor, {
 optionId, note, channel, headSha })` require `headSha`; every action requires an
@@ -885,7 +988,8 @@ with a source); plus `submitters`, `otherFiles` (each with `bytes`, `lines`,
 `binary`, and a `preview` of up to 40 lines: `previewOf: start` for a new
 file, `added` for the lines a change adds), `files` (every changed path
 with mode and binary flag), `outside` (paths outside the writable set),
-`revision`, `revisedBecause`, `conflictRevise`, `mergeError`, `feedback`,
+`revision`, `revisedBecause`, `conflictRevise`, `work` (pointers to the jobs
+the agent was asked to run, see *Agent work*), `mergeError`, `feedback`,
 `rejection`, `supersededBy`, `extends` (`[{ slug, proposalId, title }]`: pages
 written as additions to pages waiting in other proposals; stored by
 `createFromJob` from the run report when the reviewed version is new, and kept

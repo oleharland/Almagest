@@ -416,6 +416,29 @@ compares only the `brain_dir` each side of the update commits to, which can add
 directories to check but never remove one. Editing the working-tree
 `brain.config.yaml` or `tools/hooks/` changes nothing.
 
+Branch names are compared ignoring case, because on a case-insensitive
+filesystem (the macOS default) the upper-case spelling of the branch is the same
+loose file as the real one, and `git branch -f` or `update-ref` through it would
+move main. On a case-sensitive filesystem that spelling is a different branch;
+the hook guards it anyway, which is stricter than needed and harmless. The
+`guard-git` Claude Code guard compares names the same way.
+
+Git's own ref packing is the one deletion the hook lets through. `git
+pack-refs --prune`, which `git gc`, `git maintenance` and automatic maintenance
+after a fetch or merge all run, first writes main into `packed-refs` and then
+deletes only the loose file: a transaction of `<sha> 0000… refs/heads/main`,
+after which main still resolves to the same commit. The hook accepts a deletion
+of main only when `packed-refs` already lists the ref with exactly the commit it
+holds now and nothing holds `packed-refs.lock`. A real deletion (`branch -D`,
+`update-ref -d`, `push . :main`, a rename away, a delete inside a larger
+transaction) also has to remove the entry from `packed-refs`, so git takes that
+lock before it calls the hook and the deletion is refused. Packing first and
+deleting second changes nothing: the delete still holds the lock. The check
+reads no environment variable and no process name. It was checked against git
+2.54 with the `files` ref backend; a git that held the lock during the prune
+would make the hook refuse packing again (it fails closed). The `reftable`
+backend compacts without ref transactions, so the hook does not see it.
+
 The service moves main in `governance/merge.mjs` (`merge --ff-only`, else
 `update-ref`). Normally it runs under launchd, systemd, Docker or a person's
 terminal, so it carries no agent variable. If it was started from inside an

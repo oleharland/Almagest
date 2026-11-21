@@ -3,7 +3,7 @@
  *
  *   GET  /inbox                          the queue: open questions first, then frequently-read pages, then oldest
  *   GET  /inbox/p/:id                    one proposal: facts next to their sources, questions, what's still needed
- *   POST /inbox/p/:id/approve            (+ /reject /request-changes /retry /page/:slug/accept /page/:slug/reject)
+ *   POST /inbox/p/:id/approve            (+ /reject /request-changes /retry /work/:jobId/retry /work/:jobId/dismiss /page/:slug/accept /page/:slug/reject)
  *   POST /inbox/d/:id/resolve            answer a question
  *   GET  /inbox/reverify  /inbox/gaps  /inbox/activity
  *   GET  /inbox/canonical                pages worth fixing as canonical;  POST /inbox/canonical/:slug/dismiss
@@ -13,7 +13,7 @@
  *   GET|POST /inbox/confirm/:code        a chat's approval request, confirmed by a signed-in person
  *
  *   GET  /api/proposals  /api/proposals/:id                         any authenticated actor
- *   POST /api/proposals/:id/{approve,reject,request-changes,retry}  humans only
+ *   POST /api/proposals/:id/{approve,reject,request-changes,retry,work/:jobId/retry,work/:jobId/dismiss}  humans only
  *   POST /api/proposals/:id/pages/:slug/reject  /api/decisions/:id/resolve
  *   POST /api/proposals/:id/confirmations                          any actor (chat asks for a link)
  *
@@ -123,7 +123,7 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
     const items = [];
     for (const p of proposals) {
       const decisions = await store.decisions.listByProposal(p.id);
-      const info = describe(p, decisions);
+      const info = describe(p, decisions, p.work?.length ? await governance.workOf(p) : []);
       if (filters.questions && !info.openDecisions) continue;
       if (filters.hot && !info.hot) continue;
       if (filters.q) {
@@ -155,7 +155,7 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
       ? await governance.pageTexts(ev.proposal).catch((err) => { log.warn('could not read page text for the review', { error: err.message }); return null; })
       : null;
     return respond(req, res, (nonce) => views.proposalPage({
-      proposal: ev.proposal, decisions: ev.decisions, evaluation: ev.evaluation,
+      proposal: ev.proposal, decisions: ev.decisions, evaluation: ev.evaluation, work: ev.work,
       actor, csrf, nonce, canAct, flash, why, chat, navCounts: nav,
       view: chosen, diffMode: views.pickDiff(diff), pageTexts,
       tiers: { canCanonical: mayCanonical(actor), canonicalRole },
@@ -259,6 +259,10 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
       post(req, res, a, back(a.params.id), () => governance.rejectPage(a.params.id, a.params.slug, a.actor, { channel: 'web' }), 'page_rejected'));
     http.route('POST', '/inbox/p/:id/request-changes', (req, res, a) =>
       post(req, res, a, back(a.params.id), () => governance.requestChanges(a.params.id, a.actor, { feedback: a.body?.feedback, channel: 'web' }), 'changes_requested'));
+    http.route('POST', '/inbox/p/:id/work/:jobId/retry', (req, res, a) =>
+      post(req, res, a, back(a.params.id), () => governance.retryWork(a.params.id, a.params.jobId, a.actor, { channel: 'web' }), 'agent_retried'));
+    http.route('POST', '/inbox/p/:id/work/:jobId/dismiss', (req, res, a) =>
+      post(req, res, a, back(a.params.id), () => governance.dismissWork(a.params.id, a.params.jobId, a.actor, { channel: 'web' }), 'agent_dismissed'));
     http.route('POST', '/inbox/p/:id/reject', (req, res, a) =>
       post(req, res, a, back(a.params.id), async () => {
         const chat = await viaChat(a, 'reject');
@@ -395,7 +399,7 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
       const out = [];
       for (const p of list) {
         const decisions = await store.decisions.listByProposal(p.id);
-        const info = describe(p, decisions);
+        const info = describe(p, decisions, await governance.workOf(p));
         out.push({
           id: p.id, status: p.status, title: info.title, summary: info.sentence, branch: p.branch, headSha: p.headSha,
           openDecisions: info.openDecisions, hot: info.hot, url: `${ctx.config.service.http.base_url}/inbox/p/${p.id}`,
@@ -407,7 +411,7 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
 
     http.route('GET', '/api/proposals/:id', async (_req, _res, { params }) => {
       const ev = await governance.evaluate(params.id);
-      return pub({ proposal: ev.proposal, decisions: ev.decisions, evaluation: ev.evaluation });
+      return pub({ proposal: ev.proposal, decisions: ev.decisions, evaluation: ev.evaluation, work: ev.work });
     }, { auth: 'any' });
 
     /**
@@ -432,6 +436,10 @@ export function create(ctx, cfg, { governance, sessions, confirmations }) {
       governance.requestChanges(params.id, actor, { feedback: body?.feedback, channel })), human);
     http.route('POST', '/api/proposals/:id/retry', api(({ params, actor }, channel) =>
       governance.retryMerge(params.id, actor, { channel })), human);
+    http.route('POST', '/api/proposals/:id/work/:jobId/retry', api(({ params, actor }, channel) =>
+      governance.retryWork(params.id, params.jobId, actor, { channel })), human);
+    http.route('POST', '/api/proposals/:id/work/:jobId/dismiss', api(({ params, actor }, channel) =>
+      governance.dismissWork(params.id, params.jobId, actor, { channel })), human);
     http.route('POST', '/api/proposals/:id/pages/:slug/reject', api(({ params, actor }, channel) =>
       governance.rejectPage(params.id, params.slug, actor, { channel })), human);
     http.route('POST', '/api/decisions/:id/resolve', api(({ params, body, actor }, channel) =>
